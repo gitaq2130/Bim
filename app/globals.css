@@ -1,0 +1,114 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #0d0e11;
+  --surface: #16171c;
+  --surface-2: #1d1f26;
+  --surface-3: #262932;
+  --line: #2b2e37;
+  --line-2: #3a3e49;
+  --text: #edeef2;
+  --text-2: #a3a7b3;
+  --text-3: #6c707c;
+  --bubble-in: #252830;
+  --bubble-out: #33445e;
+  --accent: #ffd60a;
+  --unread: #e5484d;
+
+  --st-review: #f59e0b;
+  --st-action: #3b82f6;
+  --st-done: #22c55e;
+  --st-pre: #8b5cf6;
+  --st-observe: #0ea5e9;
+  --st-verified: #22c55e;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--line);
+  --color-line-2: var(--line-2);
+  --color-text: var(--text);
+  --color-text-2: var(--text-2);
+  --color-text-3: var(--text-3);
+  --color-bubble-in: var(--bubble-in);
+  --color-bubble-out: var(--bubble-out);
+  --color-accent: var(--accent);
+  --color-unread: var(--unread);
+
+  --color-st-review: var(--st-review);
+  --color-st-action: var(--st-action);
+  --color-st-done: var(--st-done);
+  --color-st-pre: var(--st-pre);
+  --color-st-observe: var(--st-observe);
+  --color-st-verified: var(--st-verified);
+
+  --font-sans: "Pretendard Variable", Pretendard, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  height: 100%;
+  overscroll-behavior-y: none;
+}
+
+body {
+  background: #050506;
+  color: var(--text);
+  font-family: var(--font-sans);
+}
+
+/* thin/hidden scrollbars for chip rows etc. */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+.animate-sheet-up {
+  animation: sheet-up 0.24s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes scrim-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.animate-scrim-in {
+  animation: scrim-in 0.2s ease-out;
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.animate-pop-in {
+  animation: pop-in 0.16s cubic-bezier(0.32, 0.72, 0, 1);
+}
