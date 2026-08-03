@@ -43,7 +43,7 @@ export default function AgendaCard({ agendaNo }: { agendaNo: number }) {
             </span>
           </div>
           <Link
-            href={`/agenda/${agenda.linkedPreReviewNo}`}
+            href={`/agenda?no=${agenda.linkedPreReviewNo}`}
             className="flex items-center gap-1.5 border-b border-line px-4 py-2.5 text-[13px] font-bold text-[#c4b5fd]"
           >
             <ShieldCheck size={15} />
@@ -53,7 +53,7 @@ export default function AgendaCard({ agendaNo }: { agendaNo: number }) {
         </>
       )}
 
-      <Link href={`/agenda/${agenda.no}`} className="block">
+      <Link href={`/agenda?no=${agenda.no}`} className="block">
         <div className="flex items-center gap-2 px-3.5 pb-2.5 pt-3">
           {isPreReview ? (
             <ShieldAlert size={18} className="text-[#a78bfa]" />

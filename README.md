@@ -26,4 +26,30 @@ npm run dev
 
 ## 기술 스택
 
-Next.js (App Router) · TypeScript · Tailwind CSS v4 · Zustand · lucide-react
+Next.js (App Router, static export) · TypeScript · Tailwind CSS v4 · Zustand · lucide-react · Capacitor (Android)
+
+## 안드로이드 앱(.apk) 빌드
+
+이 앱은 `output: "export"` 로 빌드되는 순수 정적 사이트라 [Capacitor](https://capacitorjs.com)로 감싸 네이티브 안드로이드 앱으로 만들 수 있습니다. (라우팅은 동적 세그먼트 대신 쿼리스트링(`/room?id=...`, `/agenda?no=...`)을 사용해 static export와 호환되도록 되어 있습니다.)
+
+### 사전 준비
+
+- Android Studio (또는 Android SDK cmdline-tools) + JDK 17+
+- `ANDROID_HOME` / `ANDROID_SDK_ROOT` 환경변수가 SDK 경로를 가리켜야 함
+
+### 빌드
+
+```bash
+npm install
+npm run android:debug
+```
+
+위 명령은 `next build`(정적 export) → `cap sync android`(웹 산출물을 네이티브 프로젝트에 복사) → `gradlew assembleDebug` 순으로 실행되며, 결과물은 다음 경로에 생성됩니다.
+
+```
+android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+이 apk를 안드로이드 기기에 옮겨 설치하면 됩니다(출처를 알 수 없는 앱 설치 허용 필요). Android Studio에서 `android/` 폴더를 직접 열어 실행/디버깅할 수도 있습니다.
+
+앱 아이콘/스플래시는 Capacitor 기본값이며, `android/app/src/main/res/` 아이콘 리소스를 교체하면 커스터마이징할 수 있습니다.

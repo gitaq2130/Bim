@@ -34,7 +34,7 @@ export default function MyPage() {
             {tracking.map((a) => (
               <Link
                 key={a.no}
-                href={`/agenda/${a.no}/trace`}
+                href={`/agenda/trace?no=${a.no}`}
                 className="rounded-2xl border border-line-2 bg-surface-2/90 p-3.5 backdrop-blur active:opacity-80"
               >
                 <div className="flex items-center gap-2 text-[12px] font-bold text-text-2">

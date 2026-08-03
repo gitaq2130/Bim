@@ -5,10 +5,15 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
+    "start": "npx serve out",
+    "lint": "eslint",
+    "cap:sync": "next build && cap sync android",
+    "android:debug": "next build && cap sync android && cd android && ./gradlew assembleDebug"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/cli": "^8.5.0",
+    "@capacitor/core": "^8.5.0",
     "lucide-react": "^1.28.0",
     "next": "16.2.12",
     "react": "19.2.4",

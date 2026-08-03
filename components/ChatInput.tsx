@@ -36,7 +36,7 @@ export default function ChatInput({ roomId }: { roomId: string }) {
       icon: ClipboardPlus,
       label: "안건 올리기",
       highlight: true,
-      onClick: () => router.push(`/room/${roomId}/new-agenda`),
+      onClick: () => router.push(`/room/new-agenda?id=${roomId}`),
     },
     {
       icon: HelpCircle,

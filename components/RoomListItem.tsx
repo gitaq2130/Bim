@@ -19,7 +19,7 @@ export default function RoomListItem({ room }: { room: Room }) {
   });
   return (
     <Link
-      href={`/room/${room.id}`}
+      href={`/room?id=${room.id}`}
       className="flex min-h-[76px] items-center gap-3.5 border-b border-white/[0.03] px-4 py-3.5 active:bg-surface-2"
     >
       <div className="relative flex h-[52px] w-[52px] flex-none items-center justify-center rounded-2xl bg-surface-3 text-text-2">

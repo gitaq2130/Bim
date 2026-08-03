@@ -34,7 +34,7 @@ export default function SimilarCasesSheet({
             key={c.no}
             onClick={() => {
               onClose();
-              router.push(`/agenda/${c.no}`);
+              router.push(`/agenda?no=${c.no}`);
             }}
             className="flex items-center gap-3 rounded-2xl border border-line px-4 py-3.5 text-left active:bg-surface-2"
           >
