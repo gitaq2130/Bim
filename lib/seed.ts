@@ -1,4 +1,4 @@
-import type { Agenda, Message, Room } from "./types";
+import type { Agenda, Contact, Me, Message, Room } from "./types";
 
 export const seedRooms: Room[] = [
   {
@@ -400,5 +400,106 @@ export const seedAgendas: Agenda[] = [
     participants: 4,
     createdLabel: "오늘 등록",
     updatedLabel: "방금 업데이트",
+  },
+];
+
+export const seedMe: Me = {
+  name: "이현우",
+  rank: "공무 대리",
+  company: "동부건설",
+  site: "고창 물류센터 신축현장",
+  trade: "공무",
+  bizCardRegistered: false,
+  activityPublic: false,
+};
+
+export const seedContacts: Contact[] = [
+  {
+    id: "c-kim-sh",
+    name: "김성호 소장",
+    rank: "현장소장",
+    trade: "철근공사",
+    tradeGroup: "건축",
+    company: "동부건설",
+    bizCardRegistered: true,
+    bizCard: {
+      nameEn: "KIM SUNG-HO",
+      address: "전북 고창군 고창읍 월곡리 물류센터 신축현장",
+      phone: "063-560-2100",
+      fax: "063-560-2109",
+      email: "sh.kim@dongbu.co.kr",
+      mobile: "010-3245-8817",
+    },
+    lastTalkedLabel: "10분 전",
+    activityPublic: true,
+    activity: [
+      { agendaNo: 153, title: "슬래브 철근 피복두께 검토", status: "검토중" },
+      { agendaNo: 149, title: "커튼월 패널 줄눈 조정", status: "완료" },
+      { agendaNo: 128, title: "옹벽 이음부 누수 사전검토", status: "완료·검증됨" },
+    ],
+  },
+  {
+    id: "c-park-jm",
+    name: "박정민 부장",
+    rank: "품질관리",
+    trade: "구조",
+    tradeGroup: "건축",
+    company: "동부건설",
+    bizCardRegistered: true,
+    bizCard: {
+      nameEn: "PARK JEONG-MIN",
+      address: "전북 고창군 고창읍 월곡리 물류센터 신축현장",
+      phone: "063-560-2101",
+      fax: "063-560-2109",
+      email: "jm.park@dongbu.co.kr",
+      mobile: "010-4471-2298",
+    },
+    lastTalkedLabel: "어제",
+    activityPublic: false,
+    activity: [{ agendaNo: 153, title: "슬래브 철근 피복두께 검토", status: "검토중" }],
+  },
+  {
+    id: "c-lee-ht",
+    name: "이형탁 소장",
+    rank: "현장소장",
+    trade: "",
+    tradeGroup: "건축",
+    company: "삼우이엔지",
+    bizCardRegistered: false,
+    lastTalkedLabel: "3시간 전",
+    activityPublic: false,
+    activity: [],
+  },
+  {
+    id: "c-choi-jw",
+    name: "최재원 과장",
+    rank: "기계설비",
+    trade: "배관",
+    tradeGroup: "설비",
+    company: "한양기공",
+    bizCardRegistered: true,
+    bizCard: {
+      nameEn: "CHOI JAE-WON",
+      address: "전북 고창군 고창읍 월곡리 물류센터 신축현장",
+      phone: "063-560-2140",
+      fax: "063-560-2149",
+      email: "jw.choi@hanyang-mech.co.kr",
+      mobile: "010-9921-3345",
+    },
+    lastTalkedLabel: "2일 전",
+    activityPublic: true,
+    activity: [{ agendaNo: 156, title: "기계실 덕트 소음 저감 방안", status: "조치중" }],
+  },
+  {
+    id: "c-jung-wj",
+    name: "정우진 대리",
+    rank: "소방설비",
+    trade: "",
+    tradeGroup: "설비",
+    company: "세진소방",
+    bizCardRegistered: false,
+    lastTalkedLabel: "5일 전",
+    activityPublic: false,
+    activity: [],
   },
 ];

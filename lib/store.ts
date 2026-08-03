@@ -1,11 +1,14 @@
 "use client";
 
 import { create } from "zustand";
-import { seedAgendas, seedMessages, seedRooms } from "./seed";
+import { seedAgendas, seedContacts, seedMe, seedMessages, seedRooms } from "./seed";
 import type {
   Agenda,
   AgendaStatus,
+  BizCard,
   CompleteForm,
+  Contact,
+  Me,
   Message,
   Room,
 } from "./types";
@@ -54,6 +57,18 @@ interface AgendaTalkState {
   updateDraft: (partial: Partial<DraftAgenda>) => void;
   resetDraft: () => void;
 
+  me: Me;
+  contacts: Contact[];
+  contactById: (id: string) => Contact | undefined;
+  registerMyBizCard: (input: {
+    name: string;
+    rank: string;
+    company: string;
+    bizCard: BizCard;
+  }) => void;
+  updateMe: (partial: Partial<Me>) => void;
+  setContactNote: (id: string, note: string) => void;
+
   activeAgendaCount: (roomId: string) => number;
   agendaByNo: (no: number) => Agenda | undefined;
   roomMessages: (roomId: string) => Message[];
@@ -99,6 +114,22 @@ export const useStore = create<AgendaTalkState>((set, get) => ({
   draft: emptyDraft,
   updateDraft: (partial) => set((s) => ({ draft: { ...s.draft, ...partial } })),
   resetDraft: () => set({ draft: emptyDraft }),
+
+  me: seedMe,
+  contacts: seedContacts,
+  contactById: (id) => get().contacts.find((c) => c.id === id),
+
+  registerMyBizCard: ({ name, rank, company, bizCard }) =>
+    set((s) => ({
+      me: { ...s.me, name, rank, company, bizCard, bizCardRegistered: true },
+    })),
+
+  updateMe: (partial) => set((s) => ({ me: { ...s.me, ...partial } })),
+
+  setContactNote: (id, note) =>
+    set((s) => ({
+      contacts: s.contacts.map((c) => (c.id === id ? { ...c, note } : c)),
+    })),
 
   activeAgendaCount: (roomId) =>
     get().agendas.filter(

@@ -51,8 +51,8 @@ export default function ChatInput({ roomId }: { roomId: string }) {
       <div className="flex items-center gap-2 border-t border-line bg-surface p-2.5">
         <button
           onClick={() => setMenuOpen((v) => !v)}
-          className={`flex h-12 w-12 flex-none items-center justify-center rounded-2xl transition-transform ${
-            menuOpen ? "rotate-45 bg-accent text-[#1a1204]" : "bg-surface-2 text-text"
+          className={`flex h-12 w-12 flex-none items-center justify-center rounded-2xl transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] ${
+            menuOpen ? "rotate-45 bg-accent text-[#1a1204]" : "rotate-0 bg-surface-2 text-text"
           }`}
         >
           <Plus size={26} />

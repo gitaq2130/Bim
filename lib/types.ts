@@ -99,3 +99,44 @@ export interface Agenda {
   linkedPreReviewNo?: number;
   updatedLabel?: string;
 }
+
+export interface BizCard {
+  nameEn: string;
+  address: string;
+  phone: string;
+  fax: string;
+  email: string;
+  mobile: string;
+}
+
+export interface Me {
+  name: string;
+  rank: string;
+  company: string;
+  site: string;
+  trade: string;
+  bizCardRegistered: boolean;
+  bizCard?: BizCard;
+  activityPublic: boolean;
+}
+
+export interface ActivityItem {
+  agendaNo: number;
+  title: string;
+  status: AgendaStatus;
+}
+
+export interface Contact {
+  id: string;
+  name: string;
+  rank: string;
+  trade: string;
+  tradeGroup: string;
+  company: string;
+  bizCardRegistered: boolean;
+  bizCard?: BizCard;
+  lastTalkedLabel: string;
+  activityPublic: boolean;
+  activity: ActivityItem[];
+  note?: string;
+}

@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { MessageSquareMore, UserRound } from "lucide-react";
+import { ContactRound, MessageSquareMore, UserRound } from "lucide-react";
 
 const tabs = [
+  { href: "/contacts", label: "연락처", icon: ContactRound },
   { href: "/", label: "채팅", icon: MessageSquareMore },
   { href: "/mypage", label: "마이페이지", icon: UserRound },
 ];
