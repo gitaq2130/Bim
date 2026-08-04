@@ -1,12 +1,13 @@
 "use client";
 
-import { Suspense, useMemo } from "react";
+import { Suspense, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft, ClipboardList, Menu, Search } from "lucide-react";
 import ChatInput from "@/components/ChatInput";
 import MessageItem from "@/components/MessageItem";
 import RoomIcon from "@/components/RoomIcon";
+import SearchReveal from "@/components/SearchReveal";
 import { useStore } from "@/lib/store";
 import { useAutoScrollToBottom } from "@/lib/useAutoScroll";
 
@@ -21,6 +22,7 @@ function RoomPageInner() {
   );
   const activeCount = useStore((s) => s.activeAgendaCount(roomId));
   const scrollRef = useAutoScrollToBottom(messages.length);
+  const [searchOpen, setSearchOpen] = useState(false);
 
   if (!room) {
     return (
@@ -40,7 +42,10 @@ function RoomPageInner() {
         <span className="text-[20px] font-extrabold tracking-tight">{room.name}</span>
         {room.memberCount && <span className="ml-0.5 text-[13px] font-semibold text-text-2">{room.memberCount}</span>}
         <span className="flex-1" />
-        <button className="flex h-11 w-11 items-center justify-center rounded-xl text-text-2 active:bg-surface-2">
+        <button
+          onClick={() => setSearchOpen((v) => !v)}
+          className="flex h-11 w-11 items-center justify-center rounded-xl text-text-2 active:bg-surface-2"
+        >
           <Search size={22} />
         </button>
         {activeCount > 0 || room.type === "trade" ? (
@@ -52,6 +57,8 @@ function RoomPageInner() {
           </Link>
         ) : null}
       </div>
+
+      <SearchReveal open={searchOpen} placeholder="대화 내용 검색" onClose={() => setSearchOpen(false)} />
 
       <div
         ref={scrollRef}

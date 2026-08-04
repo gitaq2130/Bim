@@ -247,6 +247,7 @@ export const seedAgendas: Agenda[] = [
     participants: 4,
     createdLabel: "착공 전 등록",
     floorplanLabel: "B동 B1F 평면 · 핀 지정",
+    pin: { x: 78, y: 25 },
     updatedLabel: "D-92",
   },
   {
@@ -259,6 +260,7 @@ export const seedAgendas: Agenda[] = [
     participants: 6,
     createdLabel: "오늘 등록",
     linkedPreReviewNo: 128,
+    pin: { x: 55, y: 20 },
     updatedLabel: "방금 업데이트",
   },
   {
@@ -300,6 +302,7 @@ export const seedAgendas: Agenda[] = [
     participants: 3,
     createdLabel: "3일 전 등록",
     isDormant: true,
+    pin: { x: 24, y: 66 },
     updatedLabel: "3일간 응답 없음",
   },
   {
@@ -309,6 +312,7 @@ export const seedAgendas: Agenda[] = [
     status: "조치중",
     participants: 4,
     createdLabel: "2일 전 등록",
+    pin: { x: 70, y: 30 },
     updatedLabel: "1시간 전 업데이트",
   },
   {
@@ -318,6 +322,7 @@ export const seedAgendas: Agenda[] = [
     status: "완료",
     participants: 4,
     createdLabel: "지난주 등록",
+    pin: { x: 60, y: 75 },
     updatedLabel: "어제 완료",
     techCase: {
       caseNo: "CASE-2026-0149",
@@ -338,6 +343,7 @@ export const seedAgendas: Agenda[] = [
     status: "완료",
     participants: 5,
     createdLabel: "지난주 등록",
+    pin: { x: 60, y: 75 },
     updatedLabel: "2일 전 완료",
     techCase: {
       caseNo: "CASE-2026-0147",
@@ -360,7 +366,7 @@ export const seedAgendas: Agenda[] = [
     createdLabel: "2026년 1월 28일 등록",
     updatedLabel: "6개월 전 완료",
     floorplanLabel: "B1F 슬래브 평면",
-    pin: { x: 48, y: 40 },
+    pin: { x: 60, y: 75 },
     trace: { dueLabel: "6개월 경과", state: "관찰중" },
     techCase: {
       caseNo: "CASE-2026-0131",

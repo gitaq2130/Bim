@@ -47,7 +47,10 @@ function AgendaListPageInner() {
         </button>
         <span className="text-[17px] font-extrabold">{room.name} · 안건 리스트</span>
         <span className="flex-1" />
-        <button className="flex h-11 w-11 items-center justify-center rounded-xl text-text-2">
+        <button
+          onClick={() => router.push(`/room/floorplan?id=${roomId}`)}
+          className="flex h-11 w-11 items-center justify-center rounded-xl text-text-2 active:bg-surface-2"
+        >
           <MapPinned size={22} />
         </button>
       </div>

@@ -11,6 +11,7 @@ import type {
   Me,
   Message,
   Room,
+  TechCase,
 } from "./types";
 
 function nowLabel() {
@@ -68,6 +69,8 @@ interface AgendaTalkState {
   }) => void;
   updateMe: (partial: Partial<Me>) => void;
   setContactNote: (id: string, note: string) => void;
+  toggleContactFavorite: (id: string) => void;
+  setContactBlocked: (id: string, blocked: boolean) => void;
 
   activeAgendaCount: (roomId: string) => number;
   agendaByNo: (no: number) => Agenda | undefined;
@@ -100,6 +103,13 @@ interface AgendaTalkState {
     no: number,
     approval: "approved" | "rejected"
   ) => void;
+  updateTechCase: (
+    no: number,
+    fields: Pick<
+      TechCase,
+      "problem" | "cause" | "alternatives" | "decision" | "rationale" | "result" | "prevention"
+    >
+  ) => void;
   respondTrace: (
     no: number,
     response: "이상없음" | "재발" | "확인어려움"
@@ -129,6 +139,16 @@ export const useStore = create<AgendaTalkState>((set, get) => ({
   setContactNote: (id, note) =>
     set((s) => ({
       contacts: s.contacts.map((c) => (c.id === id ? { ...c, note } : c)),
+    })),
+
+  toggleContactFavorite: (id) =>
+    set((s) => ({
+      contacts: s.contacts.map((c) => (c.id === id ? { ...c, favorite: !c.favorite } : c)),
+    })),
+
+  setContactBlocked: (id, blocked) =>
+    set((s) => ({
+      contacts: s.contacts.map((c) => (c.id === id ? { ...c, blocked } : c)),
     })),
 
   activeAgendaCount: (roomId) =>
@@ -350,6 +370,15 @@ export const useStore = create<AgendaTalkState>((set, get) => ({
       agendas: s.agendas.map((a) =>
         a.no === no && a.techCase
           ? { ...a, techCase: { ...a.techCase, approval } }
+          : a
+      ),
+    })),
+
+  updateTechCase: (no, fields) =>
+    set((s) => ({
+      agendas: s.agendas.map((a) =>
+        a.no === no && a.techCase
+          ? { ...a, techCase: { ...a.techCase, ...fields } }
           : a
       ),
     })),

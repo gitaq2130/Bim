@@ -9,6 +9,7 @@ import RoomPage from "../app/room/page";
 import NewAgendaPage from "../app/room/new-agenda/page";
 import FloorplanPinPage from "../app/room/new-agenda-pin/page";
 import AgendaListPage from "../app/room/agenda-list/page";
+import FloorplanViewPage from "../app/room/floorplan/page";
 import AgendaRoomPage from "../app/agenda/page";
 import TracePage from "../app/agenda/trace/page";
 import ProfilePage from "../app/profile/page";
@@ -50,6 +51,9 @@ function Screen() {
       break;
     case "/room/agenda-list":
       body = <AgendaListPage />;
+      break;
+    case "/room/floorplan":
+      body = <FloorplanViewPage />;
       break;
     case "/agenda":
       body = <AgendaRoomPage />;

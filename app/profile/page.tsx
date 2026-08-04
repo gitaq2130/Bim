@@ -3,14 +3,19 @@
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
+  AlertTriangle,
+  Ban,
   BadgeCheck,
+  Check as CheckIcon,
   ChevronLeft,
   ClipboardList,
   Mail,
   MessageSquare,
   MoreVertical,
   Phone,
+  ShieldOff,
   Sparkles,
+  Star,
   User,
 } from "lucide-react";
 import { useStore } from "@/lib/store";
@@ -23,8 +28,18 @@ function ProfilePageInner() {
   const router = useRouter();
   const contact = useStore((s) => s.contactById(id));
   const setContactNote = useStore((s) => s.setContactNote);
+  const toggleContactFavorite = useStore((s) => s.toggleContactFavorite);
+  const setContactBlocked = useStore((s) => s.setContactBlocked);
   const [tab, setTab] = useState<Tab>("card");
   const [noteDraft, setNoteDraft] = useState(contact?.note ?? "");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [blockDialogOpen, setBlockDialogOpen] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const showToast = (text: string) => {
+    setToast(text);
+    setTimeout(() => setToast(null), 2200);
+  };
 
   if (!contact) {
     return (
@@ -40,16 +55,103 @@ function ProfilePageInner() {
         <ChevronLeft size={24} />
       </button>
       <span className="flex-1" />
-      <button className="flex h-11 w-11 items-center justify-center rounded-xl text-text-2">
+      <button
+        onClick={() => setMenuOpen((v) => !v)}
+        className="flex h-11 w-11 items-center justify-center rounded-xl text-text-2 active:bg-surface-2"
+      >
         <MoreVertical size={22} />
       </button>
     </div>
   );
 
+  const overlays = (
+    <>
+      {menuOpen && (
+        <>
+          <div className="absolute inset-0 z-20" onClick={() => setMenuOpen(false)} />
+          <div className="absolute right-3 top-14 z-30 w-[200px] overflow-hidden rounded-2xl border border-line-2 bg-surface-3 shadow-[0_20px_50px_-10px_rgba(0,0,0,.7)]">
+            <button
+              onClick={() => {
+                toggleContactFavorite(contact.id);
+                setMenuOpen(false);
+                showToast(contact.favorite ? "즐겨찾기를 해제했습니다" : "즐겨찾기에 추가했습니다");
+              }}
+              className="flex w-full items-center gap-3 border-b border-line px-[18px] py-[15px] text-left text-[15px] font-semibold text-text active:bg-surface-2"
+            >
+              <Star size={19} className={contact.favorite ? "fill-accent text-accent" : "text-text-2"} />
+              {contact.favorite ? "즐겨찾기 해제" : "즐겨찾기 추가"}
+            </button>
+            <button
+              onClick={() => {
+                setMenuOpen(false);
+                setBlockDialogOpen(true);
+              }}
+              className="flex w-full items-center gap-3 border-b border-line px-[18px] py-[15px] text-left text-[15px] font-semibold text-text active:bg-surface-2"
+            >
+              <Ban size={19} className="text-text-2" />
+              차단하기
+            </button>
+            <button
+              onClick={() => {
+                setMenuOpen(false);
+                showToast("신고가 접수되었습니다");
+              }}
+              className="flex w-full items-center gap-3 px-[18px] py-[15px] text-left text-[15px] font-semibold text-[#f2777a] active:bg-surface-2"
+            >
+              <AlertTriangle size={19} className="text-[#f2777a]" />
+              신고하기
+            </button>
+          </div>
+        </>
+      )}
+
+      {blockDialogOpen && (
+        <div className="animate-scrim-in absolute inset-0 z-40 flex items-center justify-center bg-[rgba(6,6,8,.66)] p-7">
+          <div className="w-full overflow-hidden rounded-[18px] border border-line-2 bg-surface-3 shadow-[0_24px_60px_-12px_rgba(0,0,0,.8)]">
+            <div className="p-5">
+              <div className="text-center text-[17px] font-extrabold">
+                {contact.name}님을 차단하시겠어요?
+              </div>
+              <div className="mt-3 text-center text-[13.5px] leading-relaxed text-text-2">
+                차단하면 서로의 메시지가 보이지 않으며, 안건방에서의 기존 기록은 유지됩니다.
+              </div>
+            </div>
+            <div className="flex border-t border-line">
+              <button
+                onClick={() => setBlockDialogOpen(false)}
+                className="h-[52px] flex-1 text-[16px] font-extrabold text-text"
+              >
+                취소
+              </button>
+              <button
+                onClick={() => {
+                  setContactBlocked(contact.id, true);
+                  setBlockDialogOpen(false);
+                  showToast("차단했습니다");
+                }}
+                className="h-[52px] flex-1 border-l border-line text-[16px] font-extrabold text-[#ff6b6e]"
+              >
+                차단
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {toast && (
+        <div className="animate-pop-in absolute bottom-5 left-4 right-4 z-50 flex items-center gap-2 rounded-xl border border-st-done bg-[#122a1a] px-3.5 py-3 text-[13.5px] font-bold text-[#8bea9f] shadow-[0_10px_24px_-8px_rgba(0,0,0,.7)]">
+          <CheckIcon size={16} />
+          {toast}
+        </div>
+      )}
+    </>
+  );
+
   if (!contact.bizCardRegistered) {
     return (
-      <div className="flex h-full flex-col">
+      <div className="relative flex h-full flex-col">
         {header}
+        {overlays}
         <div className="flex flex-1 flex-col items-center justify-center gap-4 px-8 text-center">
           <div className="flex h-[72px] w-[72px] items-center justify-center rounded-full bg-surface-3 text-text-3">
             <User size={34} />
@@ -76,12 +178,20 @@ function ProfilePageInner() {
   const bc = contact.bizCard!;
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="relative flex h-full flex-col">
       {header}
+      {overlays}
       <div className="flex items-center justify-center gap-1.5 pt-0.5 text-[12px] font-semibold text-text-3">
         <BadgeCheck size={14} />
         본인이 등록한 정보입니다
       </div>
+
+      {contact.blocked && (
+        <div className="mx-4 mt-3 flex items-center gap-2 rounded-xl border border-line-2 bg-surface-2 px-3.5 py-2.5 text-[12.5px] font-semibold text-text-2">
+          <ShieldOff size={15} className="flex-none text-text-3" />
+          차단한 사용자입니다 · 서로의 메시지가 보이지 않습니다
+        </div>
+      )}
 
       <div className="flex items-center gap-3.5 p-4">
         <div className="min-w-0 flex-1">
@@ -97,9 +207,29 @@ function ProfilePageInner() {
       </div>
 
       <div className="flex gap-2.5 px-4 pb-4">
-        <ProfileAction icon={Phone} label="전화" cta />
-        <ProfileAction icon={MessageSquare} label="채팅" cta onClick={() => router.push("/")} />
-        <ProfileAction icon={Mail} label="이메일" />
+        <ProfileAction
+          icon={Phone}
+          label="전화"
+          cta
+          disabled={contact.blocked}
+          onClick={() => {
+            window.location.href = `tel:${bc.mobile}`;
+          }}
+        />
+        <ProfileAction
+          icon={MessageSquare}
+          label="채팅"
+          cta
+          disabled={contact.blocked}
+          onClick={() => router.push("/")}
+        />
+        <ProfileAction
+          icon={Mail}
+          label="이메일"
+          onClick={() => {
+            window.location.href = `mailto:${bc.email}`;
+          }}
+        />
         <ProfileAction
           icon={ClipboardList}
           label="함께한 안건"
@@ -228,18 +358,24 @@ function ProfileAction({
   icon: Icon,
   label,
   cta,
+  disabled,
   onClick,
 }: {
   icon: typeof Phone;
   label: string;
   cta?: boolean;
+  disabled?: boolean;
   onClick?: () => void;
 }) {
   return (
-    <button onClick={onClick} className="flex flex-1 flex-col items-center gap-1.5">
+    <button onClick={disabled ? undefined : onClick} className="flex flex-1 flex-col items-center gap-1.5">
       <div
         className={`flex h-[52px] w-[52px] items-center justify-center rounded-full border ${
-          cta ? "border-st-action bg-st-action text-white" : "border-line bg-surface-2 text-text"
+          disabled
+            ? "border-line bg-surface-2 text-text-3 opacity-50"
+            : cta
+              ? "border-st-action bg-st-action text-white"
+              : "border-line bg-surface-2 text-text"
         }`}
       >
         <Icon size={22} />

@@ -11,6 +11,7 @@ import {
   User,
   UserPlus,
 } from "lucide-react";
+import SearchReveal from "@/components/SearchReveal";
 import { useStore } from "@/lib/store";
 import type { Contact } from "@/lib/types";
 
@@ -21,6 +22,7 @@ export default function ContactsPage() {
   const contacts = useStore((s) => s.contacts);
   const [sort, setSort] = useState<SortMode>("recent");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [searchOpen, setSearchOpen] = useState(false);
 
   const groups = useMemo(() => {
     const map = new Map<string, Contact[]>();
@@ -47,10 +49,15 @@ export default function ContactsPage() {
       <div className="flex h-14 flex-none items-center gap-1.5 border-b border-line px-2 pl-[18px]">
         <span className="text-[20px] font-extrabold tracking-tight">연락처</span>
         <span className="flex-1" />
-        <button className="flex h-11 w-11 items-center justify-center rounded-xl text-text-2 active:bg-surface-2">
+        <button
+          onClick={() => setSearchOpen((v) => !v)}
+          className="flex h-11 w-11 items-center justify-center rounded-xl text-text-2 active:bg-surface-2"
+        >
           <Search size={22} />
         </button>
       </div>
+
+      <SearchReveal open={searchOpen} placeholder="이름 검색" onClose={() => setSearchOpen(false)} />
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <Link

@@ -37,3 +37,19 @@ export const STATUS_STYLES: Record<
 };
 
 export const STATUS_CYCLE: AgendaStatus[] = ["검토중", "조치중", "완료"];
+
+export type PinCategory = "review" | "action" | "done" | "pre";
+
+export const PIN_CATEGORY_COLOR: Record<PinCategory, string> = {
+  review: "#f59e0b",
+  action: "#3b82f6",
+  done: "#22c55e",
+  pre: "#8b5cf6",
+};
+
+export function statusToPinCategory(status: AgendaStatus): PinCategory {
+  if (status === "사전검토") return "pre";
+  if (status === "검토중") return "review";
+  if (status === "조치중") return "action";
+  return "done";
+}

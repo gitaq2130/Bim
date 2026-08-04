@@ -139,4 +139,6 @@ export interface Contact {
   activityPublic: boolean;
   activity: ActivityItem[];
   note?: string;
+  favorite?: boolean;
+  blocked?: boolean;
 }
