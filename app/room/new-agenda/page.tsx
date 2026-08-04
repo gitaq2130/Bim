@@ -2,7 +2,8 @@
 
 import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Camera, ChevronRight, Hammer, Map, MapPin, Pencil, UserPlus, X } from "lucide-react";
+import { Camera, ChevronRight, Hammer, Map, MapPin, UserPlus, X } from "lucide-react";
+import EditableChip from "@/components/EditableChip";
 import { useStore } from "@/lib/store";
 
 function NewAgendaPageInner() {
@@ -91,40 +92,24 @@ function NewAgendaPageInner() {
             </span>
           </div>
           <div className="flex flex-wrap gap-2.5">
-            <button
-              onClick={() => {
-                const v = window.prompt("위치를 입력하세요", draft.locationChip);
-                if (v) updateDraft({ locationChip: v });
-              }}
-              className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-line-2 bg-surface-2 px-3.5 py-2 text-[14px] font-semibold text-text-2"
-            >
-              <MapPin size={16} className="text-text-3" />
-              {draft.locationChip}
-              <Pencil size={15} className="text-text-3 opacity-70" />
-            </button>
-            <button
-              onClick={() => {
-                const v = window.prompt("공종을 입력하세요", draft.tradeChip);
-                if (v) updateDraft({ tradeChip: v });
-              }}
-              className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-line-2 bg-surface-2 px-3.5 py-2 text-[14px] font-semibold text-text-2"
-            >
-              <Hammer size={16} className="text-text-3" />
-              {draft.tradeChip}
-              <Pencil size={15} className="text-text-3 opacity-70" />
-            </button>
-            <button
-              onClick={() => {
-                const v = window.prompt("담당자를 입력하세요", draft.assigneeChip);
-                if (v) updateDraft({ assigneeChip: v });
-              }}
-              className={`inline-flex items-center gap-1.5 rounded-full border border-dashed px-3.5 py-2 text-[14px] font-semibold ${
-                draft.assigneeChip ? "border-line-2 bg-surface-2 text-text-2" : "border-line-2 text-text-3"
-              }`}
-            >
-              <UserPlus size={16} className="text-text-3" />
-              {draft.assigneeChip || "담당자 지정"}
-            </button>
+            <EditableChip
+              icon={MapPin}
+              value={draft.locationChip}
+              placeholder="위치 지정"
+              onChange={(v) => updateDraft({ locationChip: v })}
+            />
+            <EditableChip
+              icon={Hammer}
+              value={draft.tradeChip}
+              placeholder="공종 지정"
+              onChange={(v) => updateDraft({ tradeChip: v })}
+            />
+            <EditableChip
+              icon={UserPlus}
+              value={draft.assigneeChip}
+              placeholder="담당자 지정"
+              onChange={(v) => updateDraft({ assigneeChip: v })}
+            />
           </div>
         </div>
 

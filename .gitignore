@@ -17,6 +17,9 @@
 /.next/
 /out/
 
+# artifact bundle output (regenerate with `npm run artifact:build`)
+/artifact/dist/
+
 # production
 /build
 
