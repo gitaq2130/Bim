@@ -8,6 +8,9 @@ export interface Room {
   memberCount?: number;
   unread?: number;
   time: string;
+  favorite?: boolean;
+  pinned?: boolean;
+  muted?: boolean;
 }
 
 export type MessageKind =
@@ -84,6 +87,7 @@ export interface Agenda {
   photoCount?: number;
   participants: number;
   participantNames?: string[];
+  assigneeId?: string;
   createdLabel: string;
   isAfterHours?: boolean;
   ageLabel?: string;

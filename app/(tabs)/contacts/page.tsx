@@ -11,6 +11,7 @@ import {
   User,
   UserPlus,
 } from "lucide-react";
+import ContactListRow from "@/components/ContactListRow";
 import SearchReveal from "@/components/SearchReveal";
 import { useStore } from "@/lib/store";
 import { useDebouncedValue } from "@/lib/useDebouncedValue";
@@ -173,43 +174,7 @@ export default function ContactsPage() {
                 </span>
               </button>
               {!isCollapsed &&
-                list.map((c) => (
-                  <Link
-                    key={c.id}
-                    href={`/profile?id=${c.id}`}
-                    className="flex min-h-[66px] items-center gap-3.5 px-4 py-[11px] active:bg-surface-2"
-                  >
-                    <div
-                      className={`flex h-[46px] w-[46px] flex-none items-center justify-center rounded-full bg-surface-3 text-text-2 ${
-                        c.bizCardRegistered ? "" : "opacity-40"
-                      }`}
-                    >
-                      <User size={23} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-[7px]">
-                        <span
-                          className={`text-[15.5px] font-bold ${
-                            c.bizCardRegistered ? "" : "text-text-2"
-                          }`}
-                        >
-                          {c.name}
-                        </span>
-                        {!c.bizCardRegistered && (
-                          <span className="rounded-full border border-line bg-surface-3 px-2 py-[2px] text-[11px] font-bold text-text-3">
-                            명함 미등록
-                          </span>
-                        )}
-                      </div>
-                      <div className="mt-0.5 text-[13px] text-text-3">
-                        {[c.rank, c.trade].filter(Boolean).join(" · ")}
-                      </div>
-                    </div>
-                    <span className="flex-none rounded-[7px] border border-line bg-surface-2 px-[9px] py-[3px] text-[11px] font-bold text-text-2">
-                      {c.company}
-                    </span>
-                  </Link>
-                ))}
+                list.map((c) => <ContactListRow key={c.id} contact={c} />)}
             </div>
           );
         })}

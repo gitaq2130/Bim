@@ -15,15 +15,23 @@ const STRIPE = {
 type Filter = "전체" | "진행중" | "완료";
 
 function AgendaListPageInner() {
-  const roomId = useSearchParams().get("id") ?? "";
+  const searchParams = useSearchParams();
+  const roomId = searchParams.get("id") ?? "";
+  const assigneeId = searchParams.get("assignee");
+  const initialFilter = searchParams.get("f");
   const router = useRouter();
   const room = useStore((s) => s.roomById(roomId));
-  const allAgendas = useStore((s) => s.agendas);
-  const agendas = useMemo(
-    () => allAgendas.filter((a) => a.parentRoomId === roomId),
-    [allAgendas, roomId]
+  const assigneeContact = useStore((s) =>
+    assigneeId ? s.contactById(assigneeId) : undefined
   );
-  const [filter, setFilter] = useState<Filter>("전체");
+  const allAgendas = useStore((s) => s.agendas);
+  const agendas = useMemo(() => {
+    if (assigneeId) return allAgendas.filter((a) => a.assigneeId === assigneeId);
+    return allAgendas.filter((a) => a.parentRoomId === roomId);
+  }, [allAgendas, roomId, assigneeId]);
+  const [filter, setFilter] = useState<Filter>(
+    initialFilter === "진행중" || initialFilter === "완료" ? initialFilter : "전체"
+  );
 
   const inProgress = agendas.filter((a) => !a.status.startsWith("완료")).length;
   const done = agendas.filter((a) => a.status.startsWith("완료")).length;
@@ -37,7 +45,17 @@ function AgendaListPageInner() {
     return agendas.filter((a) => a.status.startsWith("완료"));
   }, [agendas, filter]);
 
-  if (!room) return null;
+  if (assigneeId) {
+    if (!assigneeContact) return null;
+  } else if (!room) {
+    return null;
+  }
+
+  const headerTitle = assigneeId
+    ? `${assigneeContact!.name} 담당 · 안건 리스트`
+    : `${room!.name} · 안건 리스트`;
+
+  const filterWord = filter === "전체" ? "" : `${filter} `;
 
   return (
     <div className="flex h-full flex-col">
@@ -45,14 +63,16 @@ function AgendaListPageInner() {
         <button onClick={() => router.back()} className="flex h-11 w-11 items-center justify-center rounded-xl text-text-2">
           <ChevronLeft size={24} />
         </button>
-        <span className="text-[17px] font-extrabold">{room.name} · 안건 리스트</span>
+        <span className="text-[17px] font-extrabold">{headerTitle}</span>
         <span className="flex-1" />
-        <button
-          onClick={() => router.push(`/room/floorplan?id=${roomId}`)}
-          className="flex h-11 w-11 items-center justify-center rounded-xl text-text-2 active:bg-surface-2"
-        >
-          <MapPinned size={22} />
-        </button>
+        {!assigneeId && (
+          <button
+            onClick={() => router.push(`/room/floorplan?id=${roomId}`)}
+            className="flex h-11 w-11 items-center justify-center rounded-xl text-text-2 active:bg-surface-2"
+          >
+            <MapPinned size={22} />
+          </button>
+        )}
       </div>
 
       <div className="flex flex-none gap-2.5 p-4">
@@ -70,7 +90,7 @@ function AgendaListPageInner() {
         </div>
       </div>
 
-      <div className="flex flex-none gap-2 px-4 pb-3">
+      <div className="flex flex-none flex-wrap items-center gap-2 px-4 pb-3">
         {(["전체", "진행중", "완료"] as Filter[]).map((f) => (
           <button
             key={f}
@@ -82,6 +102,11 @@ function AgendaListPageInner() {
             {f}
           </button>
         ))}
+        {assigneeId && assigneeContact && (
+          <span className="flex h-[34px] items-center rounded-full border border-accent/40 bg-[rgba(255,214,10,.1)] px-4 text-[13px] font-bold text-accent">
+            {assigneeContact.name} 담당 · {filter}
+          </span>
+        )}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -113,6 +138,11 @@ function AgendaListPageInner() {
         ))}
         {filtered.length === 0 && (
           <div className="p-8 text-center text-[14px] text-text-3">해당하는 안건이 없습니다.</div>
+        )}
+        {assigneeId && assigneeContact && (
+          <div className="p-4 text-center text-[12px] font-semibold text-text-3">
+            {assigneeContact.name}님이 담당자로 지정된 {filterWord}안건만 표시됩니다
+          </div>
         )}
       </div>
     </div>

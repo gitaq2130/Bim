@@ -25,6 +25,9 @@ export default function HomePage() {
       )
     : rooms;
 
+  const pinnedRooms = filteredRooms.filter((r) => r.pinned);
+  const unpinnedRooms = filteredRooms.filter((r) => !r.pinned);
+
   const closeSearch = () => {
     setSearchOpen(false);
     setQuery("");
@@ -63,7 +66,18 @@ export default function HomePage() {
         </div>
       ) : (
         <div>
-          {filteredRooms.map((room) => (
+          {pinnedRooms.length > 0 && (
+            <>
+              <div className="px-4 pb-1.5 pt-3 text-[12px] font-extrabold text-text-2">
+                고정된 채팅방
+              </div>
+              {pinnedRooms.map((room) => (
+                <RoomListItem key={room.id} room={room} />
+              ))}
+              <div className="h-2 border-b border-line bg-surface" />
+            </>
+          )}
+          {unpinnedRooms.map((room) => (
             <RoomListItem key={room.id} room={room} />
           ))}
         </div>

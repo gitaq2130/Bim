@@ -72,11 +72,16 @@ interface AgendaTalkState {
   toggleContactFavorite: (id: string) => void;
   setContactBlocked: (id: string, blocked: boolean) => void;
 
+  toggleRoomFavorite: (roomId: string) => void;
+  toggleRoomPinned: (roomId: string) => void;
+  toggleRoomMuted: (roomId: string) => void;
+
   activeAgendaCount: (roomId: string) => number;
   agendaByNo: (no: number) => Agenda | undefined;
   roomMessages: (roomId: string) => Message[];
   roomById: (roomId: string) => Room | undefined;
   roomPreviewText: (roomId: string) => string;
+  setAgendaAssignee: (no: number, contactId: string) => void;
 
   sendText: (roomId: string, text: string) => void;
   sendPhoto: (roomId: string) => void;
@@ -152,6 +157,19 @@ export const useStore = create<AgendaTalkState>((set, get) => ({
       contacts: s.contacts.map((c) => (c.id === id ? { ...c, blocked } : c)),
     })),
 
+  toggleRoomFavorite: (roomId) =>
+    set((s) => ({
+      rooms: s.rooms.map((r) => (r.id === roomId ? { ...r, favorite: !r.favorite } : r)),
+    })),
+  toggleRoomPinned: (roomId) =>
+    set((s) => ({
+      rooms: s.rooms.map((r) => (r.id === roomId ? { ...r, pinned: !r.pinned } : r)),
+    })),
+  toggleRoomMuted: (roomId) =>
+    set((s) => ({
+      rooms: s.rooms.map((r) => (r.id === roomId ? { ...r, muted: !r.muted } : r)),
+    })),
+
   activeAgendaCount: (roomId) =>
     get().agendas.filter(
       (a) => a.parentRoomId === roomId && !a.status.startsWith("완료")
@@ -224,6 +242,26 @@ export const useStore = create<AgendaTalkState>((set, get) => ({
         { id: `m-${Date.now()}`, roomId, kind: "system", text, time: "" },
       ],
     })),
+
+  setAgendaAssignee: (no, contactId) =>
+    set((s) => {
+      const contact = s.contacts.find((c) => c.id === contactId);
+      return {
+        agendas: s.agendas.map((a) => (a.no === no ? { ...a, assigneeId: contactId } : a)),
+        messages: contact
+          ? [
+              ...s.messages,
+              {
+                id: `m-${Date.now()}`,
+                roomId: `agenda-${no}`,
+                kind: "system" as const,
+                text: `담당자가 ${contact.name}(으)로 지정되었습니다`,
+                time: "",
+              },
+            ]
+          : s.messages,
+      };
+    }),
 
   createAgenda: ({ parentRoomId, title, photoLabel, photoCount, floorplanLabel, pin }) => {
     const no = get().nextAgendaNo;
