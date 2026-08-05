@@ -1,19 +1,20 @@
 "use client";
 
-import { useState } from "react";
 import { Search, X } from "lucide-react";
 
 export default function SearchReveal({
   open,
+  value,
+  onChange,
   placeholder,
   onClose,
 }: {
   open: boolean;
+  value: string;
+  onChange: (value: string) => void;
   placeholder: string;
   onClose: () => void;
 }) {
-  const [query, setQuery] = useState("");
-
   if (!open) return null;
 
   return (
@@ -23,8 +24,8 @@ export default function SearchReveal({
           <Search size={17} className="flex-none text-text-3" />
           <input
             autoFocus
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
             placeholder={placeholder}
             className="w-full min-w-0 bg-transparent text-[14px] text-text placeholder:text-text-3 focus:outline-none"
           />

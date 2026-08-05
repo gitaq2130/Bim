@@ -6,11 +6,29 @@ import { Search, Settings2 } from "lucide-react";
 import RoomListItem from "@/components/RoomListItem";
 import SearchReveal from "@/components/SearchReveal";
 import { useStore } from "@/lib/store";
+import { useDebouncedValue } from "@/lib/useDebouncedValue";
 
 export default function HomePage() {
   const router = useRouter();
   const rooms = useStore((s) => s.rooms);
+  const roomPreviewText = useStore((s) => s.roomPreviewText);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const debouncedQuery = useDebouncedValue(query);
+  const q = debouncedQuery.trim().toLowerCase();
+
+  const filteredRooms = q
+    ? rooms.filter(
+        (r) =>
+          r.name.toLowerCase().includes(q) ||
+          roomPreviewText(r.id).toLowerCase().includes(q)
+      )
+    : rooms;
+
+  const closeSearch = () => {
+    setSearchOpen(false);
+    setQuery("");
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -31,20 +49,25 @@ export default function HomePage() {
         </button>
       </div>
 
-      <SearchReveal open={searchOpen} placeholder="채팅방 검색" onClose={() => setSearchOpen(false)} />
+      <SearchReveal
+        open={searchOpen}
+        value={query}
+        onChange={setQuery}
+        placeholder="채팅방 검색"
+        onClose={closeSearch}
+      />
 
-      <div className="px-4 pb-1.5 pt-3">
-        <div className="flex h-11 items-center gap-2 rounded-xl bg-surface-2 px-3.5 text-[15px] text-text-3">
-          <Search size={18} />
-          채팅방 검색
+      {q && filteredRooms.length === 0 ? (
+        <div className="flex flex-1 items-center justify-center text-[14px] text-text-3">
+          검색 결과가 없습니다
         </div>
-      </div>
-
-      <div>
-        {rooms.map((room) => (
-          <RoomListItem key={room.id} room={room} />
-        ))}
-      </div>
+      ) : (
+        <div>
+          {filteredRooms.map((room) => (
+            <RoomListItem key={room.id} room={room} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

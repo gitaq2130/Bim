@@ -7,16 +7,7 @@ import type { Room } from "@/lib/types";
 
 export default function RoomListItem({ room }: { room: Room }) {
   const activeCount = useStore((s) => s.activeAgendaCount(room.id));
-  const lastMessage = useStore((s) => {
-    const msgs = s.roomMessages(room.id).filter((m) => m.kind !== "system");
-    const last = msgs[msgs.length - 1];
-    if (!last) return "";
-    if (last.kind === "text") return `${last.sender ? last.sender + ": " : ""}${last.text}`;
-    if (last.kind === "photo") return "사진을 보냈습니다";
-    if (last.kind === "file") return `파일: ${last.fileName}`;
-    if (last.kind === "agenda-card") return "안건이 등록되었습니다";
-    return "";
-  });
+  const lastMessage = useStore((s) => s.roomPreviewText(room.id));
   return (
     <Link
       href={`/room?id=${room.id}`}

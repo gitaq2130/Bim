@@ -1,15 +1,16 @@
 "use client";
 
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft, ClipboardList, Menu, Search } from "lucide-react";
 import ChatInput from "@/components/ChatInput";
 import MessageItem from "@/components/MessageItem";
+import MessageSearchBar from "@/components/MessageSearchBar";
 import RoomIcon from "@/components/RoomIcon";
-import SearchReveal from "@/components/SearchReveal";
 import { useStore } from "@/lib/store";
 import { useAutoScrollToBottom } from "@/lib/useAutoScroll";
+import { useDebouncedValue } from "@/lib/useDebouncedValue";
 
 function RoomPageInner() {
   const roomId = useSearchParams().get("id") ?? "";
@@ -23,6 +24,48 @@ function RoomPageInner() {
   const activeCount = useStore((s) => s.activeAgendaCount(roomId));
   const scrollRef = useAutoScrollToBottom(messages.length);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const debouncedQuery = useDebouncedValue(query);
+  const q = debouncedQuery.trim().toLowerCase();
+
+  const matchIds = useMemo(() => {
+    if (!q) return [];
+    return messages
+      .filter((m) => m.kind === "text" && (m.text ?? "").toLowerCase().includes(q))
+      .map((m) => m.id);
+  }, [messages, q]);
+
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const itemRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  const [prevQ, setPrevQ] = useState(q);
+  if (q !== prevQ) {
+    setPrevQ(q);
+    setCurrentIndex(0);
+  }
+
+  useEffect(() => {
+    if (!matchIds.length) return;
+    const idx = ((currentIndex % matchIds.length) + matchIds.length) % matchIds.length;
+    const id = matchIds[idx];
+    const el = itemRefs.current[id];
+    const container = scrollRef.current;
+    if (el && container) {
+      container.scrollTo({
+        top: el.offsetTop - container.clientHeight / 2 + el.clientHeight / 2,
+        behavior: "smooth",
+      });
+    }
+  }, [currentIndex, matchIds, scrollRef]);
+
+  const currentMatchId = matchIds.length
+    ? matchIds[((currentIndex % matchIds.length) + matchIds.length) % matchIds.length]
+    : null;
+
+  const closeSearch = () => {
+    setSearchOpen(false);
+    setQuery("");
+  };
 
   if (!room) {
     return (
@@ -43,7 +86,7 @@ function RoomPageInner() {
         {room.memberCount && <span className="ml-0.5 text-[13px] font-semibold text-text-2">{room.memberCount}</span>}
         <span className="flex-1" />
         <button
-          onClick={() => setSearchOpen((v) => !v)}
+          onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
           className="flex h-11 w-11 items-center justify-center rounded-xl text-text-2 active:bg-surface-2"
         >
           <Search size={22} />
@@ -58,14 +101,34 @@ function RoomPageInner() {
         ) : null}
       </div>
 
-      <SearchReveal open={searchOpen} placeholder="대화 내용 검색" onClose={() => setSearchOpen(false)} />
+      <MessageSearchBar
+        open={searchOpen}
+        value={query}
+        onChange={setQuery}
+        current={
+          matchIds.length
+            ? ((currentIndex % matchIds.length) + matchIds.length) % matchIds.length + 1
+            : 0
+        }
+        total={matchIds.length}
+        onPrev={() => setCurrentIndex((i) => i - 1)}
+        onNext={() => setCurrentIndex((i) => i + 1)}
+      />
 
       <div
         ref={scrollRef}
         className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto bg-bg px-3.5 pb-2 pt-4 [&>*]:shrink-0"
       >
         {messages.map((m) => (
-          <MessageItem key={m.id} message={m} />
+          <MessageItem
+            key={m.id}
+            message={m}
+            matched={matchIds.includes(m.id)}
+            current={m.id === currentMatchId}
+            msgRef={(el) => {
+              itemRefs.current[m.id] = el;
+            }}
+          />
         ))}
         {messages.length === 0 && (
           <div className="mt-10 flex flex-col items-center gap-2 text-text-3">

@@ -15,9 +15,15 @@ const STRIPE = {
 export default function MessageItem({
   message,
   interactive = false,
+  matched = false,
+  current = false,
+  msgRef,
 }: {
   message: Message;
   interactive?: boolean;
+  matched?: boolean;
+  current?: boolean;
+  msgRef?: (el: HTMLDivElement | null) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -50,6 +56,7 @@ export default function MessageItem({
 
   return (
     <div
+      ref={msgRef}
       className={`flex max-w-[82%] gap-2.5 ${outgoing ? "flex-row-reverse self-end" : "self-start"}`}
     >
       {!outgoing && (
@@ -78,6 +85,8 @@ export default function MessageItem({
                 message.isDecisionBasis
                   ? "rounded-l-[4px]! border-l-[3px] border-accent bg-[rgba(245,166,35,.06)]"
                   : ""
+              } ${matched ? "outline outline-2 outline-offset-2 outline-[#f59e0b]" : ""} ${
+                current ? "bg-[rgba(245,158,11,.28)]!" : ""
               }`}
             >
               {message.text}

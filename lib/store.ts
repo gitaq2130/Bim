@@ -76,6 +76,7 @@ interface AgendaTalkState {
   agendaByNo: (no: number) => Agenda | undefined;
   roomMessages: (roomId: string) => Message[];
   roomById: (roomId: string) => Room | undefined;
+  roomPreviewText: (roomId: string) => string;
 
   sendText: (roomId: string, text: string) => void;
   sendPhoto: (roomId: string) => void;
@@ -159,6 +160,16 @@ export const useStore = create<AgendaTalkState>((set, get) => ({
   agendaByNo: (no) => get().agendas.find((a) => a.no === no),
   roomMessages: (roomId) => get().messages.filter((m) => m.roomId === roomId),
   roomById: (roomId) => get().rooms.find((r) => r.id === roomId),
+  roomPreviewText: (roomId) => {
+    const msgs = get().messages.filter((m) => m.roomId === roomId && m.kind !== "system");
+    const last = msgs[msgs.length - 1];
+    if (!last) return "";
+    if (last.kind === "text") return `${last.sender ? last.sender + ": " : ""}${last.text ?? ""}`;
+    if (last.kind === "photo") return "사진을 보냈습니다";
+    if (last.kind === "file") return `파일: ${last.fileName ?? ""}`;
+    if (last.kind === "agenda-card") return "안건이 등록되었습니다";
+    return "";
+  },
 
   sendText: (roomId, text) =>
     set((s) => ({

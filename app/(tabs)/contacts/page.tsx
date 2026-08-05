@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import SearchReveal from "@/components/SearchReveal";
 import { useStore } from "@/lib/store";
+import { useDebouncedValue } from "@/lib/useDebouncedValue";
 import type { Contact } from "@/lib/types";
 
 type SortMode = "recent" | "abc";
@@ -23,6 +24,9 @@ export default function ContactsPage() {
   const [sort, setSort] = useState<SortMode>("recent");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const debouncedQuery = useDebouncedValue(query);
+  const q = debouncedQuery.trim().toLowerCase();
 
   const groups = useMemo(() => {
     const map = new Map<string, Contact[]>();
@@ -41,6 +45,23 @@ export default function ContactsPage() {
     return Array.from(map.entries());
   }, [contacts, sort]);
 
+  const filteredGroups = useMemo(() => {
+    if (!q) return groups;
+    return groups
+      .map(([group, list]) => [
+        group,
+        list.filter(
+          (c) =>
+            c.name.toLowerCase().includes(q) ||
+            c.rank.toLowerCase().includes(q) ||
+            c.company.toLowerCase().includes(q)
+        ),
+      ] as [string, Contact[]])
+      .filter(([, list]) => list.length > 0);
+  }, [groups, q]);
+
+  const totalMatches = filteredGroups.reduce((sum, [, list]) => sum + list.length, 0);
+
   const registeredCount = contacts.filter((c) => c.bizCardRegistered).length;
   const groupEmoji: Record<string, string> = { 건축: "🔨", 설비: "🔧", 전기: "⚡", 토목: "⛰️" };
 
@@ -57,7 +78,16 @@ export default function ContactsPage() {
         </button>
       </div>
 
-      <SearchReveal open={searchOpen} placeholder="이름 검색" onClose={() => setSearchOpen(false)} />
+      <SearchReveal
+        open={searchOpen}
+        value={query}
+        onChange={setQuery}
+        placeholder="이름 검색"
+        onClose={() => {
+          setSearchOpen(false);
+          setQuery("");
+        }}
+      />
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <Link
@@ -116,8 +146,14 @@ export default function ContactsPage() {
           </div>
         </div>
 
-        {groups.map(([group, list]) => {
-          const isCollapsed = collapsed[group];
+        {q && totalMatches === 0 && (
+          <div className="flex flex-col items-center gap-2 py-16 text-text-3">
+            <span className="text-[14px]">검색 결과가 없습니다</span>
+          </div>
+        )}
+
+        {filteredGroups.map(([group, list]) => {
+          const isCollapsed = q ? false : collapsed[group];
           return (
             <div key={group}>
               <button
