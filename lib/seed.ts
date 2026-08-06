@@ -1,4 +1,4 @@
-import type { Agenda, Contact, Me, Message, Room } from "./types";
+import type { Agenda, Contact, ContractorCompany, Me, Message, Room, Site } from "./types";
 
 export const seedRooms: Room[] = [
   {
@@ -514,5 +514,29 @@ export const seedContacts: Contact[] = [
     lastTalkedLabel: "5일 전",
     activityPublic: false,
     activity: [],
+  },
+];
+
+export const seedSites: Site[] = [
+  { id: "site-gochang", name: "고창CDC 물류센터 신축공사", location: "전북 고창군 · A~C동" },
+  { id: "site-pangyo", name: "판교 데이터센터 신축", location: "경기 성남시 분당구 판교동" },
+  { id: "site-busan", name: "부산 신항 물류단지", location: "부산 강서구 명지동" },
+];
+
+export const seedContractors: ContractorCompany[] = [
+  { id: "con-dongbu", siteId: "site-gochang", trade: "건축", companyName: "동부건설", status: "approved" },
+  {
+    id: "con-daemyung-elec",
+    siteId: "site-gochang",
+    trade: "전기",
+    companyName: "대명전기",
+    status: "approved",
+  },
+  {
+    id: "con-safetech",
+    siteId: "site-gochang",
+    trade: "소방",
+    companyName: "세이프테크소방",
+    status: "approved",
   },
 ];

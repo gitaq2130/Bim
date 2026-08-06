@@ -1,17 +1,30 @@
 "use client";
 
 import { create } from "zustand";
-import { seedAgendas, seedContacts, seedMe, seedMessages, seedRooms } from "./seed";
+import {
+  seedAgendas,
+  seedContacts,
+  seedContractors,
+  seedMe,
+  seedMessages,
+  seedRooms,
+  seedSites,
+} from "./seed";
 import type {
   Agenda,
   AgendaStatus,
   BizCard,
   CompleteForm,
   Contact,
+  ContractorCompany,
+  ContractorTrade,
   Me,
   Message,
   Room,
+  Site,
   TechCase,
+  UserRegistration,
+  UserRole,
 } from "./types";
 
 function nowLabel() {
@@ -49,6 +62,24 @@ const emptyDraft: DraftAgenda = {
   assigneeChip: "",
 };
 
+export interface OnboardingDraft {
+  role: UserRole | null;
+  siteId: string | null;
+  trade: ContractorTrade | null;
+  process: string;
+  companyName: string;
+  parentContractorId: string | null;
+}
+
+const emptyOnboardingDraft: OnboardingDraft = {
+  role: null,
+  siteId: null,
+  trade: null,
+  process: "",
+  companyName: "",
+  parentContractorId: null,
+};
+
 interface AgendaTalkState {
   rooms: Room[];
   messages: Message[];
@@ -76,6 +107,16 @@ interface AgendaTalkState {
   toggleRoomFavorite: (roomId: string) => void;
   toggleRoomPinned: (roomId: string) => void;
   toggleRoomMuted: (roomId: string) => void;
+
+  sites: Site[];
+  contractors: ContractorCompany[];
+  siteById: (id: string) => Site | undefined;
+  registration: UserRegistration | null;
+  onboardingDraft: OnboardingDraft;
+  updateOnboardingDraft: (partial: Partial<OnboardingDraft>) => void;
+  resetOnboardingDraft: () => void;
+  submitRegistration: () => void;
+  cancelRegistration: () => void;
 
   activeAgendaCount: (roomId: string) => number;
   agendaByNo: (no: number) => Agenda | undefined;
@@ -170,6 +211,62 @@ export const useStore = create<AgendaTalkState>((set, get) => ({
     set((s) => ({
       rooms: s.rooms.map((r) => (r.id === roomId ? { ...r, muted: !r.muted } : r)),
     })),
+
+  sites: seedSites,
+  contractors: seedContractors,
+  siteById: (id) => get().sites.find((s) => s.id === id),
+  registration: null,
+  onboardingDraft: emptyOnboardingDraft,
+  updateOnboardingDraft: (partial) =>
+    set((s) => ({ onboardingDraft: { ...s.onboardingDraft, ...partial } })),
+  resetOnboardingDraft: () => set({ onboardingDraft: emptyOnboardingDraft }),
+
+  submitRegistration: () =>
+    set((s) => {
+      const d = s.onboardingDraft;
+      if (!d.role || !d.siteId) return s;
+      const site = s.sites.find((x) => x.id === d.siteId);
+      if (!site) return s;
+
+      if (d.role === "owner" || d.role === "hanmi") {
+        const registration: UserRegistration = {
+          role: d.role,
+          siteId: d.siteId,
+          siteName: site.name,
+          approvalTarget: "",
+          status: "instant",
+        };
+        return { registration };
+      }
+
+      if (d.role === "contractor") {
+        const registration: UserRegistration = {
+          role: d.role,
+          siteId: d.siteId,
+          siteName: site.name,
+          trade: d.trade ?? undefined,
+          companyName: d.companyName,
+          approvalTarget: "한미글로벌 담당자",
+          status: "pending",
+        };
+        return { registration };
+      }
+
+      const parent = s.contractors.find((c) => c.id === d.parentContractorId);
+      const registration: UserRegistration = {
+        role: d.role,
+        siteId: d.siteId,
+        siteName: site.name,
+        process: d.process,
+        companyName: d.companyName,
+        parentContractorId: d.parentContractorId ?? undefined,
+        approvalTarget: parent ? `${parent.companyName} 소장` : "",
+        status: "pending",
+      };
+      return { registration };
+    }),
+
+  cancelRegistration: () => set({ registration: null, onboardingDraft: emptyOnboardingDraft }),
 
   activeAgendaCount: (roomId) =>
     get().agendas.filter(

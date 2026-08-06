@@ -146,3 +146,36 @@ export interface Contact {
   favorite?: boolean;
   blocked?: boolean;
 }
+
+export type UserRole = "owner" | "hanmi" | "contractor" | "subcontractor";
+
+export const CONTRACTOR_TRADES = ["건축", "전기", "통신", "소방"] as const;
+export type ContractorTrade = (typeof CONTRACTOR_TRADES)[number];
+
+export type RegistrationStatus = "instant" | "pending" | "approved" | "rejected";
+
+export interface Site {
+  id: string;
+  name: string;
+  location: string;
+}
+
+export interface ContractorCompany {
+  id: string;
+  siteId: string;
+  trade: ContractorTrade;
+  companyName: string;
+  status: RegistrationStatus;
+}
+
+export interface UserRegistration {
+  role: UserRole;
+  siteId: string;
+  siteName: string;
+  trade?: ContractorTrade;
+  process?: string;
+  companyName?: string;
+  parentContractorId?: string;
+  approvalTarget: string;
+  status: RegistrationStatus;
+}
