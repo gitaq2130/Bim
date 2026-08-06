@@ -65,6 +65,7 @@ interface AgendaTalkState {
     name: string;
     rank: string;
     company: string;
+    trade: string;
     bizCard: BizCard;
   }) => void;
   updateMe: (partial: Partial<Me>) => void;
@@ -135,9 +136,9 @@ export const useStore = create<AgendaTalkState>((set, get) => ({
   contacts: seedContacts,
   contactById: (id) => get().contacts.find((c) => c.id === id),
 
-  registerMyBizCard: ({ name, rank, company, bizCard }) =>
+  registerMyBizCard: ({ name, rank, company, trade, bizCard }) =>
     set((s) => ({
-      me: { ...s.me, name, rank, company, bizCard, bizCardRegistered: true },
+      me: { ...s.me, name, rank, company, trade, bizCard, bizCardRegistered: true },
     })),
 
   updateMe: (partial) => set((s) => ({ me: { ...s.me, ...partial } })),

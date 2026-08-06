@@ -11,6 +11,7 @@ import RoomIcon from "@/components/RoomIcon";
 import { useStore } from "@/lib/store";
 import { useAutoScrollToBottom } from "@/lib/useAutoScroll";
 import { useDebouncedValue } from "@/lib/useDebouncedValue";
+import { computeUnreadCounts } from "@/lib/unread";
 
 function RoomPageInner() {
   const roomId = useSearchParams().get("id") ?? "";
@@ -61,6 +62,11 @@ function RoomPageInner() {
   const currentMatchId = matchIds.length
     ? matchIds[((currentIndex % matchIds.length) + matchIds.length) % matchIds.length]
     : null;
+
+  const unreadCounts = useMemo(
+    () => computeUnreadCounts(messages, room?.memberCount ?? 0),
+    [messages, room?.memberCount]
+  );
 
   const closeSearch = () => {
     setSearchOpen(false);
@@ -125,6 +131,7 @@ function RoomPageInner() {
             message={m}
             matched={matchIds.includes(m.id)}
             current={m.id === currentMatchId}
+            unreadCount={unreadCounts.get(m.id) ?? 0}
             msgRef={(el) => {
               itemRefs.current[m.id] = el;
             }}

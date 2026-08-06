@@ -14,7 +14,9 @@ export default function MyProfilePage() {
   const [editing, setEditing] = useState(me.bizCardRegistered);
   const [photoAdded, setPhotoAdded] = useState(me.bizCardRegistered);
   const [name, setName] = useState(me.name);
-  const [rankCompany, setRankCompany] = useState(`${me.rank} · ${me.company}`);
+  const [rank, setRank] = useState(me.rank);
+  const [company, setCompany] = useState(me.company);
+  const [trade, setTrade] = useState(me.trade);
   const [mobile, setMobile] = useState(me.bizCard?.mobile ?? "");
   const [email, setEmail] = useState(me.bizCard?.email ?? "");
   const [activityPublic, setActivityPublic] = useState(me.activityPublic);
@@ -49,14 +51,11 @@ export default function MyProfilePage() {
   }
 
   const save = () => {
-    const [rank, company] = rankCompany.includes("·")
-      ? rankCompany.split("·").map((v) => v.trim())
-      : [rankCompany.trim(), me.company];
-
     registerMyBizCard({
       name,
       rank: rank || me.rank,
       company: company || me.company,
+      trade: trade || me.trade,
       bizCard: {
         nameEn: me.bizCard?.nameEn ?? name.toUpperCase(),
         address: me.site,
@@ -101,7 +100,9 @@ export default function MyProfilePage() {
         </button>
 
         <Field label="이름" value={name} onChange={setName} />
-        <Field label="직급 / 소속" value={rankCompany} onChange={setRankCompany} />
+        <Field label="직급" value={rank} onChange={setRank} placeholder="예: 현장소장" />
+        <Field label="회사" value={company} onChange={setCompany} placeholder="예: 동부건설" />
+        <Field label="파트" value={trade} onChange={setTrade} placeholder="예: 철근공사" />
         <Field label="휴대전화" value={mobile} onChange={setMobile} placeholder="휴대전화를 입력하세요" />
         <Field label="이메일" value={email} onChange={setEmail} placeholder="이메일을 입력하세요" />
 

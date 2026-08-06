@@ -22,6 +22,7 @@ import ReportSheet from "@/components/ReportSheet";
 import CompleteSheet from "@/components/CompleteSheet";
 import { useStore } from "@/lib/store";
 import { useAutoScrollToBottom } from "@/lib/useAutoScroll";
+import { computeUnreadCounts } from "@/lib/unread";
 
 function AgendaRoomPageInner() {
   const no = Number(useSearchParams().get("no") ?? "");
@@ -35,6 +36,10 @@ function AgendaRoomPageInner() {
   );
   const setAgendaStatus = useStore((s) => s.setAgendaStatus);
   const scrollRef = useAutoScrollToBottom(messages.length);
+  const unreadCounts = useMemo(
+    () => computeUnreadCounts(messages, agenda?.participants ?? 0),
+    [messages, agenda?.participants]
+  );
 
   const [sheet, setSheet] = useState<
     "status" | "assignee" | "similar" | "report" | "complete" | null
@@ -77,7 +82,12 @@ function AgendaRoomPageInner() {
         className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto bg-bg px-3.5 pb-2 pt-4 [&>*]:shrink-0"
       >
         {messages.map((m) => (
-          <MessageItem key={m.id} message={m} interactive />
+          <MessageItem
+            key={m.id}
+            message={m}
+            interactive
+            unreadCount={unreadCounts.get(m.id) ?? 0}
+          />
         ))}
       </div>
 

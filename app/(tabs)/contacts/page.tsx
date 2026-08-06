@@ -19,10 +19,12 @@ import { useDebouncedValue } from "@/lib/useDebouncedValue";
 import type { Contact } from "@/lib/types";
 
 type SortMode = "recent" | "abc";
+type GroupMode = "trade" | "company";
 
 export default function ContactsPage() {
   const me = useStore((s) => s.me);
   const contacts = useStore((s) => s.contacts);
+  const [groupBy, setGroupBy] = useState<GroupMode>("trade");
   const [sort, setSort] = useState<SortMode>("recent");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [searchOpen, setSearchOpen] = useState(false);
@@ -46,9 +48,10 @@ export default function ContactsPage() {
   const groups = useMemo(() => {
     const map = new Map<string, Contact[]>();
     for (const c of contacts) {
-      const list = map.get(c.tradeGroup) ?? [];
+      const key = groupBy === "trade" ? c.tradeGroup : c.company;
+      const list = map.get(key) ?? [];
       list.push(c);
-      map.set(c.tradeGroup, list);
+      map.set(key, list);
     }
     for (const list of map.values()) {
       list.sort((a, b) =>
@@ -58,7 +61,7 @@ export default function ContactsPage() {
       );
     }
     return Array.from(map.entries());
-  }, [contacts, sort]);
+  }, [contacts, sort, groupBy]);
 
   const filteredGroups = useMemo(() => {
     if (!q) return groups;
@@ -140,20 +143,43 @@ export default function ContactsPage() {
         </Link>
 
         <div className="flex items-center gap-2 px-4 pb-1.5 pt-3">
-          <span className="flex-1 text-[13px] font-extrabold text-text-2">공종별 담당자</span>
+          <span className="flex-1 text-[13px] font-extrabold text-text-2">
+            {groupBy === "trade" ? "공종별 담당자" : "업체별 담당자"}
+          </span>
           <div className="flex overflow-hidden rounded-[9px] border border-line bg-surface-2">
             <button
-              onClick={() => setSort("recent")}
+              onClick={() => setGroupBy("trade")}
               className={`px-2.5 py-[5px] text-[12px] font-bold ${
-                sort === "recent" ? "bg-surface-3 text-text" : "text-text-3"
+                groupBy === "trade" ? "bg-surface-3 text-text" : "text-text-3"
+              }`}
+            >
+              공종별
+            </button>
+            <button
+              onClick={() => setGroupBy("company")}
+              className={`px-2.5 py-[5px] text-[12px] font-bold ${
+                groupBy === "company" ? "bg-surface-3 text-text" : "text-text-3"
+              }`}
+            >
+              업체별
+            </button>
+          </div>
+        </div>
+
+        <div className="flex justify-end px-4 pb-1.5">
+          <div className="flex overflow-hidden rounded-lg border border-line-2 bg-surface">
+            <button
+              onClick={() => setSort("recent")}
+              className={`px-2 py-1 text-[11px] font-semibold ${
+                sort === "recent" ? "bg-surface-3 text-text-2" : "text-text-3"
               }`}
             >
               최근 대화순
             </button>
             <button
               onClick={() => setSort("abc")}
-              className={`px-2.5 py-[5px] text-[12px] font-bold ${
-                sort === "abc" ? "bg-surface-3 text-text" : "text-text-3"
+              className={`px-2 py-1 text-[11px] font-semibold ${
+                sort === "abc" ? "bg-surface-3 text-text-2" : "text-text-3"
               }`}
             >
               가나다순
@@ -176,7 +202,7 @@ export default function ContactsPage() {
                 className="flex w-full items-center gap-2 px-4 pb-2 pt-3"
               >
                 <span className="text-[12px] font-extrabold text-text-2">
-                  {groupEmoji[group] ?? "🏗️"} {group}
+                  {groupBy === "trade" ? (groupEmoji[group] ?? "🏗️") : "🏢"} {group}
                 </span>
                 <span className="text-[12px] font-semibold text-text-3">{list.length}명</span>
                 <span className="ml-auto">
@@ -189,7 +215,12 @@ export default function ContactsPage() {
               </button>
               {!isCollapsed &&
                 list.map((c) => (
-                  <ContactListRow key={c.id} contact={c} onLongPress={handleLongPress} />
+                  <ContactListRow
+                    key={c.id}
+                    contact={c}
+                    groupBy={groupBy}
+                    onLongPress={handleLongPress}
+                  />
                 ))}
             </div>
           );

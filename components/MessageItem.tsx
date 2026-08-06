@@ -18,12 +18,14 @@ export default function MessageItem({
   matched = false,
   current = false,
   msgRef,
+  unreadCount = 0,
 }: {
   message: Message;
   interactive?: boolean;
   matched?: boolean;
   current?: boolean;
   msgRef?: (el: HTMLDivElement | null) => void;
+  unreadCount?: number;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -123,7 +125,12 @@ export default function MessageItem({
           </div>
         )}
 
-        <span className="self-end text-[11px] text-text-3">{message.time}</span>
+        <div className="flex items-center gap-1 self-end">
+          {unreadCount > 0 && (
+            <span className="text-[11px] font-extrabold text-[#ffd60a]">{unreadCount}</span>
+          )}
+          <span className="text-[11px] text-text-3">{message.time}</span>
+        </div>
       </div>
 
       {menuOpen && (

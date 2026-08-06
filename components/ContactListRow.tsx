@@ -7,12 +7,16 @@ import type { Contact } from "@/lib/types";
 
 export default function ContactListRow({
   contact: c,
+  groupBy = "trade",
   onLongPress,
 }: {
   contact: Contact;
+  groupBy?: "trade" | "company";
   onLongPress?: (contact: Contact, rowEl: HTMLElement) => void;
 }) {
   const router = useRouter();
+  const badgeText =
+    groupBy === "trade" ? c.company : [c.tradeGroup, c.trade].filter(Boolean).join(" · ");
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const firedRef = useRef(false);
 
@@ -68,7 +72,7 @@ export default function ContactListRow({
         </div>
       </div>
       <span className="flex-none rounded-[7px] border border-line bg-surface-2 px-[9px] py-[3px] text-[11px] font-bold text-text-2">
-        {c.company}
+        {badgeText}
       </span>
     </div>
   );
