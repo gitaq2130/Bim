@@ -1,4 +1,15 @@
-import type { Agenda, Contact, ContractorCompany, Me, Message, Room, Site } from "./types";
+import type {
+  Agenda,
+  Contact,
+  ContractorCompany,
+  Me,
+  Message,
+  Room,
+  Site,
+  Trade,
+  TradeRequest,
+  WeeklyTotalRow,
+} from "./types";
 
 export const seedRooms: Room[] = [
   {
@@ -518,7 +529,18 @@ export const seedContacts: Contact[] = [
 ];
 
 export const seedSites: Site[] = [
-  { id: "site-gochang", name: "고창CDC 물류센터 신축공사", location: "전북 고창군 · A~C동" },
+  {
+    id: "site-gochang",
+    name: "고창CDC 물류센터 신축공사",
+    location: "전북 고창군 · A~C동",
+    startDate: "2025. 4. 1",
+    endDatePlanned: "2027. 12. 1",
+    asOfDate: "2026. 8. 6",
+    dDay: 481,
+    timelinePct: 38,
+    overallPlanPct: 44.2,
+    overallActualPct: 41.6,
+  },
   { id: "site-pangyo", name: "판교 데이터센터 신축", location: "경기 성남시 분당구 판교동" },
   { id: "site-busan", name: "부산 신항 물류단지", location: "부산 강서구 명지동" },
 ];
@@ -538,5 +560,108 @@ export const seedContractors: ContractorCompany[] = [
     trade: "소방",
     companyName: "세이프테크소방",
     status: "approved",
+  },
+];
+
+export const seedTrades: Trade[] = [
+  {
+    id: "tr-arch",
+    siteId: "site-gochang",
+    name: "건축",
+    fixed: true,
+    prevCumPlan: 52.0,
+    prevCumActual: 49.4,
+    weekPlan: 2.4,
+    weekActual: 2.1,
+    cumPlan: 54.4,
+    cumActual: 51.5,
+  },
+  {
+    id: "tr-elec",
+    siteId: "site-gochang",
+    name: "전기",
+    fixed: true,
+    prevCumPlan: 30.1,
+    prevCumActual: 29.6,
+    weekPlan: 1.8,
+    weekActual: 1.9,
+    cumPlan: 31.9,
+    cumActual: 31.5,
+  },
+  {
+    id: "tr-comm",
+    siteId: "site-gochang",
+    name: "통신",
+    fixed: true,
+    prevCumPlan: 18.0,
+    prevCumActual: 17.2,
+    weekPlan: 1.2,
+    weekActual: 1.0,
+    cumPlan: 19.2,
+    cumActual: 18.2,
+  },
+  {
+    id: "tr-fire",
+    siteId: "site-gochang",
+    name: "소방",
+    fixed: true,
+    prevCumPlan: 12.5,
+    prevCumActual: 11.0,
+    weekPlan: 1.0,
+    weekActual: 0.6,
+    cumPlan: 13.5,
+    cumActual: 11.6,
+    note: "인력부족",
+  },
+  {
+    id: "tr-rebar",
+    siteId: "site-gochang",
+    name: "철근콘크리트",
+    fixed: false,
+    prevCumPlan: 61.0,
+    prevCumActual: 60.2,
+    weekPlan: 3.1,
+    weekActual: 3.0,
+    cumPlan: 64.1,
+    cumActual: 63.2,
+  },
+];
+
+export const seedWeeklyTotalRow: WeeklyTotalRow = {
+  prevCumPlan: 42.0,
+  prevCumActual: 40.3,
+  weekPlan: 2.2,
+  weekActual: 2.0,
+  cumPlan: 44.2,
+  cumActual: 41.6,
+};
+
+export const seedWeeklyPlan: number[] = [
+  2.6, 2.8, 3.0, 3.1, 2.9, 3.2, 3.0, 2.8, 3.1, 3.0, 2.7, 2.9, 3.1, 2.8, 3.0, 2.2,
+];
+export const seedWeeklyActual: number[] = [
+  2.4, 2.5, 2.9, 3.0, 2.6, 3.1, 2.8, 2.5, 3.0, 2.9, 2.4, 2.7, 2.9, 2.6, 2.7, 2.0,
+];
+
+export const seedTradeRequests: TradeRequest[] = [
+  {
+    id: "req-steel",
+    siteId: "site-gochang",
+    tradeName: "철골",
+    companyName: "대명스틸",
+    applicantName: "박정우",
+    applicantRank: "부장 / 현장소장",
+    requestedAt: "2026. 8. 6 08:24",
+    status: "pending",
+  },
+  {
+    id: "req-panel",
+    siteId: "site-gochang",
+    tradeName: "외장판넬",
+    companyName: "거림이엔씨",
+    applicantName: "최민석",
+    applicantRank: "차장 / 공무팀",
+    requestedAt: "2026. 8. 5 17:10",
+    status: "pending",
   },
 ];

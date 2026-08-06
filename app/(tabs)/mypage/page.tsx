@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Bell, ChevronRight, IdCard, User } from "lucide-react";
+import { Bell, ChevronRight, IdCard, LayoutDashboard, User } from "lucide-react";
 import { useStore } from "@/lib/store";
 
 export default function MyPage() {
@@ -35,6 +35,17 @@ export default function MyPage() {
             </div>
           )}
         </div>
+        <ChevronRight size={20} className="flex-none text-text-3" />
+      </Link>
+
+      <Link
+        href="/site-dashboard"
+        className="flex items-center gap-4 border-b border-line px-4 py-4 active:bg-surface-2"
+      >
+        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-surface-3 text-text-2">
+          <LayoutDashboard size={20} />
+        </div>
+        <div className="min-w-0 flex-1 text-[15px] font-bold">현장 공정현황</div>
         <ChevronRight size={20} className="flex-none text-text-3" />
       </Link>
 

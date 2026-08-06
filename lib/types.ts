@@ -158,6 +158,13 @@ export interface Site {
   id: string;
   name: string;
   location: string;
+  startDate?: string;
+  endDatePlanned?: string;
+  asOfDate?: string;
+  dDay?: number;
+  timelinePct?: number;
+  overallPlanPct?: number;
+  overallActualPct?: number;
 }
 
 export interface ContractorCompany {
@@ -178,4 +185,50 @@ export interface UserRegistration {
   parentContractorId?: string;
   approvalTarget: string;
   status: RegistrationStatus;
+}
+
+export const TRADE_COLORS: Record<string, string> = {
+  건축: "#3b82f6",
+  전기: "#f59e0b",
+  통신: "#14b8a6",
+  소방: "#ef4444",
+  철근콘크리트: "#8b5cf6",
+  철골: "#ec4899",
+  외장판넬: "#84cc16",
+  토목: "#06b6d4",
+};
+
+export interface Trade {
+  id: string;
+  siteId: string;
+  name: string;
+  fixed: boolean;
+  isNew?: boolean;
+  prevCumPlan: number;
+  prevCumActual: number;
+  weekPlan: number;
+  weekActual: number;
+  cumPlan: number;
+  cumActual: number;
+  note?: string;
+}
+
+export interface WeeklyTotalRow {
+  prevCumPlan: number;
+  prevCumActual: number;
+  weekPlan: number;
+  weekActual: number;
+  cumPlan: number;
+  cumActual: number;
+}
+
+export interface TradeRequest {
+  id: string;
+  siteId: string;
+  tradeName: string;
+  companyName: string;
+  applicantName: string;
+  applicantRank: string;
+  requestedAt: string;
+  status: "pending" | "approved" | "rejected";
 }

@@ -17,6 +17,10 @@ import AgendaRoomPage from "../app/agenda/page";
 import TracePage from "../app/agenda/trace/page";
 import ProfilePage from "../app/profile/page";
 import MyProfilePage from "../app/profile/me/page";
+import SiteDashboardPage from "../app/site-dashboard/page";
+import TradeRequestsPage from "../app/site-dashboard/requests/page";
+import TradeRequestDetailPage from "../app/site-dashboard/requests/detail/page";
+import RateInputPage from "../app/site-dashboard/rate-input/page";
 
 const TAB_ROUTES = new Set(["/", "/mypage", "/contacts"]);
 
@@ -79,6 +83,18 @@ function Screen() {
       break;
     case "/profile/me":
       body = <MyProfilePage />;
+      break;
+    case "/site-dashboard":
+      body = <SiteDashboardPage />;
+      break;
+    case "/site-dashboard/requests":
+      body = <TradeRequestsPage />;
+      break;
+    case "/site-dashboard/requests/detail":
+      body = <TradeRequestDetailPage />;
+      break;
+    case "/site-dashboard/rate-input":
+      body = <RateInputPage />;
       break;
     default:
       body = (

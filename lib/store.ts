@@ -9,6 +9,11 @@ import {
   seedMessages,
   seedRooms,
   seedSites,
+  seedTradeRequests,
+  seedTrades,
+  seedWeeklyActual,
+  seedWeeklyPlan,
+  seedWeeklyTotalRow,
 } from "./seed";
 import type {
   Agenda,
@@ -23,8 +28,11 @@ import type {
   Room,
   Site,
   TechCase,
+  Trade,
+  TradeRequest,
   UserRegistration,
   UserRole,
+  WeeklyTotalRow,
 } from "./types";
 
 function nowLabel() {
@@ -117,6 +125,14 @@ interface AgendaTalkState {
   resetOnboardingDraft: () => void;
   submitRegistration: () => void;
   cancelRegistration: () => void;
+
+  trades: Trade[];
+  tradeRequests: TradeRequest[];
+  weeklyPlan: number[];
+  weeklyActual: number[];
+  weeklyTotalRow: WeeklyTotalRow;
+  approveTradeRequest: (requestId: string) => void;
+  rejectTradeRequest: (requestId: string) => void;
 
   activeAgendaCount: (roomId: string) => number;
   agendaByNo: (no: number) => Agenda | undefined;
@@ -267,6 +283,44 @@ export const useStore = create<AgendaTalkState>((set, get) => ({
     }),
 
   cancelRegistration: () => set({ registration: null, onboardingDraft: emptyOnboardingDraft }),
+
+  trades: seedTrades,
+  tradeRequests: seedTradeRequests,
+  weeklyPlan: seedWeeklyPlan,
+  weeklyActual: seedWeeklyActual,
+  weeklyTotalRow: seedWeeklyTotalRow,
+
+  approveTradeRequest: (requestId) =>
+    set((s) => {
+      const req = s.tradeRequests.find((r) => r.id === requestId);
+      if (!req || req.status !== "pending") return s;
+      const newTrade: Trade = {
+        id: `tr-${requestId}`,
+        siteId: req.siteId,
+        name: req.tradeName,
+        fixed: false,
+        isNew: true,
+        prevCumPlan: 0,
+        prevCumActual: 0,
+        weekPlan: 0,
+        weekActual: 0,
+        cumPlan: 0,
+        cumActual: 0,
+      };
+      return {
+        tradeRequests: s.tradeRequests.map((r) =>
+          r.id === requestId ? { ...r, status: "approved" as const } : r
+        ),
+        trades: [...s.trades, newTrade],
+      };
+    }),
+
+  rejectTradeRequest: (requestId) =>
+    set((s) => ({
+      tradeRequests: s.tradeRequests.map((r) =>
+        r.id === requestId ? { ...r, status: "rejected" as const } : r
+      ),
+    })),
 
   activeAgendaCount: (roomId) =>
     get().agendas.filter(
