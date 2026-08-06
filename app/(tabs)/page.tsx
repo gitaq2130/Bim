@@ -1,12 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Search, Settings2 } from "lucide-react";
+import RoomContextMenu from "@/components/RoomContextMenu";
 import RoomListItem from "@/components/RoomListItem";
 import SearchReveal from "@/components/SearchReveal";
 import { useStore } from "@/lib/store";
 import { useDebouncedValue } from "@/lib/useDebouncedValue";
+import type { Room } from "@/lib/types";
 
 export default function HomePage() {
   const router = useRouter();
@@ -16,6 +18,19 @@ export default function HomePage() {
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebouncedValue(query);
   const q = debouncedQuery.trim().toLowerCase();
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [menuRoom, setMenuRoom] = useState<Room | null>(null);
+  const [menuTop, setMenuTop] = useState(0);
+
+  const handleLongPress = (room: Room, rowEl: HTMLElement) => {
+    const containerRect = containerRef.current?.getBoundingClientRect();
+    if (!containerRect) return;
+    const rowRect = rowEl.getBoundingClientRect();
+    const desiredTop = rowRect.bottom - containerRect.top + 6;
+    setMenuTop(Math.min(desiredTop, containerRect.height - 260));
+    setMenuRoom(room);
+  };
 
   const filteredRooms = q
     ? rooms.filter(
@@ -34,7 +49,7 @@ export default function HomePage() {
   };
 
   return (
-    <div className="flex h-full flex-col">
+    <div ref={containerRef} className="relative flex h-full flex-col">
       <div className="flex h-14 flex-none items-center gap-1.5 border-b border-line px-2 pl-[18px]">
         <span className="text-[20px] font-extrabold tracking-tight">채팅</span>
         <span className="flex-1" />
@@ -72,15 +87,19 @@ export default function HomePage() {
                 고정된 채팅방
               </div>
               {pinnedRooms.map((room) => (
-                <RoomListItem key={room.id} room={room} />
+                <RoomListItem key={room.id} room={room} onLongPress={handleLongPress} />
               ))}
               <div className="h-2 border-b border-line bg-surface" />
             </>
           )}
           {unpinnedRooms.map((room) => (
-            <RoomListItem key={room.id} room={room} />
+            <RoomListItem key={room.id} room={room} onLongPress={handleLongPress} />
           ))}
         </div>
+      )}
+
+      {menuRoom && (
+        <RoomContextMenu room={menuRoom} top={menuTop} onClose={() => setMenuRoom(null)} />
       )}
     </div>
   );

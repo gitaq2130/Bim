@@ -34,10 +34,10 @@ export default function ContactSummaryCard({
   };
 
   return (
-    <div className="fixed inset-0 z-[70] bg-[rgba(6,6,8,.6)]" onClick={onClose}>
+    <div className="absolute inset-0 z-[70] bg-[rgba(6,6,8,.6)]" onClick={onClose}>
       <div
         style={{ top }}
-        className="animate-pop-in fixed inset-x-4 z-[71] overflow-hidden rounded-2xl border border-line-2 bg-surface-3 shadow-[0_20px_50px_-10px_rgba(0,0,0,.7)]"
+        className="animate-pop-in absolute inset-x-4 z-[71] max-h-[calc(100%-24px)] overflow-y-auto rounded-2xl border border-line-2 bg-surface-3 shadow-[0_20px_50px_-10px_rgba(0,0,0,.7)]"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-4 pt-4">

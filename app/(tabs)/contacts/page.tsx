@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ChevronDown,
@@ -12,6 +12,7 @@ import {
   UserPlus,
 } from "lucide-react";
 import ContactListRow from "@/components/ContactListRow";
+import ContactSummaryCard from "@/components/ContactSummaryCard";
 import SearchReveal from "@/components/SearchReveal";
 import { useStore } from "@/lib/store";
 import { useDebouncedValue } from "@/lib/useDebouncedValue";
@@ -28,6 +29,19 @@ export default function ContactsPage() {
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebouncedValue(query);
   const q = debouncedQuery.trim().toLowerCase();
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [summaryContact, setSummaryContact] = useState<Contact | null>(null);
+  const [summaryTop, setSummaryTop] = useState(0);
+
+  const handleLongPress = (contact: Contact, rowEl: HTMLElement) => {
+    const containerRect = containerRef.current?.getBoundingClientRect();
+    if (!containerRect) return;
+    const rowRect = rowEl.getBoundingClientRect();
+    const desiredTop = rowRect.bottom - containerRect.top + 6;
+    setSummaryTop(Math.min(desiredTop, containerRect.height - 300));
+    setSummaryContact(contact);
+  };
 
   const groups = useMemo(() => {
     const map = new Map<string, Contact[]>();
@@ -67,7 +81,7 @@ export default function ContactsPage() {
   const groupEmoji: Record<string, string> = { 건축: "🔨", 설비: "🔧", 전기: "⚡", 토목: "⛰️" };
 
   return (
-    <div className="flex h-full flex-col">
+    <div ref={containerRef} className="relative flex h-full flex-col">
       <div className="flex h-14 flex-none items-center gap-1.5 border-b border-line px-2 pl-[18px]">
         <span className="text-[20px] font-extrabold tracking-tight">연락처</span>
         <span className="flex-1" />
@@ -174,7 +188,9 @@ export default function ContactsPage() {
                 </span>
               </button>
               {!isCollapsed &&
-                list.map((c) => <ContactListRow key={c.id} contact={c} />)}
+                list.map((c) => (
+                  <ContactListRow key={c.id} contact={c} onLongPress={handleLongPress} />
+                ))}
             </div>
           );
         })}
@@ -184,6 +200,14 @@ export default function ContactsPage() {
           <b className="font-extrabold text-st-done">{registeredCount}명</b>
         </div>
       </div>
+
+      {summaryContact && (
+        <ContactSummaryCard
+          contact={summaryContact}
+          top={summaryTop}
+          onClose={() => setSummaryContact(null)}
+        />
+      )}
     </div>
   );
 }
