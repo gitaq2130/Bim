@@ -29,7 +29,7 @@ function TradeRequestDetailPageInner() {
     setDoneOpen(true);
     setTimeout(() => {
       setDoneOpen(false);
-      router.push(`/site-dashboard?id=${request.siteId}`);
+      router.push(`/site-detail?id=${request.siteId}&tab=dash`);
     }, 1600);
   };
 

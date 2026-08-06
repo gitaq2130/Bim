@@ -14,6 +14,7 @@ import {
   seedWeeklyActual,
   seedWeeklyPlan,
   seedWeeklyTotalRow,
+  seedZones,
 } from "./seed";
 import type {
   Agenda,
@@ -33,6 +34,8 @@ import type {
   UserRegistration,
   UserRole,
   WeeklyTotalRow,
+  Zone,
+  ZoneLayer,
 } from "./types";
 
 function nowLabel() {
@@ -133,6 +136,33 @@ interface AgendaTalkState {
   weeklyTotalRow: WeeklyTotalRow;
   approveTradeRequest: (requestId: string) => void;
   rejectTradeRequest: (requestId: string) => void;
+
+  zones: Zone[];
+  addZone: (input: {
+    siteId: string;
+    layer: ZoneLayer;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    date: string;
+    materialType?: string;
+    quantity?: string;
+    broughtInDate?: string;
+    workContent?: string;
+    equipment?: string;
+    workerCount?: string;
+  }) => void;
+  removeZone: (id: string) => void;
+  updateZone: (
+    id: string,
+    fields: Partial<
+      Pick<
+        Zone,
+        "layer" | "materialType" | "quantity" | "broughtInDate" | "workContent" | "equipment" | "workerCount"
+      >
+    >
+  ) => void;
 
   activeAgendaCount: (roomId: string) => number;
   agendaByNo: (no: number) => Agenda | undefined;
@@ -320,6 +350,26 @@ export const useStore = create<AgendaTalkState>((set, get) => ({
       tradeRequests: s.tradeRequests.map((r) =>
         r.id === requestId ? { ...r, status: "rejected" as const } : r
       ),
+    })),
+
+  zones: seedZones,
+  addZone: (input) =>
+    set((s) => ({
+      zones: [
+        ...s.zones,
+        {
+          id: `zone-${Date.now()}`,
+          registeredAt: nowLabel(),
+          registeredBy: `${s.me.name} ${s.me.rank}`,
+          ...input,
+        },
+      ],
+    })),
+  removeZone: (id) =>
+    set((s) => ({ zones: s.zones.filter((z) => z.id !== id) })),
+  updateZone: (id, fields) =>
+    set((s) => ({
+      zones: s.zones.map((z) => (z.id === id ? { ...z, ...fields } : z)),
     })),
 
   activeAgendaCount: (roomId) =>

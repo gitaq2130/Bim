@@ -17,12 +17,14 @@ import AgendaRoomPage from "../app/agenda/page";
 import TracePage from "../app/agenda/trace/page";
 import ProfilePage from "../app/profile/page";
 import MyProfilePage from "../app/profile/me/page";
-import SiteDashboardPage from "../app/site-dashboard/page";
-import TradeRequestsPage from "../app/site-dashboard/requests/page";
-import TradeRequestDetailPage from "../app/site-dashboard/requests/detail/page";
-import RateInputPage from "../app/site-dashboard/rate-input/page";
+import SiteListPage from "../app/(tabs)/site/page";
+import SiteDetailPage from "../app/site-detail/page";
+import TradeRequestsPage from "../app/site-detail/requests/page";
+import TradeRequestDetailPage from "../app/site-detail/requests/detail/page";
+import RateInputPage from "../app/site-detail/rate-input/page";
+import ZoneDrawPage from "../app/site-detail/zone-draw/page";
 
-const TAB_ROUTES = new Set(["/", "/mypage", "/contacts"]);
+const TAB_ROUTES = new Set(["/", "/mypage", "/contacts", "/site"]);
 
 function TabsShell({ children }: { children: React.ReactNode }) {
   const registration = useStore((s) => s.registration);
@@ -84,17 +86,23 @@ function Screen() {
     case "/profile/me":
       body = <MyProfilePage />;
       break;
-    case "/site-dashboard":
-      body = <SiteDashboardPage />;
+    case "/site":
+      body = <SiteListPage />;
       break;
-    case "/site-dashboard/requests":
+    case "/site-detail":
+      body = <SiteDetailPage />;
+      break;
+    case "/site-detail/requests":
       body = <TradeRequestsPage />;
       break;
-    case "/site-dashboard/requests/detail":
+    case "/site-detail/requests/detail":
       body = <TradeRequestDetailPage />;
       break;
-    case "/site-dashboard/rate-input":
+    case "/site-detail/rate-input":
       body = <RateInputPage />;
+      break;
+    case "/site-detail/zone-draw":
+      body = <ZoneDrawPage />;
       break;
     default:
       body = (

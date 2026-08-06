@@ -165,6 +165,29 @@ export interface Site {
   timelinePct?: number;
   overallPlanPct?: number;
   overallActualPct?: number;
+  progressLabel?: string;
+  todayUpdateCount?: number;
+}
+
+export type ZoneLayer = "stack" | "work";
+
+export interface Zone {
+  id: string;
+  siteId: string;
+  layer: ZoneLayer;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  date: string;
+  registeredAt: string;
+  registeredBy: string;
+  materialType?: string;
+  quantity?: string;
+  broughtInDate?: string;
+  workContent?: string;
+  equipment?: string;
+  workerCount?: string;
 }
 
 export interface ContractorCompany {

@@ -25,7 +25,7 @@ export default function TradeCardsSection({
         <ListChecks size={15} />
         공종별 현황
         <button
-          onClick={() => router.push("/site-dashboard/requests")}
+          onClick={() => router.push("/site-detail/requests")}
           className="relative ml-auto flex h-8 items-center gap-1.5 rounded-full border border-line-2 bg-surface-2 px-3 text-[12px] font-bold text-text active:border-accent"
         >
           <Plus size={15} />
@@ -45,7 +45,7 @@ export default function TradeCardsSection({
           return (
             <button
               key={t.id}
-              onClick={() => router.push(`/site-dashboard/rate-input?trade=${t.id}`)}
+              onClick={() => router.push(`/site-detail/rate-input?trade=${t.id}`)}
               className="flex items-stretch gap-3 rounded-2xl border border-line bg-surface p-3.5 text-left"
             >
               <span className="w-[5px] flex-none rounded-[3px]" style={{ background: color }} />

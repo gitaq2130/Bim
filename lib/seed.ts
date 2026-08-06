@@ -9,6 +9,7 @@ import type {
   Trade,
   TradeRequest,
   WeeklyTotalRow,
+  Zone,
 } from "./types";
 
 export const seedRooms: Room[] = [
@@ -540,9 +541,23 @@ export const seedSites: Site[] = [
     timelinePct: 38,
     overallPlanPct: 44.2,
     overallActualPct: 41.6,
+    progressLabel: "골조공사 · 62%",
+    todayUpdateCount: 8,
   },
-  { id: "site-pangyo", name: "판교 데이터센터 신축", location: "경기 성남시 분당구 판교동" },
-  { id: "site-busan", name: "부산 신항 물류단지", location: "부산 강서구 명지동" },
+  {
+    id: "site-pyeongtaek",
+    name: "평택 반도체 P3 부대공사",
+    location: "경기 평택시 · 전기·설비",
+    progressLabel: "마감공사 · 88%",
+    todayUpdateCount: 3,
+  },
+  {
+    id: "site-cheongna",
+    name: "청라 데이터센터 신축",
+    location: "인천 서구 · 토목",
+    progressLabel: "터파기 · 21%",
+    todayUpdateCount: 5,
+  },
 ];
 
 export const seedContractors: ContractorCompany[] = [
@@ -560,6 +575,54 @@ export const seedContractors: ContractorCompany[] = [
     trade: "소방",
     companyName: "세이프테크소방",
     status: "approved",
+  },
+];
+
+export const seedZones: Zone[] = [
+  {
+    id: "zone-rebar",
+    siteId: "site-gochang",
+    layer: "stack",
+    x: 10,
+    y: 58,
+    width: 33,
+    height: 23,
+    date: "2026. 8. 6",
+    registeredAt: "8/6 오전 9:12",
+    registeredBy: "김성호 소장",
+    materialType: "이형철근 HD25",
+    quantity: "12톤",
+    broughtInDate: "2026. 8. 6",
+  },
+  {
+    id: "zone-formwork",
+    siteId: "site-gochang",
+    layer: "stack",
+    x: 68,
+    y: 20,
+    width: 26,
+    height: 18,
+    date: "2026. 8. 6",
+    registeredAt: "8/6 오전 8:40",
+    registeredBy: "김성호 소장",
+    materialType: "거푸집 자재",
+    quantity: "8세트",
+    broughtInDate: "2026. 8. 5",
+  },
+  {
+    id: "zone-crane",
+    siteId: "site-gochang",
+    layer: "work",
+    x: 10,
+    y: 19,
+    width: 26,
+    height: 20,
+    date: "2026. 8. 6",
+    registeredAt: "8/6 오전 7:30",
+    registeredBy: "김성호 소장",
+    workContent: "B동 코어벽 타설",
+    equipment: "타워크레인 1, 펌프카 1",
+    workerCount: "8명",
   },
 ];
 

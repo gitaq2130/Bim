@@ -40,7 +40,7 @@ function TradeRequestsPageInner() {
         {requests.map((r) => (
           <button
             key={r.id}
-            onClick={() => router.push(`/site-dashboard/requests/detail?id=${r.id}`)}
+            onClick={() => router.push(`/site-detail/requests/detail?id=${r.id}`)}
             className="mb-3 flex w-full items-center gap-3.5 rounded-2xl border border-line bg-surface p-3.5 text-left active:border-accent"
           >
             <div className="flex flex-none items-center gap-1.5 text-[13px] font-extrabold">
