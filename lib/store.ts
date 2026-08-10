@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import { toDepartmentValue } from "./departmentData";
 import {
   seedAgendas,
   seedContacts,
@@ -91,6 +92,12 @@ export interface OnboardingDraft {
   process: string;
   companyName: string;
   parentContractorId: string | null;
+  name: string;
+  title: string;
+  phone: string;
+  dept: string;
+  joinYear: string;
+  specialties: string[];
 }
 
 const emptyOnboardingDraft: OnboardingDraft = {
@@ -100,6 +107,12 @@ const emptyOnboardingDraft: OnboardingDraft = {
   process: "",
   companyName: "",
   parentContractorId: null,
+  name: "",
+  title: "",
+  phone: "",
+  dept: "",
+  joinYear: "",
+  specialties: [],
 };
 
 interface AgendaTalkState {
@@ -294,6 +307,10 @@ export const useStore = create<AgendaTalkState>()(
           siteName: site.name,
           approvalTarget: "",
           status: "instant",
+          name: d.name,
+          title: d.title,
+          phone: d.phone,
+          dept: toDepartmentValue(d.dept),
         };
         return { registration };
       }
@@ -307,6 +324,9 @@ export const useStore = create<AgendaTalkState>()(
           companyName: d.companyName,
           approvalTarget: "한미글로벌 담당자",
           status: "pending",
+          name: d.name,
+          title: d.title,
+          phone: d.phone,
         };
         return { registration };
       }
@@ -321,6 +341,9 @@ export const useStore = create<AgendaTalkState>()(
         parentContractorId: d.parentContractorId ?? undefined,
         approvalTarget: parent ? `${parent.companyName} 소장` : "",
         status: "pending",
+        name: d.name,
+        title: d.title,
+        phone: d.phone,
       };
       return { registration };
     }),

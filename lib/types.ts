@@ -1,3 +1,5 @@
+import type { FreeTextValue } from "./freeText";
+
 export type RoomType = "trade" | "partner" | "dm";
 
 export interface Room {
@@ -208,6 +210,10 @@ export interface UserRegistration {
   parentContractorId?: string;
   approvalTarget: string;
   status: RegistrationStatus;
+  name?: string;
+  title?: string;
+  phone?: string;
+  dept?: FreeTextValue;
 }
 
 export const TRADE_COLORS: Record<string, string> = {

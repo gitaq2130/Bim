@@ -10,6 +10,7 @@ import TradeSelectScreen from "./TradeSelectScreen";
 import ContractorSubmitScreen from "./ContractorSubmitScreen";
 import ParentContractorSelectScreen from "./ParentContractorSelectScreen";
 import SubcontractorSubmitScreen from "./SubcontractorSubmitScreen";
+import ProfileScreen from "./ProfileScreen";
 
 type Step =
   | "start"
@@ -19,7 +20,8 @@ type Step =
   | "trade"
   | "contractorSubmit"
   | "parentContractor"
-  | "subSubmit";
+  | "subSubmit"
+  | "profile";
 
 export default function OnboardingFlow() {
   const [step, setStep] = useState<Step>("start");
@@ -29,11 +31,15 @@ export default function OnboardingFlow() {
   const goBack = () => {
     if (step === "role") setStep("start");
     else if (step === "site") setStep("role");
-    else if (step === "complete") setStep("site");
     else if (step === "trade") setStep("site");
     else if (step === "contractorSubmit") setStep("trade");
     else if (step === "parentContractor") setStep("site");
     else if (step === "subSubmit") setStep("parentContractor");
+    else if (step === "profile") {
+      if (draft.role === "owner" || draft.role === "hanmi") setStep("site");
+      else if (draft.role === "contractor") setStep("contractorSubmit");
+      else setStep("subSubmit");
+    }
   };
 
   if (step === "start") {
@@ -59,7 +65,7 @@ export default function OnboardingFlow() {
         onBack={goBack}
         onSelect={(siteId) => {
           updateDraft({ siteId });
-          if (draft.role === "owner" || draft.role === "hanmi") setStep("complete");
+          if (draft.role === "owner" || draft.role === "hanmi") setStep("profile");
           else if (draft.role === "contractor") setStep("trade");
           else setStep("parentContractor");
         }}
@@ -84,7 +90,7 @@ export default function OnboardingFlow() {
   }
 
   if (step === "contractorSubmit") {
-    return <ContractorSubmitScreen onBack={goBack} />;
+    return <ContractorSubmitScreen onBack={goBack} onNext={() => setStep("profile")} />;
   }
 
   if (step === "parentContractor") {
@@ -99,5 +105,9 @@ export default function OnboardingFlow() {
     );
   }
 
-  return <SubcontractorSubmitScreen onBack={goBack} />;
+  if (step === "subSubmit") {
+    return <SubcontractorSubmitScreen onBack={goBack} onNext={() => setStep("profile")} />;
+  }
+
+  return <ProfileScreen onBack={goBack} onNext={() => setStep("complete")} />;
 }
