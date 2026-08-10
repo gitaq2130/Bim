@@ -1,6 +1,7 @@
 "use client";
 
 import { create } from "zustand";
+import { createJSONStorage, persist } from "zustand/middleware";
 import {
   seedAgendas,
   seedContacts,
@@ -37,6 +38,16 @@ import type {
   Zone,
   ZoneLayer,
 } from "./types";
+
+const safeLocalStorage = {
+  getItem: (name: string) => (typeof window === "undefined" ? null : window.localStorage.getItem(name)),
+  setItem: (name: string, value: string) => {
+    if (typeof window !== "undefined") window.localStorage.setItem(name, value);
+  },
+  removeItem: (name: string) => {
+    if (typeof window !== "undefined") window.localStorage.removeItem(name);
+  },
+};
 
 function nowLabel() {
   const d = new Date();
@@ -210,7 +221,9 @@ interface AgendaTalkState {
   ) => number | null;
 }
 
-export const useStore = create<AgendaTalkState>((set, get) => ({
+export const useStore = create<AgendaTalkState>()(
+  persist(
+    (set, get) => ({
   rooms: seedRooms,
   messages: seedMessages,
   agendas: seedAgendas,
@@ -696,4 +709,15 @@ export const useStore = create<AgendaTalkState>((set, get) => ({
     }));
     return null;
   },
-}));
+    }),
+    {
+      name: "angeontalk-storage",
+      storage: createJSONStorage(() => safeLocalStorage),
+      partialize: (state) => {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { draft, onboardingDraft, ...persisted } = state;
+        return persisted;
+      },
+    }
+  )
+);
