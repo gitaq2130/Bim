@@ -50,6 +50,37 @@ const safeLocalStorage = {
   },
 };
 
+const ROLE_LABEL: Record<UserRole, string> = {
+  owner: "발주처",
+  hanmi: "한미글로벌",
+  contractor: "시공사",
+  subcontractor: "협력사",
+};
+
+function buildMeFromRegistration(
+  current: Me,
+  input: { name: string; title: string; phone: string; company: string; site: string; trade: string }
+): Me {
+  const bizCard: BizCard = {
+    nameEn: current.bizCard?.nameEn ?? input.name.toUpperCase(),
+    address: input.site,
+    phone: current.bizCard?.phone ?? "",
+    fax: current.bizCard?.fax ?? "",
+    email: current.bizCard?.email ?? "",
+    mobile: input.phone,
+  };
+  return {
+    ...current,
+    name: input.name,
+    rank: input.title,
+    company: input.company,
+    site: input.site,
+    trade: input.trade,
+    bizCardRegistered: true,
+    bizCard,
+  };
+}
+
 function nowLabel() {
   const d = new Date();
   const h = d.getHours();
@@ -312,7 +343,15 @@ export const useStore = create<AgendaTalkState>()(
           phone: d.phone,
           dept: toDepartmentValue(d.dept),
         };
-        return { registration };
+        const me = buildMeFromRegistration(s.me, {
+          name: d.name,
+          title: d.title,
+          phone: d.phone,
+          company: ROLE_LABEL[d.role],
+          site: site.name,
+          trade: d.dept.trim(),
+        });
+        return { registration, me };
       }
 
       if (d.role === "contractor") {
@@ -328,7 +367,15 @@ export const useStore = create<AgendaTalkState>()(
           title: d.title,
           phone: d.phone,
         };
-        return { registration };
+        const me = buildMeFromRegistration(s.me, {
+          name: d.name,
+          title: d.title,
+          phone: d.phone,
+          company: d.companyName,
+          site: site.name,
+          trade: d.trade ?? "",
+        });
+        return { registration, me };
       }
 
       const parent = s.contractors.find((c) => c.id === d.parentContractorId);
@@ -345,7 +392,15 @@ export const useStore = create<AgendaTalkState>()(
         title: d.title,
         phone: d.phone,
       };
-      return { registration };
+      const me = buildMeFromRegistration(s.me, {
+        name: d.name,
+        title: d.title,
+        phone: d.phone,
+        company: d.companyName,
+        site: site.name,
+        trade: d.process,
+      });
+      return { registration, me };
     }),
 
   cancelRegistration: () => set({ registration: null, onboardingDraft: emptyOnboardingDraft }),
