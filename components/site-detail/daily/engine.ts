@@ -263,7 +263,7 @@ function isHardSeparator(line: string): boolean {
 }
 function isIgnorableStatusLine(line: string): boolean {
   const s = String(line || "").trim();
-  const plain = s.replace(/^[■▣▷-]+\s*/, "").trim();
+  const plain = s.replace(/^(?:[■▣▷*•◦▪‧ㆍ-]+|[oO](?=\s))\s*/, "").trim();
   if (!plain) return true;
   if (/^(?:일\s*시|날\s*씨|날씨|강우량)\s*[:：]/i.test(plain)) return true;
   if (/^26년\s*\d{1,2}월\s*\d{1,2}일/.test(plain)) return true;
@@ -493,7 +493,14 @@ function parseTaskLine(line: string): ParsedTask[] {
 }
 
 export function parseBlockInput(text: string): { blocks: ParsedBlock[]; errors: string[] } {
-  const lines = text.split("\n");
+  // 보고서를 복사-붙여넣기 하면 "▣ 관리자 : 3명 ▣ 총 출력인원 : 8명"처럼 여러 ▣ 항목이
+  // 한 줄로 뭉쳐지는 경우가 많다. 각 ▣ 항목을 별도 줄로 다시 분리해 아래 필드 인식이
+  // 항목 단위로 정확히 동작하게 한다.
+  const lines = text.split("\n").flatMap((raw) => {
+    const segments = raw.split("▣");
+    if (segments.length <= 1) return [raw];
+    return segments.map((seg, i) => (i === 0 ? seg : "▣" + seg)).filter((seg) => seg.trim() !== "");
+  });
   const blocks: ParsedBlock[] = [];
   const errors: string[] = [];
   let current: ParsedBlock | null = null;
@@ -530,7 +537,9 @@ export function parseBlockInput(text: string): { blocks: ParsedBlock[]; errors: 
       return;
     }
 
-    const fieldLine = line.replace(/^[■▣▷]+\s*/, "").trim();
+    // "-" 외에 "*", "•", "o" 같은 다른 글머리표로 붙여넣는 경우도 흔해서
+    // 총원/장비/작업내용 등 필드 인식이 실패하지 않도록 함께 걷어낸다.
+    const fieldLine = line.replace(/^(?:[■▣▷*•◦▪‧ㆍ]+|[oO](?=\s))\s*/, "").trim();
 
     if (/^금일\s*인원\s*,?\s*장비\s*총현황/.test(fieldLine)) {
       current = null;
