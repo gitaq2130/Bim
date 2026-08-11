@@ -3,7 +3,6 @@
 import { Suspense, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
-import FloorplanPane from "@/components/site-detail/FloorplanPane";
 import DailyDashboardPane from "@/components/site-detail/daily/DailyDashboardPane";
 import SummarySection from "@/components/site-dashboard/SummarySection";
 import WeeklyTableSection from "@/components/site-dashboard/WeeklyTableSection";
@@ -11,11 +10,11 @@ import TradeCardsSection from "@/components/site-dashboard/TradeCardsSection";
 import TradeDonutSection from "@/components/site-dashboard/TradeDonutSection";
 import { useStore } from "@/lib/store";
 
-type Pane = "plan" | "dash" | "daily";
+type Pane = "dash" | "dashboard";
 
 function SiteDetailPageInner() {
   const siteId = useSearchParams().get("id") ?? "site-gochang";
-  const initialPane = useSearchParams().get("tab") === "dash" ? "dash" : "plan";
+  const initialPane = useSearchParams().get("tab") === "dashboard" ? "dashboard" : "dash";
   const router = useRouter();
   const [pane, setPane] = useState<Pane>(initialPane);
   const site = useStore((s) => s.siteById(siteId));
@@ -48,9 +47,8 @@ function SiteDetailPageInner() {
       <div className="flex flex-none border-b border-line px-2">
         {(
           [
-            ["plan", "도면"],
             ["dash", "공정현황"],
-            ["daily", "일일현황"],
+            ["dashboard", "대쉬보드"],
           ] as [Pane, string][]
         ).map(([key, label]) => (
           <button
@@ -65,7 +63,6 @@ function SiteDetailPageInner() {
         ))}
       </div>
 
-      {pane === "plan" && <FloorplanPane site={site} />}
       {pane === "dash" && (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <SummarySection site={site} />
@@ -83,7 +80,7 @@ function SiteDetailPageInner() {
           <TradeDonutSection trades={trades} />
         </div>
       )}
-      {pane === "daily" && (
+      {pane === "dashboard" && (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <DailyDashboardPane site={site} />
         </div>
