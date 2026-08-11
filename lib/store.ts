@@ -870,6 +870,21 @@ export const useStore = create<AgendaTalkState>()(
         const { draft, onboardingDraft, newRoomDraft, ...persisted } = state;
         return persisted;
       },
+      // REV12 이전에 영속화된 상태는 방(Room)에 members/creator 필드가 없다.
+      // 그대로 두면 members 기반 홈 필터링이 깨지므로, 구버전 데이터를 만나면
+      // 누락된 필드를 채워 넣는다.
+      version: 1,
+      migrate: (persisted) => {
+        const state = persisted as { rooms?: Room[] } & Record<string, unknown>;
+        if (Array.isArray(state?.rooms)) {
+          state.rooms = state.rooms.map((r) => ({
+            ...r,
+            members: r.members ?? [ME_ID],
+            creator: r.creator ?? ME_ID,
+          }));
+        }
+        return state;
+      },
     }
   )
 );

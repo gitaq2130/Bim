@@ -33,7 +33,8 @@ export default function HomePage() {
   };
 
   // 초대받지 않은 사용자에게는 방이 노출되지 않도록, 참여자 목록에 내가 포함된 방만 보여준다.
-  const rooms = useMemo(() => allRooms.filter((r) => r.members.includes(ME_ID)), [allRooms]);
+  // members가 없는 방(REV12 이전 형태로 영속화된 구버전 데이터)은 안전하게 제외한다.
+  const rooms = useMemo(() => allRooms.filter((r) => r.members?.includes(ME_ID)), [allRooms]);
 
   const filteredRooms = q
     ? rooms.filter(
