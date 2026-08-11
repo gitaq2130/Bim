@@ -42,13 +42,33 @@ import type {
   ZoneLayer,
 } from "./types";
 
+// 샌드박스 iframe(예: Claude 아티팩트) 등 일부 환경에서는 window.localStorage
+// 자체에 접근하는 것만으로도 SecurityError가 발생할 수 있어, window 존재 여부
+// 체크만으로는 부족하다 — 실제 호출을 try/catch로 감싸 조용히 무시한다.
 const safeLocalStorage = {
-  getItem: (name: string) => (typeof window === "undefined" ? null : window.localStorage.getItem(name)),
+  getItem: (name: string) => {
+    if (typeof window === "undefined") return null;
+    try {
+      return window.localStorage.getItem(name);
+    } catch {
+      return null;
+    }
+  },
   setItem: (name: string, value: string) => {
-    if (typeof window !== "undefined") window.localStorage.setItem(name, value);
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(name, value);
+    } catch {
+      /* storage unavailable (sandboxed iframe, private mode, etc.) */
+    }
   },
   removeItem: (name: string) => {
-    if (typeof window !== "undefined") window.localStorage.removeItem(name);
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.removeItem(name);
+    } catch {
+      /* storage unavailable */
+    }
   },
 };
 
