@@ -22,7 +22,10 @@ import {
   Copy,
   FileCheck2,
   FileText,
+  Flame,
   Gem,
+  Hammer,
+  HardHat,
   HelpCircle,
   Image as ImageIcon,
   Layers,
@@ -48,8 +51,10 @@ import {
   ShieldCheck,
   Stamp,
   Sparkles,
+  Star,
   Target,
   Trash2,
+  Truck,
   User,
   UserPlus,
   UserRound,
@@ -119,6 +124,11 @@ export const iconMap: Record<string, LucideIcon> = {
   layers: Layers,
   "circle-dot": CircleDot,
   sparkles: Sparkles,
+  "hard-hat": HardHat,
+  star: Star,
+  truck: Truck,
+  hammer: Hammer,
+  flame: Flame,
 };
 
 export function getIcon(name: string): LucideIcon {

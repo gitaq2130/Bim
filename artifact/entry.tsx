@@ -23,6 +23,8 @@ import TradeRequestsPage from "../app/site-detail/requests/page";
 import TradeRequestDetailPage from "../app/site-detail/requests/detail/page";
 import RateInputPage from "../app/site-detail/rate-input/page";
 import ZoneDrawPage from "../app/site-detail/zone-draw/page";
+import CreateRoomPage from "../app/room/create/page";
+import InvitePage from "../app/room/invite/page";
 
 const TAB_ROUTES = new Set(["/", "/mypage", "/contacts", "/site"]);
 
@@ -103,6 +105,12 @@ function Screen() {
       break;
     case "/site-detail/zone-draw":
       body = <ZoneDrawPage />;
+      break;
+    case "/room/create":
+      body = <CreateRoomPage />;
+      break;
+    case "/room/invite":
+      body = <InvitePage />;
       break;
     default:
       body = (

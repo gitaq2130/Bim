@@ -1,3 +1,4 @@
+import { ME_ID } from "./types";
 import type {
   Agenda,
   Contact,
@@ -22,6 +23,8 @@ export const seedRooms: Room[] = [
     unread: 5,
     time: "오후 2:14",
     pinned: true,
+    creator: "c-kim-sh",
+    members: [ME_ID, "c-kim-sh", "c-park-jm", "c-lee-ht"],
   },
   {
     id: "room-civil",
@@ -31,6 +34,8 @@ export const seedRooms: Room[] = [
     memberCount: 18,
     unread: 2,
     time: "오후 1:02",
+    creator: ME_ID,
+    members: [ME_ID],
   },
   {
     id: "room-mep",
@@ -39,6 +44,8 @@ export const seedRooms: Room[] = [
     icon: "wrench",
     memberCount: 15,
     time: "오전 11:47",
+    creator: "c-choi-jw",
+    members: [ME_ID, "c-choi-jw", "c-jung-wj"],
   },
   {
     id: "room-elec",
@@ -47,6 +54,8 @@ export const seedRooms: Room[] = [
     icon: "zap",
     memberCount: 12,
     time: "오전 9:30",
+    creator: ME_ID,
+    members: [ME_ID],
   },
   {
     id: "room-partner",
@@ -56,6 +65,8 @@ export const seedRooms: Room[] = [
     memberCount: 41,
     unread: 12,
     time: "오전 8:55",
+    creator: ME_ID,
+    members: [ME_ID, "c-kim-sh", "c-park-jm", "c-lee-ht", "c-choi-jw", "c-jung-wj"],
   },
   {
     id: "room-dm-kim",
@@ -63,6 +74,8 @@ export const seedRooms: Room[] = [
     name: "김공무 과장",
     icon: "user",
     time: "어제",
+    creator: ME_ID,
+    members: [ME_ID],
   },
 ];
 

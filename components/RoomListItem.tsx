@@ -21,7 +21,7 @@ export default function RoomListItem({
   const firedRef = useRef(false);
 
   const startPress = (e: React.MouseEvent | React.TouchEvent) => {
-    if (room.type !== "trade" || !onLongPress) return;
+    if (!onLongPress) return;
     firedRef.current = false;
     const target = e.currentTarget as HTMLElement;
     timerRef.current = setTimeout(() => {

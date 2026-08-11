@@ -2,17 +2,26 @@
 
 import { useRef } from "react";
 import { useRouter } from "next/navigation";
-import { User } from "lucide-react";
+import { Check, User } from "lucide-react";
 import type { Contact } from "@/lib/types";
+
+export interface ContactSelection {
+  selected: boolean;
+  disabled?: boolean;
+  onToggle: (contact: Contact) => void;
+}
 
 export default function ContactListRow({
   contact: c,
   groupBy = "trade",
   onLongPress,
+  selection,
 }: {
   contact: Contact;
   groupBy?: "trade" | "company";
   onLongPress?: (contact: Contact, rowEl: HTMLElement) => void;
+  /** 제공되면 프로필로 이동하는 대신 체크박스 선택 모드로 동작한다 (REV12 참여자 초대 화면). */
+  selection?: ContactSelection;
 }) {
   const router = useRouter();
   const badgeText =
@@ -21,7 +30,7 @@ export default function ContactListRow({
   const firedRef = useRef(false);
 
   const startPress = (e: React.MouseEvent | React.TouchEvent) => {
-    if (!onLongPress) return;
+    if (!onLongPress || selection) return;
     firedRef.current = false;
     const target = e.currentTarget as HTMLElement;
     timerRef.current = setTimeout(() => {
@@ -41,14 +50,29 @@ export default function ContactListRow({
       onTouchStart={startPress}
       onTouchEnd={cancelPress}
       onClick={() => {
+        if (selection) {
+          if (!selection.disabled) selection.onToggle(c);
+          return;
+        }
         if (firedRef.current) {
           firedRef.current = false;
           return;
         }
         router.push(`/profile?id=${c.id}`);
       }}
-      className="flex min-h-[66px] items-center gap-3.5 px-4 py-[11px] active:bg-surface-2"
+      className={`flex min-h-[66px] items-center gap-3.5 px-4 py-[11px] active:bg-surface-2 ${
+        selection?.disabled ? "pointer-events-none opacity-40" : ""
+      }`}
     >
+      {selection && (
+        <span
+          className={`flex h-5 w-5 flex-none items-center justify-center rounded-[6px] border-[1.5px] ${
+            selection.selected ? "border-accent bg-accent text-[#1a1300]" : "border-line-2 text-transparent"
+          }`}
+        >
+          <Check size={13} />
+        </span>
+      )}
       <div
         className={`flex h-[46px] w-[46px] flex-none items-center justify-center rounded-full bg-surface-3 text-text-2 ${
           c.bizCardRegistered ? "" : "opacity-40"

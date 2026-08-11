@@ -97,7 +97,7 @@ function RoomPageInner() {
         >
           <Search size={22} />
         </button>
-        {activeCount > 0 || room.type === "trade" ? (
+        {activeCount > 0 ? (
           <Link
             href={`/room/agenda-list?id=${roomId}`}
             className="flex h-11 w-11 items-center justify-center rounded-xl text-text-2 active:bg-surface-2"

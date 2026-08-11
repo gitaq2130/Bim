@@ -1,18 +1,18 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Search, Settings2 } from "lucide-react";
+import { MessageSquarePlus, Search, Settings2 } from "lucide-react";
 import RoomContextMenu from "@/components/RoomContextMenu";
 import RoomListItem from "@/components/RoomListItem";
 import SearchReveal from "@/components/SearchReveal";
 import { useStore } from "@/lib/store";
 import { useDebouncedValue } from "@/lib/useDebouncedValue";
-import type { Room } from "@/lib/types";
+import { ME_ID, type Room } from "@/lib/types";
 
 export default function HomePage() {
   const router = useRouter();
-  const rooms = useStore((s) => s.rooms);
+  const allRooms = useStore((s) => s.rooms);
   const roomPreviewText = useStore((s) => s.roomPreviewText);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -31,6 +31,9 @@ export default function HomePage() {
     setMenuTop(Math.min(desiredTop, containerRect.height - 260));
     setMenuRoom(room);
   };
+
+  // 초대받지 않은 사용자에게는 방이 노출되지 않도록, 참여자 목록에 내가 포함된 방만 보여준다.
+  const rooms = useMemo(() => allRooms.filter((r) => r.members.includes(ME_ID)), [allRooms]);
 
   const filteredRooms = q
     ? rooms.filter(
@@ -58,6 +61,12 @@ export default function HomePage() {
           className="flex h-11 w-11 items-center justify-center rounded-xl text-text-2 active:bg-surface-2"
         >
           <Search size={22} />
+        </button>
+        <button
+          onClick={() => router.push("/room/create")}
+          className="flex h-11 w-11 items-center justify-center rounded-xl text-text-2 active:bg-surface-2"
+        >
+          <MessageSquarePlus size={22} />
         </button>
         <button
           onClick={() => router.push("/mypage")}

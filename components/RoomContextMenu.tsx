@@ -1,6 +1,7 @@
 "use client";
 
-import { Bell, BellOff, Info, Pin, PinOff, Star } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Bell, BellOff, Info, Pin, PinOff, Star, UserPlus } from "lucide-react";
 import { useStore } from "@/lib/store";
 import RoomIcon from "./RoomIcon";
 import type { Room } from "@/lib/types";
@@ -14,12 +15,22 @@ export default function RoomContextMenu({
   top: number;
   onClose: () => void;
 }) {
+  const router = useRouter();
   const toggleRoomFavorite = useStore((s) => s.toggleRoomFavorite);
   const toggleRoomPinned = useStore((s) => s.toggleRoomPinned);
   const toggleRoomMuted = useStore((s) => s.toggleRoomMuted);
 
   const items = [
     { icon: Info, label: "채팅방 정보 설정", onClick: onClose },
+    {
+      icon: UserPlus,
+      label: "참여자 초대",
+      accent: false,
+      onClick: () => {
+        onClose();
+        router.push(`/room/invite?id=${room.id}`);
+      },
+    },
     {
       icon: Star,
       label: room.favorite ? "즐겨찾기 해제" : "즐겨찾기 추가",

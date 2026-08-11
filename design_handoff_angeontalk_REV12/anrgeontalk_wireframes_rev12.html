@@ -1,0 +1,3116 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>안건톡 — 모바일 와이어프레임</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
+<script src="https://unpkg.com/lucide@latest"></script>
+<style>
+:root{
+  --bg:#0d0e11;--surface:#16171c;--surface-2:#1d1f26;--surface-3:#262932;
+  --line:#2b2e37;--line-2:#3a3e49;
+  --text:#edeef2;--text-2:#a3a7b3;--text-3:#6c707c;
+  --bubble-in:#252830;--bubble-out:#33445e;
+  --st-review:#f59e0b;--st-action:#3b82f6;--st-done:#22c55e;
+  --unread:#e5484d;--accent:#ffd60a;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-font-smoothing:antialiased}
+body{font-family:"Pretendard Variable",Pretendard,system-ui,sans-serif;background:radial-gradient(circle at 50% 0%,#1b1b20,#0a0a0c);color:var(--text);min-height:100vh;padding:56px 40px 80px;display:flex;justify-content:center}
+.stage{display:flex;gap:64px;align-items:flex-start;flex-wrap:wrap;justify-content:center}
+.frameblock{display:flex;flex-direction:column;gap:16px;align-items:center}
+.frame-label{font-size:13px;letter-spacing:.02em;color:var(--text-2);font-weight:600}
+.frame-label b{color:var(--text);font-weight:700}
+
+/* device */
+.device{width:390px;height:844px;background:var(--surface);border-radius:44px;padding:12px;box-shadow:0 0 0 12px #050506,0 40px 80px -20px rgba(0,0,0,.8);position:relative}
+.screen{width:100%;height:100%;background:var(--bg);border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column}
+.notch{position:absolute;top:12px;left:50%;transform:translateX(-50%);width:126px;height:32px;background:#050506;border-radius:0 0 18px 18px;z-index:40}
+
+/* status bar */
+.statusbar{height:52px;flex:none;display:flex;align-items:flex-end;justify-content:space-between;padding:0 26px 8px;font-size:14px;font-weight:600;color:var(--text)}
+.sb-right{display:flex;align-items:center;gap:6px}
+.sb-right svg{width:16px;height:16px}
+.batt{width:24px;height:12px;border:1.5px solid var(--text);border-radius:3px;position:relative;display:inline-block}
+.batt::after{content:"";position:absolute;left:1.5px;top:1.5px;bottom:1.5px;width:70%;background:var(--text);border-radius:1px}
+.batt::before{content:"";position:absolute;right:-3px;top:3px;height:5px;width:2px;background:var(--text);border-radius:0 1px 1px 0}
+
+/* app header */
+.appbar{flex:none;height:56px;display:flex;align-items:center;gap:6px;padding:0 8px 0 18px;border-bottom:1px solid var(--line)}
+.appbar .title{font-size:20px;font-weight:800;letter-spacing:-.01em}
+.appbar .sub{font-size:13px;color:var(--text-2);font-weight:600;margin-left:2px}
+.appbar .spacer{flex:1}
+.iconbtn{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;color:var(--text-2);background:transparent;border:none;cursor:pointer}
+.iconbtn:hover{background:var(--surface-2);color:var(--text)}
+.iconbtn svg{width:22px;height:22px}
+.backbtn svg{width:24px;height:24px}
+
+/* chat list */
+.list{flex:1;overflow-y:auto}
+.searchwrap{padding:12px 16px 6px}
+.searchbar{height:44px;background:var(--surface-2);border-radius:12px;display:flex;align-items:center;gap:8px;padding:0 14px;color:var(--text-3);font-size:15px}
+.searchbar svg{width:18px;height:18px}
+.room{display:flex;gap:14px;padding:14px 16px;align-items:center;min-height:76px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.03)}
+.room:hover{background:var(--surface-2)}
+.avatar{width:52px;height:52px;border-radius:16px;background:var(--surface-3);flex:none;display:flex;align-items:center;justify-content:center;color:var(--text-2);position:relative}
+.avatar svg{width:26px;height:26px}
+.avatar .grp{position:absolute;right:-4px;bottom:-4px;background:var(--surface);border-radius:8px;padding:2px 5px;font-size:10px;font-weight:700;color:var(--text-2);border:1px solid var(--line)}
+.room-main{flex:1;min-width:0}
+.room-top{display:flex;align-items:center;gap:6px}
+.room-name{font-size:16px;font-weight:700}
+.room-count{font-size:13px;color:var(--text-3);font-weight:600}
+.room-preview{font-size:14px;color:var(--text-2);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:210px}
+.agenda-sub{display:inline-flex;align-items:center;gap:5px;margin-top:8px;font-size:12px;font-weight:700;color:var(--st-review);background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.28);padding:3px 9px;border-radius:999px}
+.agenda-sub .dot{width:6px;height:6px;border-radius:50%;background:var(--st-review)}
+.room-right{display:flex;flex-direction:column;align-items:flex-end;gap:8px;flex:none}
+.room-time{font-size:12px;color:var(--text-3)}
+.unread{min-width:22px;height:22px;padding:0 6px;border-radius:999px;background:var(--unread);color:#fff;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center}
+
+/* tab bar */
+.tabbar{flex:none;height:76px;display:flex;border-top:1px solid var(--line);padding-bottom:14px;background:var(--surface)}
+.tab{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:var(--text-3);font-size:11px;font-weight:600;cursor:pointer}
+.tab svg{width:23px;height:23px}
+.tab.active{color:var(--text)}
+
+/* ===== chat room ===== */
+.chat{flex:1;overflow-y:auto;padding:16px 14px 8px;display:flex;flex-direction:column;gap:14px;background:var(--bg)}
+.datediv{align-self:center;font-size:12px;color:var(--text-3);background:var(--surface-2);padding:4px 12px;border-radius:999px;margin:2px 0}
+.msg{display:flex;gap:10px;max-width:82%}
+.msg .av{width:38px;height:38px;border-radius:12px;background:var(--surface-3);flex:none;display:flex;align-items:center;justify-content:center;color:var(--text-2)}
+.msg .av svg{width:20px;height:20px}
+.msg-body{display:flex;flex-direction:column;gap:4px;min-width:0}
+.sender{font-size:12px;color:var(--text-2);font-weight:600;margin-left:2px}
+.bubble{background:var(--bubble-in);border-radius:4px 16px 16px 16px;padding:11px 14px;font-size:15px;line-height:1.5;color:var(--text)}
+.msg .stamp{align-self:flex-end;font-size:11px;color:var(--text-3);white-space:nowrap;margin-bottom:2px}
+.row-in{align-self:flex-start}
+.row-out{align-self:flex-end;flex-direction:row;max-width:82%}
+.row-out .msg-body{align-items:flex-end}
+.row-out .bubble{background:var(--bubble-out);border-radius:16px 4px 16px 16px}
+
+/* photo / file placeholders */
+.ph-photo{width:180px;height:130px;border-radius:12px;background:repeating-linear-gradient(45deg,#22222a,#22222a 8px,#1b1b21 8px,#1b1b21 16px);border:1px solid var(--line);display:flex;align-items:flex-end;padding:8px}
+.ph-photo span{font-family:ui-monospace,monospace;font-size:10px;color:var(--text-3);background:rgba(0,0,0,.5);padding:2px 6px;border-radius:4px}
+.filecard{width:230px;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;gap:12px;align-items:center}
+.filecard .fi{width:40px;height:40px;border-radius:10px;background:var(--surface-3);display:flex;align-items:center;justify-content:center;color:var(--text-2);flex:none}
+.filecard .fi svg{width:20px;height:20px}
+.filecard .fn{font-size:14px;font-weight:600}
+.filecard .fs{font-size:12px;color:var(--text-3);margin-top:2px}
+
+/* agenda card */
+.agenda-card{align-self:center;width:100%;max-width:320px;background:var(--surface-2);border:1px solid var(--line-2);border-radius:16px;overflow:hidden;cursor:pointer;box-shadow:0 8px 24px -12px rgba(0,0,0,.7)}
+.agenda-card:hover{border-color:var(--st-review)}
+.ac-head{display:flex;align-items:center;gap:8px;padding:12px 14px 10px}
+.ac-no{font-family:ui-monospace,monospace;font-size:13px;font-weight:700;color:var(--text-2)}
+.ac-tag{margin-left:auto;font-size:12px;font-weight:800;padding:4px 11px;border-radius:999px}
+.tag-review{color:#ffcf7a;background:rgba(245,158,11,.16);border:1px solid rgba(245,158,11,.4)}
+.ac-title{padding:0 14px 12px;font-size:16px;font-weight:700;line-height:1.4}
+.ac-photo{height:150px;background:repeating-linear-gradient(45deg,#24242c,#24242c 9px,#1c1c22 9px,#1c1c22 18px);display:flex;align-items:flex-end;padding:10px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.ac-photo span{font-family:ui-monospace,monospace;font-size:10px;color:var(--text-3);background:rgba(0,0,0,.5);padding:3px 7px;border-radius:4px}
+.ac-foot{display:flex;align-items:center;gap:8px;padding:12px 14px;color:var(--text-2);font-size:13px;font-weight:600}
+.ac-foot svg{width:16px;height:16px}
+.ac-go{margin-left:auto;display:flex;align-items:center;gap:4px;color:var(--st-review);font-weight:700}
+.ac-go svg{width:16px;height:16px}
+.ac-meta{display:flex;align-items:center;gap:10px;padding:0 14px 12px;flex-wrap:wrap}
+.ac-chip{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;color:var(--text-3)}
+.ac-chip svg{width:14px;height:14px}
+.ac-age{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:700;padding:3px 9px;border-radius:999px}
+.ac-age svg{width:13px;height:13px}
+.age-neutral{color:var(--text-2);background:var(--surface-3);border:1px solid var(--line)}
+.age-warn{color:#ffcf7a;background:rgba(245,158,11,.14);border:1px solid rgba(245,158,11,.34)}
+.ac-dot{width:3px;height:3px;border-radius:50%;background:var(--text-3)}
+
+/* input bar */
+.inputbar{flex:none;display:flex;align-items:center;gap:8px;padding:10px 12px;border-top:1px solid var(--line);background:var(--surface)}
+.plusbtn{width:48px;height:48px;border-radius:14px;background:var(--surface-2);border:none;color:var(--text);display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none}
+.plusbtn.open{background:var(--accent);color:#1a1204;transform:rotate(45deg)}
+.plusbtn svg{width:26px;height:26px}
+.inputfield{flex:1;height:48px;background:var(--surface-2);border-radius:24px;display:flex;align-items:center;padding:0 18px;color:var(--text-3);font-size:15px}
+.sendbtn{width:48px;height:48px;border-radius:14px;background:var(--surface-2);border:none;color:var(--text-3);display:flex;align-items:center;justify-content:center;flex:none}
+.sendbtn svg{width:22px;height:22px}
+
+/* + menu panel */
+.plusmenu{flex:none;background:var(--surface);border-top:1px solid var(--line);padding:18px 16px 26px;display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.pm-item{display:flex;flex-direction:column;align-items:center;gap:9px;cursor:pointer}
+.pm-ic{width:64px;height:64px;border-radius:20px;background:var(--surface-2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--text-2)}
+.pm-ic svg{width:28px;height:28px}
+.pm-label{font-size:13px;color:var(--text-2);font-weight:600}
+.pm-item.hi .pm-ic{background:var(--accent);border-color:var(--accent);color:#1a1204;box-shadow:0 0 0 4px rgba(255,214,10,.2)}
+.pm-item.hi .pm-label{color:var(--text);font-weight:800}
+
+/* ===== agenda register (screen 3) ===== */
+.modalbar{flex:none;height:56px;display:flex;align-items:center;gap:6px;padding:0 8px;border-bottom:1px solid var(--line)}
+.modalbar .title{font-size:18px;font-weight:800;flex:1;text-align:center}
+.postbtn{height:36px;padding:0 16px;border-radius:12px;border:none;background:var(--surface-3);color:var(--text-3);font-size:14px;font-weight:700;cursor:not-allowed;font-family:inherit}
+.reg{flex:1;overflow-y:auto;padding:16px 16px 8px;display:flex;flex-direction:column;gap:18px}
+.dropzone{border:2px dashed var(--line-2);border-radius:18px;height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--text-2);cursor:pointer}
+.dropzone:hover{border-color:var(--accent);color:var(--text)}
+.dropzone .cam{width:64px;height:64px;border-radius:20px;background:var(--surface-2);display:flex;align-items:center;justify-content:center}
+.dropzone .cam svg{width:32px;height:32px}
+.dropzone .dz-main{font-size:16px;font-weight:700;color:var(--text)}
+.dropzone .dz-sub{font-size:13px;color:var(--text-3)}
+.reg-input{height:52px;background:var(--surface-2);border:1px solid var(--line);border-radius:14px;display:flex;align-items:center;padding:0 16px;color:var(--text-3);font-size:15px}
+.field-label{font-size:13px;font-weight:700;color:var(--text-2);margin-bottom:-8px;display:flex;align-items:center;gap:6px}
+.field-label .ai{font-size:11px;font-weight:700;color:var(--accent);background:rgba(245,166,35,.14);border:1px solid rgba(245,166,35,.3);padding:2px 8px;border-radius:999px}
+.chiprow{display:flex;flex-wrap:wrap;gap:10px}
+.chip{display:inline-flex;align-items:center;gap:7px;background:var(--surface-2);border:1px dashed var(--line-2);border-radius:999px;padding:9px 14px;font-size:14px;font-weight:600;color:var(--text-2);cursor:pointer}
+.chip:hover{border-color:var(--text-3);color:var(--text)}
+.chip svg{width:16px;height:16px;color:var(--text-3)}
+.chip .edit{width:15px;height:15px;color:var(--text-3);opacity:.7}
+.chip.empty{color:var(--text-3);border-style:dashed}
+.linkbtn{display:flex;align-items:center;gap:10px;background:var(--surface-2);border:1px solid var(--line);border-radius:14px;padding:14px 16px;color:var(--text);font-size:15px;font-weight:600;cursor:pointer}
+.linkbtn:hover{border-color:var(--line-2)}
+.linkbtn .lead{width:22px;height:22px;color:var(--text-2)}
+.linkbtn .chev{margin-left:auto;width:20px;height:20px;color:var(--text-3)}
+.reg-foot{flex:none;padding:12px 16px 26px;border-top:1px solid var(--line);background:var(--surface)}
+.bigbtn{width:100%;height:56px;border-radius:16px;border:none;background:var(--accent);color:#1a1204;font-size:17px;font-weight:800;cursor:pointer;font-family:inherit}
+
+/* ===== floorplan pin (screen 3-1) ===== */
+.planbar{flex:none;height:60px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--line)}
+.planbar .backbtn{margin-left:-6px}
+.plan-info{min-width:0}
+.plan-title{font-size:15px;font-weight:700}
+.plan-rev{font-size:12px;font-weight:700;color:var(--st-done);display:flex;align-items:center;gap:5px;margin-top:2px}
+.plan-rev svg{width:13px;height:13px}
+.plan-canvas{flex:1;position:relative;background:#f4f2ee;overflow:hidden}
+.plan-img{position:absolute;inset:0;background-image:repeating-linear-gradient(0deg,#d9d4cb,#d9d4cb 1px,transparent 1px,transparent 34px),repeating-linear-gradient(90deg,#d9d4cb,#d9d4cb 1px,transparent 1px,transparent 34px)}
+.plan-walls{position:absolute;inset:0}
+.plan-walls div{position:absolute;background:#8a8378}
+.plan-hint{position:absolute;top:14px;left:50%;transform:translateX(-50%);background:rgba(20,20,24,.82);color:#ececf0;font-size:12px;font-weight:600;padding:7px 14px;border-radius:999px;display:flex;align-items:center;gap:6px}
+.plan-hint svg{width:15px;height:15px}
+.pin{position:absolute;transform:translate(-50%,-100%);display:flex;flex-direction:column;align-items:center;filter:drop-shadow(0 6px 8px rgba(0,0,0,.4))}
+.pin .pin-body{background:var(--st-review);width:34px;height:34px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);display:flex;align-items:center;justify-content:center}
+.pin .pin-body svg{transform:rotate(45deg);width:18px;height:18px;color:#1a1204}
+.pin .pin-label{margin-top:6px;background:rgba(20,20,24,.9);color:#fff;font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap}
+.plan-ghost{position:absolute;width:20px;height:20px;border:2px dashed rgba(20,20,24,.35);border-radius:50%;transform:translate(-50%,-50%)}
+
+/* ===== agenda room (screen 4) ===== */
+.agbar{flex:none;display:flex;align-items:center;gap:8px;padding:8px 8px 10px 6px;border-bottom:1px solid var(--line)}
+.agbar .agtitle{font-family:ui-monospace,monospace;font-size:17px;font-weight:800}
+.agbar .agsub{font-size:12px;color:var(--text-2);margin-top:1px;max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agbar .col{display:flex;flex-direction:column;min-width:0}
+.agbar .topline{display:flex;align-items:center;gap:8px}
+.status-badge{font-size:12px;font-weight:800;padding:4px 12px;border-radius:999px;display:inline-flex;align-items:center;gap:5px;cursor:pointer}
+.status-badge svg{width:13px;height:13px}
+.sb-review{color:#ffcf7a;background:rgba(245,158,11,.16);border:1px solid rgba(245,158,11,.4)}
+.aisum{flex:none;background:var(--surface-2);border-bottom:1px solid var(--line-2);padding:14px 16px}
+.aisum-head{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:800;color:var(--text)}
+.aisum-head .pin-ic{width:17px;height:17px;color:var(--accent)}
+.aisum-head .chev{margin-left:auto;width:18px;height:18px;color:var(--text-3)}
+.aisum-body{font-size:14px;line-height:1.55;color:var(--text-2);margin-top:9px}
+.aisum-open{margin-top:12px;border-top:1px dashed var(--line-2);padding-top:10px}
+.aisum-open .ttl{font-size:12px;font-weight:700;color:var(--text-3);margin-bottom:6px}
+.aisum-open li{list-style:none;font-size:13.5px;color:var(--text);display:flex;align-items:center;gap:8px;padding:3px 0}
+.aisum-open li::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--st-review);flex:none}
+.aisum-src{display:flex;align-items:center;gap:7px;margin-top:11px;font-size:12px;color:var(--text-3);font-weight:600;cursor:pointer}
+.aisum-src svg{width:14px;height:14px}
+.aisum-src .chev{margin-left:auto;width:15px;height:15px}
+.revbanner{flex:none;position:relative;display:flex;align-items:center;gap:11px;margin:12px 14px 2px;padding:12px 14px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.32);border-radius:12px}
+.revbanner .rb-ic{width:20px;height:20px;color:var(--st-review);flex:none}
+.revbanner .rb-txt{font-size:13px;line-height:1.45;color:var(--text);font-weight:600;flex:1}
+.revbanner .rb-txt b{color:#ffcf7a;font-weight:800}
+.revbanner .rb-btn{flex:none;height:34px;padding:0 14px;border-radius:9px;background:var(--st-review);color:#241708;border:none;font-size:13px;font-weight:800;font-family:inherit;cursor:pointer}
+.revbanner .rb-close{position:absolute;top:-8px;right:-8px;width:24px;height:24px;border-radius:50%;background:var(--surface-3);border:1px solid var(--line-2);color:var(--text-2);display:flex;align-items:center;justify-content:center;cursor:pointer}
+.revbanner .rb-close svg{width:14px;height:14px}
+.decision{position:relative;border-left:3px solid var(--accent);background:rgba(245,166,35,.06);border-radius:4px 12px 12px 4px !important}
+.decision-label{align-self:flex-start;margin-top:5px;font-size:11px;font-weight:800;color:var(--accent);display:flex;align-items:center;gap:4px}
+.decision-label svg{width:12px;height:12px}
+.chipbar{flex:none;display:flex;gap:8px;padding:10px 12px;overflow-x:auto;border-top:1px solid var(--line);background:var(--surface)}
+.chipbar::-webkit-scrollbar{display:none}
+.actchip{flex:none;display:inline-flex;align-items:center;gap:6px;height:38px;padding:0 15px;border-radius:999px;background:var(--surface-2);border:1px solid var(--line);color:var(--text-2);font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap}
+.actchip svg{width:16px;height:16px}
+.actchip.hi{background:var(--accent);border-color:var(--accent);color:#1a1204;font-weight:800}
+
+/* long-press context menu */
+.ctx-scrim{position:absolute;inset:0;background:rgba(6,6,8,.68);z-index:60;display:flex;flex-direction:column;justify-content:center;padding:0 26px}
+.ctx-anchor{align-self:flex-start;max-width:82%;margin-bottom:12px}
+.ctx-anchor .bubble{background:var(--bubble-in)}
+.ctxmenu{align-self:flex-start;background:var(--surface-3);border:1px solid var(--line-2);border-radius:16px;overflow:hidden;width:220px;box-shadow:0 20px 50px -10px rgba(0,0,0,.7)}
+.ctxmenu .item{display:flex;align-items:center;gap:12px;padding:15px 18px;font-size:15px;font-weight:600;color:var(--text);cursor:pointer;border-bottom:1px solid var(--line)}
+.ctxmenu .item:last-child{border-bottom:none}
+.ctxmenu .item:hover{background:var(--surface-2)}
+.ctxmenu .item svg{width:19px;height:19px;color:var(--text-2)}
+.ctxmenu .item.tag svg{color:var(--accent)}
+.ctxmenu .item.danger{color:#f2777a}
+.ctxmenu .item.danger svg{color:#f2777a}
+.ctxmenu .item.star.on svg{color:var(--accent);fill:var(--accent)}
+/* profile ⋮ popover + block dialog */
+.pf-popover{position:absolute;top:56px;right:12px;z-index:30}
+.dialog-scrim{position:absolute;inset:0;background:rgba(6,6,8,.66);z-index:40;display:flex;align-items:center;justify-content:center;padding:28px}
+.dialog{width:100%;background:var(--surface-3);border:1px solid var(--line-2);border-radius:18px;overflow:hidden;box-shadow:0 24px 60px -12px rgba(0,0,0,.8)}
+.dialog .dg-body{padding:22px 20px}
+.dialog .dg-title{font-size:17px;font-weight:800;text-align:center}
+.dialog .dg-text{font-size:13.5px;color:var(--text-2);line-height:1.6;text-align:center;margin-top:12px}
+.dialog .dg-foot{display:flex;border-top:1px solid var(--line)}
+.dialog .dg-foot button{flex:1;height:52px;font-size:16px;font-weight:800;font-family:inherit;background:transparent;border:none;cursor:pointer;color:var(--text)}
+.dialog .dg-foot button.danger{color:#ff6b6e}
+.dialog .dg-foot button+button{border-left:1px solid var(--line)}
+
+/* ===== agenda list (screen 5) ===== */
+.counters{flex:none;display:flex;gap:10px;padding:16px}
+.counter{flex:1;background:var(--surface-2);border:1px solid var(--line);border-radius:14px;padding:14px 12px}
+.counter .num{font-size:26px;font-weight:800;line-height:1}
+.counter .lab{font-size:12px;color:var(--text-2);font-weight:600;margin-top:6px}
+.filterrow{flex:none;display:flex;gap:8px;padding:0 16px 12px}
+.fchip{height:34px;padding:0 16px;border-radius:999px;background:var(--surface-2);border:1px solid var(--line);color:var(--text-2);font-size:14px;font-weight:600;display:flex;align-items:center;cursor:pointer}
+.fchip.on{background:var(--text);color:var(--bg);border-color:var(--text);font-weight:800}
+.aglist{flex:1;overflow-y:auto}
+.agitem{display:flex;gap:12px;padding:14px 16px;align-items:center;min-height:78px;border-bottom:1px solid rgba(255,255,255,.04);cursor:pointer;position:relative}
+.agitem:hover{background:var(--surface-2)}
+.agitem.stale{border-left:3px solid var(--st-review)}
+.ag-thumb{width:56px;height:56px;border-radius:12px;flex:none;background:repeating-linear-gradient(45deg,#24242c,#24242c 7px,#1c1c22 7px,#1c1c22 14px);border:1px solid var(--line)}
+.ag-main{flex:1;min-width:0}
+.ag-no{font-family:ui-monospace,monospace;font-size:12px;font-weight:700;color:var(--text-3)}
+.ag-title{font-size:15px;font-weight:700;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ag-meta{display:flex;align-items:center;gap:8px;margin-top:7px}
+.warn{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:var(--st-review)}
+.warn svg{width:13px;height:13px}
+.ag-time{font-size:12px;color:var(--text-3)}
+.sb-action{color:#9cc4ff;background:rgba(59,130,246,.16);border:1px solid rgba(59,130,246,.4)}
+.sb-done{color:#8bea9f;background:rgba(34,197,94,.16);border:1px solid rgba(34,197,94,.4)}
+.mini-badge{font-size:11px;font-weight:800;padding:3px 10px;border-radius:999px}
+
+/* ===== bottom sheet (screen 6) ===== */
+.sheet-scrim{position:absolute;inset:0;background:rgba(6,6,8,.6);z-index:60;display:flex;flex-direction:column;justify-content:flex-end}
+.sheet{background:var(--surface);border-radius:24px 24px 0 0;border-top:1px solid var(--line-2);padding:10px 16px 28px}
+.sheet-grip{width:40px;height:5px;border-radius:999px;background:var(--line-2);margin:6px auto 14px}
+.sheet-title{font-size:19px;font-weight:800;padding:2px 4px 16px}
+.sheet-opt{display:flex;align-items:center;gap:14px;padding:16px;border:1px solid var(--line);border-radius:16px;margin-bottom:12px;cursor:pointer}
+.sheet-opt:hover{border-color:var(--line-2);background:var(--surface-2)}
+.sheet-opt .so-ic{width:48px;height:48px;border-radius:14px;background:var(--surface-2);display:flex;align-items:center;justify-content:center;color:var(--text-2);flex:none}
+.sheet-opt .so-ic svg{width:24px;height:24px}
+.sheet-opt .so-title{font-size:16px;font-weight:700}
+.sheet-opt .so-sub{font-size:13px;color:var(--text-2);margin-top:3px}
+.sheet-opt .chev{margin-left:auto;color:var(--text-3);width:20px;height:20px}
+
+/* ===== tech case card (screen 7) ===== */
+.case-card{align-self:stretch;background:var(--surface-2);border:1px solid var(--st-done);border-radius:18px;overflow:hidden}
+.case-head{padding:16px;border-bottom:1px solid var(--line);background:rgba(34,197,94,.08)}
+.case-head .ttl{font-size:15px;font-weight:800;display:flex;align-items:center;gap:8px}
+.case-head .ttl svg{width:19px;height:19px;color:var(--st-done)}
+.case-no{font-family:ui-monospace,monospace;font-size:13px;font-weight:700;color:var(--text-2);margin-top:8px}
+.case-row{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--line);cursor:pointer}
+.case-row:hover{background:var(--surface-3)}
+.case-row .rk{font-size:13px;font-weight:800;color:var(--text);width:72px;flex:none}
+.case-row .rv{font-size:13px;color:var(--text-2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.case-row .chev{width:16px;height:16px;color:var(--text-3);flex:none}
+.case-foot{display:flex;gap:10px;padding:14px 16px}
+.case-foot button{flex:1;height:46px;border-radius:12px;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit;border:1px solid var(--line-2);background:var(--surface-3);color:var(--text)}
+.case-foot .approve{background:var(--st-done);border-color:var(--st-done);color:#08210f}
+.case-foot .reject{color:#f2777a}
+/* tech case — edit mode */
+.case-card.editing{border-color:var(--accent)}
+.case-badge-edit{margin-left:auto;display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:800;padding:4px 10px;border-radius:999px;color:#ffe14d;background:rgba(255,214,10,.14);border:1px solid rgba(255,214,10,.4)}
+.case-badge-edit svg{width:13px;height:13px}
+.case-erow{padding:12px 16px;border-bottom:1px solid var(--line)}
+.case-erow .rk{font-size:12px;font-weight:800;color:var(--text-2);margin-bottom:6px}
+.case-erow .field-edit{border:1.5px solid var(--accent);border-radius:10px;background:rgba(255,214,10,.05);padding:10px 12px;font-size:13.5px;line-height:1.5;color:var(--text);box-shadow:0 0 0 3px rgba(255,214,10,.12)}
+.case-foot .cancel{color:var(--text-2)}
+.case-toast{position:absolute;left:16px;right:16px;bottom:14px;display:flex;align-items:center;gap:9px;background:rgba(34,197,94,.16);border:1px solid var(--st-done);border-radius:12px;padding:12px 14px;font-size:13.5px;font-weight:700;color:#8bea9f;box-shadow:0 10px 24px -8px rgba(0,0,0,.7)}
+.case-toast svg{width:18px;height:18px}
+
+/* ===== complete sheet (screen 8) ===== */
+.cs-title{font-size:19px;font-weight:800;padding:2px 4px 4px}
+.cs-sub{font-size:13px;color:var(--text-2);padding:0 4px 16px}
+.cstep{margin-bottom:16px}
+.cstep-h{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:800;color:var(--text-2);margin-bottom:9px}
+.cstep-h .n{width:20px;height:20px;border-radius:50%;background:var(--surface-3);border:1px solid var(--line-2);color:var(--text);font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex:none}
+.cstep-hint{font-size:11px;color:var(--text-3);font-weight:600;margin-left:auto}
+.autobox{display:flex;align-items:center;gap:12px;padding:14px;border:1px solid var(--line);border-radius:14px;background:var(--surface-2)}
+.autobox .ab-ic{width:40px;height:40px;border-radius:12px;background:var(--surface-3);display:flex;align-items:center;justify-content:center;color:var(--text-2);flex:none}
+.autobox .ab-ic svg{width:20px;height:20px}
+.autobox .ab-main{font-size:15px;font-weight:700;color:var(--text)}
+.autobox .ab-sub{font-size:12px;color:var(--text-3);margin-top:2px}
+.value-badge{margin-left:auto;flex:none;display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:800;padding:5px 11px;border-radius:999px;color:#8bea9f;background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.4)}
+.value-badge svg{width:13px;height:13px}
+.togglerow{display:flex;gap:10px}
+.bigtoggle{flex:1;height:56px;border-radius:14px;background:var(--surface-2);border:1px solid var(--line);color:var(--text);font-size:16px;font-weight:700;font-family:inherit;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px}
+.bigtoggle svg{width:18px;height:18px}
+.bigtoggle.on{background:rgba(59,130,246,.14);border-color:var(--st-action);color:#bcd7ff}
+.disagree-panel{margin-top:12px;padding:14px;border:1px dashed var(--line-2);border-radius:14px;background:var(--surface)}
+.dp-note{font-size:11px;color:var(--text-3);font-weight:600;margin-bottom:11px;line-height:1.4}
+.pgrid{display:flex;flex-direction:column;gap:8px}
+.prow{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:11px;background:var(--surface-2);border:1px solid var(--line);cursor:pointer}
+.prow .pav{width:30px;height:30px;border-radius:9px;background:var(--surface-3);display:flex;align-items:center;justify-content:center;color:var(--text-3);flex:none}
+.prow .pav svg{width:16px;height:16px}
+.prow .pname{font-size:14px;font-weight:600;flex:1}
+.prow .pchk{width:22px;height:22px;border-radius:7px;border:1.5px solid var(--line-2);flex:none;display:flex;align-items:center;justify-content:center;color:transparent}
+.prow.on{border-color:var(--st-action);background:rgba(59,130,246,.1)}
+.prow.on .pchk{background:var(--st-action);border-color:var(--st-action);color:#fff}
+.prow.on .pchk svg{width:14px;height:14px}
+.prio-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.prio{height:76px;border-radius:14px;background:var(--surface-2);border:1px solid var(--line);color:var(--text-2);font-family:inherit;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px}
+.prio svg{width:24px;height:24px}
+.prio .pl{font-size:14px;font-weight:700}
+.prio.on{border-color:var(--accent);background:rgba(255,214,10,.1);color:var(--text)}
+.prio.on svg{color:var(--accent)}
+.cs-footnote{text-align:center;font-size:12px;color:var(--st-review);font-weight:600;margin:2px 0 10px}
+.cs-done{width:100%;height:52px;border-radius:14px;background:var(--st-done);color:#08210f;border:none;font-size:17px;font-weight:800;font-family:inherit;cursor:pointer}
+
+/* ===== @mention (screen 9) ===== */
+.mention-dd{flex:none;background:var(--surface);border-top:1px solid var(--line-2);max-height:520px;overflow-y:auto}
+.mdd-sec{padding:12px 16px 5px;font-size:12px;font-weight:800;color:var(--text-3);display:flex;align-items:center;gap:7px}
+.mdd-sec svg{width:14px;height:14px;color:var(--accent)}
+.mdd-item{display:flex;gap:12px;align-items:center;padding:11px 16px;cursor:pointer}
+.mdd-item:hover{background:var(--surface-2)}
+.mdd-av{width:44px;height:44px;border-radius:14px;background:var(--surface-3);flex:none;display:flex;align-items:center;justify-content:center;color:var(--text-2)}
+.mdd-av svg{width:22px;height:22px}
+.mdd-main{flex:1;min-width:0}
+.mdd-name{font-size:15px;font-weight:700}
+.mdd-name .rank{color:var(--text-2);font-weight:600;font-size:13px}
+.mdd-trust{display:flex;align-items:center;gap:6px;margin-top:4px;font-size:12px;color:var(--text-3);font-weight:600}
+.mdd-trust .tb{display:inline-flex;align-items:center;gap:4px}
+.mdd-trust svg{width:12px;height:12px}
+.mdd-trust .sep{width:3px;height:3px;border-radius:50%;background:var(--line-2)}
+.mdd-note{margin:6px 12px 12px;padding:11px 13px;background:var(--surface-2);border:1px dashed var(--line-2);border-radius:11px;font-size:12.5px;line-height:1.45;color:var(--text-2);font-weight:600;display:flex;gap:8px;align-items:flex-start}
+.mdd-note svg{width:15px;height:15px;color:var(--text-3);flex:none;margin-top:1px}
+.mdd-div{height:1px;background:var(--line);margin:4px 16px}
+
+/* mention message in stream */
+.mention-msg{align-self:flex-start;max-width:88%;display:flex;gap:10px}
+.mention-msg .av{width:38px;height:38px;border-radius:12px;background:var(--surface-3);flex:none;display:flex;align-items:center;justify-content:center;color:var(--text-2)}
+.mention-msg .av svg{width:20px;height:20px}
+.mention-bubble{background:rgba(255,214,10,.09);border:1px solid rgba(255,214,10,.32);border-radius:4px 16px 16px 16px;padding:11px 14px;font-size:15px;line-height:1.5;color:var(--text)}
+.mention-bubble .tag{color:#ffe14d;font-weight:800}
+
+/* ===== question mode (screen 10) ===== */
+.q-hero{flex:none;padding:22px 20px 8px;text-align:center}
+.q-hero .qh-ic{width:56px;height:56px;border-radius:18px;background:var(--surface-2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--accent);margin:0 auto 14px}
+.q-hero .qh-ic svg{width:28px;height:28px}
+.q-hero .qh-txt{font-size:17px;font-weight:700;line-height:1.5;color:var(--text);text-wrap:balance}
+.q-body{flex:1;overflow-y:auto;padding:18px 16px}
+.q-photo{height:150px;border:2px dashed var(--line-2);border-radius:16px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--text-3);background:var(--surface-2)}
+.q-photo svg{width:30px;height:30px}
+.q-photo .pl{font-size:14px;font-weight:600}
+.q-photo .op{font-size:11px;color:var(--text-3)}
+.q-field{margin-top:14px;min-height:96px;border:1px solid var(--line);border-radius:16px;background:var(--surface-2);padding:15px;color:var(--text-3);font-size:16px}
+.q-submit{flex:none;margin:0 16px 20px;height:52px;border-radius:14px;background:var(--accent);color:#231a02;border:none;font-size:17px;font-weight:800;font-family:inherit;cursor:pointer}
+
+/* AI response card */
+.qr-card{align-self:stretch;background:var(--surface-2);border:1px solid var(--line-2);border-radius:16px;overflow:hidden}
+.qr-head{display:flex;align-items:center;gap:8px;padding:14px 15px;font-size:14px;font-weight:800;color:var(--text)}
+.qr-head svg{width:18px;height:18px;color:var(--accent)}
+.qr-case{display:flex;gap:11px;align-items:center;padding:11px 15px;border-top:1px solid var(--line);cursor:pointer}
+.qr-case:hover{background:var(--surface-3)}
+.qr-case .qc-th{width:46px;height:46px;border-radius:10px;flex:none;background:repeating-linear-gradient(45deg,#24242c,#24242c 7px,#1c1c22 7px,#1c1c22 14px);border:1px solid var(--line)}
+.qr-case .qc-no{font-family:ui-monospace,monospace;font-size:11px;font-weight:700;color:var(--text-3)}
+.qr-case .qc-t{font-size:14px;font-weight:600;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qr-case .chev{margin-left:auto;width:16px;height:16px;color:var(--text-3);flex:none}
+.qr-foot{display:flex;gap:10px;padding:14px 15px;border-top:1px solid var(--line)}
+.qr-foot button{flex:1;height:46px;border-radius:12px;font-size:14px;font-weight:800;font-family:inherit;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px}
+.qr-foot button svg{width:16px;height:16px}
+.qr-foot .solved{background:var(--st-done);border:none;color:#08210f}
+.qr-foot .ask{background:var(--surface-3);border:1px solid var(--line-2);color:var(--text)}
+
+/* ===== pre-review + timeline (screens 11-13) ===== */
+.tag-pre{color:#c4b5fd;background:rgba(139,92,246,.16);border:1px solid rgba(139,92,246,.42)}
+.ac-pin{position:relative;height:150px;background:repeating-linear-gradient(45deg,#24242c,#24242c 9px,#1c1c22 9px,#1c1c22 18px);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.ac-pin .pin{position:absolute;left:38%;top:44%;transform:translate(-50%,-100%);color:#a78bfa}
+.ac-pin .pin svg{width:30px;height:30px;filter:drop-shadow(0 3px 5px rgba(0,0,0,.6))}
+.ac-pin .plabel{position:absolute;left:10px;bottom:10px;font-family:ui-monospace,monospace;font-size:10px;color:var(--text-3);background:rgba(0,0,0,.5);padding:3px 7px;border-radius:4px}
+.ac-pred{display:flex;align-items:center;gap:8px;padding:12px 14px;font-size:13px;font-weight:700;color:var(--text-2)}
+.ac-pred svg{width:15px;height:15px;color:#a78bfa}
+.ac-pred .dcount{margin-left:auto;font-family:ui-monospace,monospace;font-weight:800;color:#c4b5fd;background:rgba(139,92,246,.14);padding:3px 10px;border-radius:999px}
+.hit-banner{display:flex;align-items:center;gap:10px;padding:13px 15px;background:linear-gradient(90deg,rgba(139,92,246,.2),rgba(34,197,94,.16));border-bottom:1px solid rgba(139,92,246,.4)}
+.hit-banner svg{width:20px;height:20px;color:#c4b5fd;flex:none}
+.hit-banner .ht{font-size:13px;font-weight:800;color:var(--text);line-height:1.4;flex:1}
+.hit-link{display:flex;align-items:center;gap:6px;padding:11px 15px;font-size:13px;font-weight:700;color:#c4b5fd;border-bottom:1px solid var(--line)}
+.hit-link svg{width:15px;height:15px}
+.hit-link .arr{margin-left:auto;width:16px;height:16px;color:var(--text-3)}
+
+/* push notification */
+.pushwrap{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding-top:30px;gap:16px;background:linear-gradient(180deg,#101216,#0a0a0c)}
+.pushtime{font-size:60px;font-weight:300;color:var(--text);letter-spacing:-.02em}
+.pushdate{font-size:15px;color:var(--text-2);font-weight:600;margin-top:-8px}
+.pushcard{width:86%;margin-top:20px;background:rgba(40,42,50,.9);backdrop-filter:blur(20px);border:1px solid var(--line-2);border-radius:18px;padding:14px}
+.pushcard .ph{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;color:var(--text-2);margin-bottom:8px}
+.pushcard .ph .badge{width:22px;height:22px;border-radius:7px;background:var(--accent);color:#231a02;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800}
+.pushcard .ph .pt{margin-left:auto;color:var(--text-3);font-weight:600}
+.pushcard .ph .badge svg{width:14px;height:14px}
+.pushcard .pmain{font-size:14px;font-weight:700;line-height:1.5;color:var(--text)}
+
+/* trace response screen */
+.trace-body{flex:1;overflow-y:auto;padding:16px}
+.trace-sum{background:var(--surface-2);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.trace-sum .tsrow{display:flex;gap:10px;padding:11px 14px;font-size:13px;border-bottom:1px solid var(--line)}
+.trace-sum .tsrow .k{width:44px;font-weight:800;color:var(--text-2);flex:none}
+.trace-sum .tsrow .v{color:var(--text);flex:1}
+.trace-photo{height:120px;background:repeating-linear-gradient(45deg,#24242c,#24242c 9px,#1c1c22 9px,#1c1c22 18px)}
+.trace-mini{margin-top:12px;height:110px;border-radius:14px;position:relative;background:repeating-linear-gradient(45deg,#22242b,#22242b 8px,#1b1d23 8px,#1b1d23 16px);border:1px solid var(--line);display:flex;align-items:flex-end;padding:9px}
+.trace-mini .pin{position:absolute;left:44%;top:40%;transform:translate(-50%,-100%);color:var(--st-review)}
+.trace-mini .pin svg{width:26px;height:26px;filter:drop-shadow(0 3px 5px rgba(0,0,0,.6))}
+.trace-mini .ml{font-family:ui-monospace,monospace;font-size:10px;color:var(--text-3);background:rgba(0,0,0,.5);padding:3px 7px;border-radius:4px}
+.trace-q{font-size:17px;font-weight:800;text-align:center;margin:20px 0 14px;color:var(--text)}
+.trace-btns{display:flex;flex-direction:column;gap:10px}
+.trace-btn{height:54px;border-radius:14px;font-size:16px;font-weight:700;font-family:inherit;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:9px}
+.trace-btn svg{width:19px;height:19px}
+.tb-ok{background:rgba(34,197,94,.14);border:1px solid var(--st-done);color:#8bea9f}
+.tb-recur{background:rgba(229,72,77,.14);border:1px solid #e5484d;color:#ff9ea1}
+.tb-unsure{background:var(--surface-2);border:1px solid var(--line-2);color:var(--text-2)}
+.trace-note{text-align:center;font-size:12px;color:var(--text-3);font-weight:600;margin-top:16px;padding-bottom:6px}
+
+/* observing states */
+.sb-observe{color:#7dd3fc;background:rgba(14,165,233,.16);border:1px solid rgba(14,165,233,.42)}
+.sb-verified{color:#8bea9f;background:rgba(34,197,94,.18);border:1px solid rgba(34,197,94,.5)}
+.state-compare{flex:1;overflow-y:auto;padding:8px 0}
+.sc-label{font-size:12px;font-weight:800;color:var(--text-3);padding:16px 16px 6px}
+.trace-date{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text-3);font-weight:600;margin-top:6px}
+.trace-date svg{width:12px;height:12px}
+
+/* ===== contacts (screen 14) ===== */
+.cont-list{flex:1;overflow-y:auto}
+.myprofile{display:flex;gap:14px;align-items:center;padding:18px 16px;cursor:pointer;border-bottom:1px solid var(--line)}
+.myprofile:hover{background:var(--surface-2)}
+.mp-av{width:56px;height:56px;border-radius:50%;background:var(--surface-3);flex:none;display:flex;align-items:center;justify-content:center;color:var(--text-2)}
+.mp-av svg{width:28px;height:28px}
+.mp-av.empty{background:transparent;border:2px dashed var(--line-2);color:var(--text-3)}
+.mp-main{flex:1;min-width:0}
+.mp-name{font-size:17px;font-weight:800}
+.mp-hint{font-size:12.5px;color:var(--text-3);margin-top:3px;line-height:1.4}
+.mp-cta{font-size:13px;font-weight:700;color:var(--accent);margin-top:4px;display:inline-flex;align-items:center;gap:4px}
+.mp-cta svg{width:14px;height:14px}
+.mp-chev{color:var(--text-3);width:20px;height:20px;flex:none}
+.cont-sort{display:flex;align-items:center;gap:8px;padding:12px 16px 6px}
+.cont-sort .sect{font-size:13px;font-weight:800;color:var(--text-2);flex:1}
+.sort-toggle{display:flex;background:var(--surface-2);border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.sort-toggle span{font-size:12px;font-weight:700;color:var(--text-3);padding:5px 10px;cursor:pointer}
+.sort-toggle span.on{background:var(--surface-3);color:var(--text)}
+.cont-group{padding:0}
+.cg-head{display:flex;align-items:center;gap:8px;padding:12px 16px 8px;cursor:pointer}
+.cg-head .gtag{font-size:12px;font-weight:800;color:var(--text-2)}
+.cg-head .gcount{font-size:12px;color:var(--text-3);font-weight:600}
+.cg-head .chev{margin-left:auto;width:18px;height:18px;color:var(--text-3)}
+.contact{display:flex;gap:13px;align-items:center;padding:11px 16px;cursor:pointer;min-height:66px}
+.contact:hover{background:var(--surface-2)}
+.ct-av{width:46px;height:46px;border-radius:50%;background:var(--surface-3);flex:none;display:flex;align-items:center;justify-content:center;color:var(--text-2)}
+.ct-av svg{width:23px;height:23px}
+.ct-main{flex:1;min-width:0}
+.ct-top{display:flex;align-items:center;gap:7px}
+.ct-name{font-size:15.5px;font-weight:700}
+.ct-unreg{font-size:11px;font-weight:700;color:var(--text-3);background:var(--surface-3);border:1px solid var(--line);padding:2px 8px;border-radius:999px}
+.ct-sub{font-size:13px;color:var(--text-3);margin-top:2px}
+.ct-corp{font-size:11px;font-weight:700;color:var(--text-2);background:var(--surface-2);border:1px solid var(--line);padding:3px 9px;border-radius:7px;flex:none}
+.contact.unreg .ct-av{opacity:.4}
+.contact.unreg .ct-name{color:var(--text-2)}
+.cont-counter{text-align:center;font-size:12px;color:var(--text-3);font-weight:600;padding:16px}
+.cont-counter b{color:var(--st-done);font-weight:800}
+
+/* ===== profile detail (screens 15-17) ===== */
+.pf-note{font-size:12px;color:var(--text-3);font-weight:600;text-align:center;padding:10px 16px 0;display:flex;align-items:center;justify-content:center;gap:6px}
+.pf-note svg{width:14px;height:14px}
+.pf-header{display:flex;align-items:center;gap:14px;padding:16px}
+.pf-h-main{flex:1;min-width:0}
+.pf-h-name{font-size:22px;font-weight:800}
+.pf-h-rank{font-size:14px;color:var(--text-2);font-weight:600;margin-top:3px}
+.pf-h-corp{font-size:13px;color:var(--text-3);margin-top:2px}
+.pf-h-av{width:66px;height:66px;border-radius:50%;background:var(--surface-3);flex:none;display:flex;align-items:center;justify-content:center;color:var(--text-2)}
+.pf-h-av svg{width:32px;height:32px}
+.pf-actions{display:flex;gap:10px;padding:0 16px 16px}
+.pf-act{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer}
+.pf-act .ai{width:52px;height:52px;border-radius:50%;background:var(--surface-2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--text)}
+.pf-act .ai svg{width:22px;height:22px}
+.pf-act .al{font-size:12px;color:var(--text-2);font-weight:600}
+.pf-act.cta .ai{background:var(--st-action);border-color:var(--st-action);color:#fff}
+.pf-act.cta .al{color:var(--text)}
+.pf-tabs{display:flex;border-bottom:1px solid var(--line);padding:0 8px}
+.pf-tab{flex:1;text-align:center;padding:13px 0;font-size:14px;font-weight:700;color:var(--text-3);cursor:pointer;border-bottom:2px solid transparent}
+.pf-tab.on{color:var(--text);border-bottom-color:var(--accent)}
+.pf-body{flex:1;overflow-y:auto;padding:16px}
+.bizcard{border-radius:16px;background:linear-gradient(135deg,#20222b,#171820);border:1px solid var(--line-2);padding:20px;position:relative;overflow:hidden}
+.bizcard::after{content:"";position:absolute;right:-30px;top:-30px;width:120px;height:120px;border-radius:50%;background:rgba(255,214,10,.05)}
+.bc-corp{font-size:12px;font-weight:800;color:var(--accent);letter-spacing:.06em}
+.bc-name-en{font-size:13px;color:var(--text-3);margin-top:16px;font-weight:600}
+.bc-name{font-size:24px;font-weight:800;margin-top:2px}
+.bc-rank{font-size:14px;color:var(--text-2);font-weight:600;margin-top:4px}
+.bc-div{height:1px;background:var(--line-2);margin:16px 0}
+.bc-line{display:flex;gap:8px;font-size:12.5px;margin-top:6px}
+.bc-line .k{color:var(--text-3);width:38px;flex:none;font-weight:700}
+.bc-line .v{color:var(--text-2)}
+.info-sec{margin-top:20px}
+.info-title{font-size:13px;font-weight:800;color:var(--text-2);margin-bottom:6px}
+.info-row{display:flex;gap:12px;padding:13px 2px;border-bottom:1px solid var(--line)}
+.info-row .k{width:78px;flex:none;font-size:13px;color:var(--text-3);font-weight:600}
+.info-row .v{font-size:14px;color:var(--text);flex:1}
+.info-row .v.link{color:#7dd3fc}
+.act-hist{margin-top:8px;border:1px solid rgba(59,130,246,.32);background:rgba(59,130,246,.06);border-radius:14px;padding:16px}
+.ah-badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:800;color:#9cc4ff;margin-bottom:6px}
+.ah-badge svg{width:14px;height:14px}
+.ah-title{font-size:16px;font-weight:800;color:var(--text)}
+.ah-note{font-size:12px;color:var(--text-3);margin-top:6px;font-weight:600}
+.ah-item{display:flex;gap:10px;align-items:center;padding:11px 0;border-bottom:1px solid var(--line)}
+.ah-item .ic{width:32px;height:32px;border-radius:9px;background:var(--surface-3);display:flex;align-items:center;justify-content:center;color:var(--text-3);flex:none}
+.ah-item .ic svg{width:16px;height:16px}
+.ah-item .t{font-size:13px;font-weight:600;flex:1}
+.ah-item .st{font-size:11px;font-weight:800;padding:3px 9px;border-radius:999px}
+/* edit mode */
+.edit-btn{height:36px;padding:0 15px;border-radius:10px;background:var(--accent);color:#231a02;border:none;font-size:14px;font-weight:800;font-family:inherit;cursor:pointer}
+.empty-card{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:32px;gap:18px}
+.empty-card .ec-frame{width:88%;max-width:280px;height:180px;border:2px dashed var(--line-2);border-radius:18px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--text-3)}
+.empty-card .ec-frame svg{width:36px;height:36px}
+.empty-card .ec-txt{font-size:14px;color:var(--text-2);line-height:1.6;font-weight:600;max-width:280px}
+.empty-card .ec-btn{height:52px;padding:0 28px;border-radius:14px;background:var(--accent);color:#231a02;border:none;font-size:16px;font-weight:800;font-family:inherit;cursor:pointer;display:flex;align-items:center;gap:8px}
+.empty-card .ec-btn svg{width:20px;height:20px}
+.field{margin-bottom:14px}
+.field .fl{font-size:12px;font-weight:700;color:var(--text-3);margin-bottom:6px}
+.field .fi{height:48px;border:1px solid var(--line-2);border-radius:12px;background:var(--surface-2);display:flex;align-items:center;padding:0 14px;font-size:15px;color:var(--text)}
+.field .fi.ph{color:var(--text-3)}
+.photo-field{height:150px;border:2px dashed var(--line-2);border-radius:16px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--text-3);background:var(--surface-2);margin-bottom:18px}
+.photo-field svg{width:30px;height:30px}
+.photo-field .pl{font-size:14px;font-weight:600}
+.privacy-row{display:flex;align-items:center;gap:12px;padding:15px;border:1px solid var(--line);border-radius:14px;background:var(--surface-2);margin:6px 0 18px}
+.privacy-row .pi{width:40px;height:40px;border-radius:11px;background:var(--surface-3);display:flex;align-items:center;justify-content:center;color:var(--text-2);flex:none}
+.privacy-row .pi svg{width:20px;height:20px}
+.privacy-row .pmain{flex:1}
+.privacy-row .pt{font-size:14px;font-weight:700}
+.privacy-row .ps{font-size:12px;color:var(--text-3);margin-top:3px;line-height:1.4}
+.switch{width:48px;height:28px;border-radius:999px;background:var(--surface-3);border:1px solid var(--line-2);flex:none;position:relative;cursor:pointer}
+.switch::after{content:"";position:absolute;top:2px;left:2px;width:22px;height:22px;border-radius:50%;background:var(--text-3);transition:.2s}
+.switch.on{background:var(--st-done);border-color:var(--st-done)}
+.switch.on::after{left:22px;background:#fff}
+.save-btn{flex:none;margin:0 16px 20px;height:52px;border-radius:14px;background:var(--accent);color:#231a02;border:none;font-size:17px;font-weight:800;font-family:inherit;cursor:pointer}
+
+/* ===== floorplan multi-pin (screen 18) ===== */
+.fp-topbar{flex:none;height:56px;display:flex;align-items:center;gap:6px;padding:0 8px 0 12px;border-bottom:1px solid var(--line)}
+.fp-title{font-size:17px;font-weight:800}
+.fp-floor{margin-left:auto;display:flex;align-items:center;gap:5px;height:38px;padding:0 13px;border-radius:10px;background:var(--surface-2);border:1px solid var(--line-2);font-size:14px;font-weight:700;color:var(--text);cursor:pointer}
+.fp-floor svg{width:16px;height:16px;color:var(--text-2)}
+.fp-canvas{flex:1;position:relative;overflow:hidden;background:repeating-linear-gradient(0deg,#181a20,#181a20 1px,transparent 1px,transparent 42px),repeating-linear-gradient(90deg,#181a20,#181a20 1px,transparent 1px,transparent 42px),#111318}
+.fp-canvas .plan-label{position:absolute;left:14px;top:12px;font-family:ui-monospace,monospace;font-size:11px;color:var(--text-3);background:rgba(0,0,0,.5);padding:4px 9px;border-radius:5px}
+.fp-canvas .wall{position:absolute;border:2px solid #2f333d;border-radius:3px}
+/* pins */
+.pin-marker{position:absolute;transform:translate(-50%,-50%);cursor:pointer;z-index:5}
+.pin-marker .dot{width:30px;height:30px;border-radius:50%;border:3px solid #0d0e11;box-shadow:0 3px 8px rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;color:#0d0e11}
+.pin-marker .dot svg{width:14px;height:14px}
+.pin-review .dot{background:#f59e0b}
+.pin-action .dot{background:#3b82f6}
+.pin-done .dot{background:#22c55e}
+.pin-pre .dot{background:#8b5cf6}
+.pin-cluster .dot{width:40px;height:40px;background:var(--surface-3);border-color:#0d0e11;color:var(--text);font-size:15px;font-weight:800;position:relative}
+.pin-cluster .ring{position:absolute;inset:-4px;border-radius:50%;border:2px solid var(--line-2)}
+/* mini card popup */
+.mini-card{position:absolute;transform:translate(-50%,calc(-100% - 20px));z-index:10;width:200px;background:rgba(30,32,39,.97);backdrop-filter:blur(12px);border:1px solid var(--line-2);border-radius:14px;padding:12px 13px;box-shadow:0 12px 30px -8px rgba(0,0,0,.8)}
+.mini-card::after{content:"";position:absolute;left:50%;bottom:-7px;transform:translateX(-50%) rotate(45deg);width:12px;height:12px;background:rgba(30,32,39,.97);border-right:1px solid var(--line-2);border-bottom:1px solid var(--line-2)}
+.mini-card .mc-top{display:flex;align-items:center;gap:7px;margin-bottom:6px}
+.mini-card .mc-no{font-family:ui-monospace,monospace;font-size:12px;font-weight:700;color:var(--text-3)}
+.mini-card .mc-badge{margin-left:auto;font-size:11px;font-weight:800;padding:3px 9px;border-radius:999px}
+.mini-card .mc-title{font-size:13.5px;font-weight:700;line-height:1.4;color:var(--text)}
+.mini-card .mc-link{display:flex;align-items:center;gap:4px;margin-top:9px;font-size:12.5px;font-weight:700;color:var(--accent)}
+.mini-card .mc-link svg{width:14px;height:14px}
+/* legend */
+.fp-legend{flex:none;display:flex;align-items:center;justify-content:center;gap:16px;padding:12px;border-top:1px solid var(--line);background:var(--surface)}
+.lg-item{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--text-2)}
+.lg-item .d{width:11px;height:11px;border-radius:50%}
+/* floating reset */
+.fp-fab{position:absolute;right:16px;bottom:74px;width:48px;height:48px;border-radius:14px;background:var(--surface);border:1px solid var(--line-2);color:var(--text);display:flex;align-items:center;justify-content:center;box-shadow:0 6px 16px rgba(0,0,0,.5);cursor:pointer;z-index:8}
+.fp-fab svg{width:22px;height:22px}
+/* cluster bottom sheet */
+.cluster-sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-radius:22px 22px 0 0;border-top:1px solid var(--line-2);padding:10px 0 14px;z-index:20;box-shadow:0 -12px 30px rgba(0,0,0,.5)}
+.cluster-sheet .cs-grip{width:40px;height:5px;border-radius:999px;background:var(--line-2);margin:6px auto 8px}
+.cluster-sheet .cs-h{font-size:13px;font-weight:800;color:var(--text-2);padding:6px 16px 10px}
+.cs-row{display:flex;align-items:center;gap:11px;padding:11px 16px;cursor:pointer}
+.cs-row:hover{background:var(--surface-2)}
+.cs-row .csr-th{width:40px;height:40px;border-radius:10px;flex:none;background:repeating-linear-gradient(45deg,#24242c,#24242c 7px,#1c1c22 7px,#1c1c22 14px);border:1px solid var(--line)}
+.cs-row .csr-no{font-family:ui-monospace,monospace;font-size:11px;font-weight:700;color:var(--text-3)}
+.cs-row .csr-t{font-size:14px;font-weight:600;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cs-row .csr-badge{margin-left:auto;font-size:11px;font-weight:800;padding:3px 9px;border-radius:999px;flex:none}
+</style>
+</head>
+<body>
+<div class="stage">
+
+  <!-- ================= REV10 · 온보딩 인터랙티브 프로토타입 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>온보딩</b> — 회원가입 · 현장 등록 흐름 (실동작) <b style="color:var(--accent)">· REV10</b></div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen" id="ob-screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+
+        <!-- ① 시작 화면 -->
+        <div class="ob-step" data-step="splash">
+          <div class="ob-splash-mid">
+            <div class="ob-logo"><i data-lucide="hard-hat"></i></div>
+            <div class="ob-brand">안건톡</div>
+            <div class="ob-tag">현장의 판단이 조직의 자산이 됩니다</div>
+          </div>
+          <button class="ob-cta" data-go="role">시작하기</button>
+        </div>
+
+        <!-- ② 역할 선택 -->
+        <div class="ob-step hidden" data-step="role">
+          <div class="ob-bar"><button class="iconbtn backbtn" data-go="splash"><i data-lucide="chevron-left"></i></button><span class="ob-bar-t">회원가입</span><span class="spacer"></span></div>
+          <div class="ob-body">
+            <div class="ob-q">당신은 누구신가요?</div>
+            <div class="ob-rolelist">
+              <div class="ob-rolecard" data-role="owner"><div class="ob-ric"><i data-lucide="building"></i></div><div class="ob-rc-main"><div class="ob-rc-name">발주처</div><div class="ob-rc-sub">현장을 발주하는 주체</div></div><i data-lucide="check" class="ob-rc-chk"></i></div>
+              <div class="ob-rolecard" data-role="hmg"><div class="ob-ric"><i data-lucide="briefcase"></i></div><div class="ob-rc-main"><div class="ob-rc-name">한미글로벌</div><div class="ob-rc-sub">PM·사업관리 총괄</div></div><i data-lucide="check" class="ob-rc-chk"></i></div>
+              <div class="ob-rolecard" data-role="constructor"><div class="ob-ric"><i data-lucide="hard-hat"></i></div><div class="ob-rc-main"><div class="ob-rc-name">시공사</div><div class="ob-rc-sub">건축·전기·통신·소방 원청사</div></div><i data-lucide="check" class="ob-rc-chk"></i></div>
+              <div class="ob-rolecard" data-role="partner"><div class="ob-ric"><i data-lucide="users"></i></div><div class="ob-rc-main"><div class="ob-rc-name">협력사</div><div class="ob-rc-sub">시공사 하위 전문업체</div></div><i data-lucide="check" class="ob-rc-chk"></i></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ③ 현장 선택 (공통) -->
+        <div class="ob-step hidden" data-step="site">
+          <div class="ob-bar"><button class="iconbtn backbtn" data-go="role"><i data-lucide="chevron-left"></i></button><span class="ob-bar-t">현장 선택</span><span class="spacer"></span></div>
+          <div class="ob-body">
+            <div class="ob-q">현장을 선택하세요</div>
+            <div class="searchbar" style="margin-bottom:14px"><i data-lucide="search"></i>현장명 검색</div>
+            <div class="ob-sitelist">
+              <div class="ob-site" data-site="고창CDC 물류센터 신축공사"><div class="site-thumb"><i data-lucide="building-2"></i></div><div class="site-main"><div class="site-name">고창CDC 물류센터 신축공사</div><div class="site-loc"><i data-lucide="map-pin"></i>전북 고창군 · A~C동</div></div><i data-lucide="chevron-right" class="ob-site-go"></i></div>
+              <div class="ob-site" data-site="평택 반도체 P3 부대공사"><div class="site-thumb"><i data-lucide="building-2"></i></div><div class="site-main"><div class="site-name">평택 반도체 P3 부대공사</div><div class="site-loc"><i data-lucide="map-pin"></i>경기 평택시 · 전기·설비</div></div><i data-lucide="chevron-right" class="ob-site-go"></i></div>
+              <div class="ob-site" data-site="청라 데이터센터 신축"><div class="site-thumb"><i data-lucide="building-2"></i></div><div class="site-main"><div class="site-name">청라 데이터센터 신축</div><div class="site-loc"><i data-lucide="map-pin"></i>인천 서구 · 토목</div></div><i data-lucide="chevron-right" class="ob-site-go"></i></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ④ 발주처·한미글로벌 가입 완료 -->
+        <div class="ob-step hidden" data-step="done">
+          <div class="ob-center">
+            <div class="ob-bigcheck"><i data-lucide="check"></i></div>
+            <div class="ob-center-t">가입이 완료되었습니다</div>
+            <div class="ob-summary">
+              <div class="ob-sum-row"><span class="k">역할</span><span class="v" id="ob-d-role">—</span></div>
+              <div class="ob-sum-row"><span class="k">현장</span><span class="v" id="ob-d-site">—</span></div>
+            </div>
+          </div>
+          <button class="ob-cta" data-go="splash" data-reset="1">시작하기</button>
+        </div>
+
+        <!-- ⑤ 시공사 · 공종 선택 -->
+        <div class="ob-step hidden" data-step="trade">
+          <div class="ob-bar"><button class="iconbtn backbtn" data-go="site"><i data-lucide="chevron-left"></i></button><span class="ob-bar-t">공종 선택</span><span class="spacer"></span></div>
+          <div class="ob-body">
+            <div class="ob-q">소속 공종을 선택하세요</div>
+            <div class="ob-note-sm">한 현장에 같은 공종 시공사는 하나만 등록됩니다</div>
+            <div class="ob-tradegrid">
+              <div class="ob-trade taken" data-trade="건축"><div class="ob-tr-ic"><i data-lucide="building-2"></i></div><div class="ob-tr-name">건축</div><div class="ob-tr-taken">이미 등록됨</div></div>
+              <div class="ob-trade taken" data-trade="전기"><div class="ob-tr-ic"><i data-lucide="zap"></i></div><div class="ob-tr-name">전기</div><div class="ob-tr-taken">이미 등록됨</div></div>
+              <div class="ob-trade" data-trade="통신"><div class="ob-tr-ic"><i data-lucide="radio"></i></div><div class="ob-tr-name">통신</div><div class="ob-tr-sub">등록 가능</div></div>
+              <div class="ob-trade taken" data-trade="소방"><div class="ob-tr-ic"><i data-lucide="flame"></i></div><div class="ob-tr-name">소방</div><div class="ob-tr-taken">이미 등록됨</div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ⑥ 시공사 · 업체명 기입 -->
+        <div class="ob-step hidden" data-step="cCompany">
+          <div class="ob-bar"><button class="iconbtn backbtn" data-go="trade"><i data-lucide="chevron-left"></i></button><span class="ob-bar-t">업체 정보</span><span class="spacer"></span></div>
+          <div class="ob-body">
+            <div class="ob-summary tight">
+              <div class="ob-sum-row"><span class="k">현장</span><span class="v" id="ob-cc-site">—</span></div>
+              <div class="ob-sum-row"><span class="k">공종</span><span class="v" id="ob-cc-trade">—</span></div>
+            </div>
+            <div class="ob-field"><label>업체명</label><input type="text" id="ob-cc-corp" placeholder="예) 대한건설"></div>
+          </div>
+          <button class="ob-cta" id="ob-cc-next">다음</button>
+        </div>
+
+        <!-- ⑦ 협력사 · 원청 선택 -->
+        <div class="ob-step hidden" data-step="origin">
+          <div class="ob-bar"><button class="iconbtn backbtn" data-go="site"><i data-lucide="chevron-left"></i></button><span class="ob-bar-t">원청사 선택</span><span class="spacer"></span></div>
+          <div class="ob-body">
+            <div class="ob-q">소속 원청사를 선택하세요</div>
+            <div class="ob-note-sm">선택한 현장에 등록된 시공사입니다</div>
+            <div class="ob-originlist">
+              <div class="ob-origin" data-corp="동부건설" data-trade="건축"><span class="pc-td-dot" style="background:#3b82f6"></span><div class="ob-og-main"><div class="ob-og-name">동부건설</div><div class="ob-og-sub">건축 공종 원청</div></div><i data-lucide="chevron-right" class="ob-og-go"></i></div>
+              <div class="ob-origin" data-corp="대명전기" data-trade="전기"><span class="pc-td-dot" style="background:#f59e0b"></span><div class="ob-og-main"><div class="ob-og-name">대명전기</div><div class="ob-og-sub">전기 공종 원청</div></div><i data-lucide="chevron-right" class="ob-og-go"></i></div>
+              <div class="ob-origin" data-corp="세이프테크소방" data-trade="소방"><span class="pc-td-dot" style="background:#ef4444"></span><div class="ob-og-main"><div class="ob-og-name">세이프테크소방</div><div class="ob-og-sub">소방 공종 원청</div></div><i data-lucide="chevron-right" class="ob-og-go"></i></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ⑧ 협력사 · 공정 지정 + 업체명 -->
+        <div class="ob-step hidden" data-step="pCompany">
+          <div class="ob-bar"><button class="iconbtn backbtn" data-go="origin"><i data-lucide="chevron-left"></i></button><span class="ob-bar-t">공정·업체 정보</span><span class="spacer"></span></div>
+          <div class="ob-body">
+            <div class="ob-summary tight">
+              <div class="ob-sum-row"><span class="k">현장</span><span class="v" id="ob-pc-site">—</span></div>
+              <div class="ob-sum-row"><span class="k">원청사</span><span class="v" id="ob-pc-origin">—</span></div>
+            </div>
+            <div class="ob-field"><label>소속 공정</label><input type="text" id="ob-pc-proc" placeholder="예) 철근콘크리트"></div>
+            <div class="ob-chips" id="ob-proc-chips"><span>철근콘크리트</span><span>철골</span><span>외장판넬</span><span>토공</span><span>미장</span></div>
+            <div class="ob-field"><label>업체명</label><input type="text" id="ob-pc-corp" placeholder="예) 정우철강"></div>
+          </div>
+          <button class="ob-cta" id="ob-pc-next">다음</button>
+        </div>
+
+        <!-- ⑩ 본인 정보 입력 (공통 · 마지막 단계) -->
+        <div class="ob-step hidden" data-step="profile">
+          <div class="ob-bar"><button class="iconbtn backbtn" id="ob-prof-back"><i data-lucide="chevron-left"></i></button><span class="ob-bar-t">본인 정보 입력</span><span class="spacer"></span></div>
+          <div class="ob-body">
+            <div class="ob-q">본인 정보를 입력해주세요</div>
+            <div class="ob-summary tight">
+              <div class="ob-sum-row"><span class="k">역할</span><span class="v" id="ob-pf-role">—</span></div>
+              <div class="ob-sum-row"><span class="k">현장</span><span class="v" id="ob-pf-site">—</span></div>
+              <div class="ob-sum-row" id="ob-pf-tradewrap"><span class="k" id="ob-pf-tradek">공종</span><span class="v" id="ob-pf-trade">—</span></div>
+            </div>
+            <div class="ob-field"><label>성명</label><input type="text" id="ob-pf-name" placeholder="예) 홍길동" data-pf-req></div>
+            <div class="ob-field"><label>직급</label><input type="text" id="ob-pf-title" placeholder="예) 과장" data-pf-req></div>
+            <div class="ob-field hidden" id="ob-pf-deptwrap"><label>소속 부서</label>
+              <div class="ob-ac"><input type="text" id="ob-pf-dept" placeholder="예) 공무" autocomplete="off" data-pf-req><div class="ob-ac-list hidden" id="ob-pf-dept-list"></div></div>
+            </div>
+            <div class="ob-field"><label>휴대전화 번호</label><input type="tel" id="ob-pf-phone" placeholder="010-0000-0000" data-pf-req></div>
+            <div class="ob-optdiv"><span>선택 입력</span></div>
+            <div class="ob-field"><label>입사년도 <span class="ob-opt">(선택)</span></label><select id="ob-pf-year" class="ob-select"><option value="">연도 선택</option></select></div>
+            <div class="ob-field"><label>전문분야 <span class="ob-opt">(선택)</span></label>
+              <div class="ob-chips" id="ob-pf-spec"><span>구조</span><span>공정관리</span><span>품질</span><span>안전</span><span>원가</span><span>설계</span></div>
+            </div>
+          </div>
+          <button class="ob-cta" id="ob-prof-submit" disabled>가입 완료</button>
+        </div>
+
+        <!-- ⑨ 승인 대기 (공통) -->
+        <div class="ob-step hidden" data-step="wait">
+          <div class="ob-center">
+            <div class="ob-hourglass"><i data-lucide="hourglass"></i></div>
+            <div class="ob-center-t">승인 대기 중입니다</div>
+            <div class="ob-summary">
+              <div class="ob-sum-row"><span class="k">역할</span><span class="v" id="ob-w-role">—</span></div>
+              <div class="ob-sum-row"><span class="k">현장</span><span class="v" id="ob-w-site">—</span></div>
+              <div class="ob-sum-row"><span class="k" id="ob-w-tradek">공종</span><span class="v" id="ob-w-trade">—</span></div>
+              <div class="ob-sum-row"><span class="k">업체명</span><span class="v" id="ob-w-corp">—</span></div>
+              <div class="ob-sum-row"><span class="k">승인 대상</span><span class="v" id="ob-w-approver">—</span></div>
+            </div>
+            <div class="ob-wait-note">담당자가 승인하면 자동으로 이용하실 수 있습니다</div>
+          </div>
+          <button class="ob-cancel" data-go="splash" data-reset="1">신청 취소</button>
+        </div>
+
+        <!-- 확인 다이얼로그 -->
+        <div class="dialog-scrim hidden" id="ob-scrim">
+          <div class="rd-dialog">
+            <div class="rd-dl-ic"><i data-lucide="send"></i></div>
+            <div class="rd-dl-title" id="ob-dl-title">승인 요청을 보냈습니다</div>
+            <div class="rd-dl-body">승인이 완료되면 알림으로 안내드립니다.</div>
+            <div class="rd-dl-acts"><button class="rd-dl-cancel" id="ob-dl-cancel">닫기</button><button class="rd-dl-ok" id="ob-dl-ok">확인</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 1 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 1</b> — 홈 · 채팅방 목록</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+
+        <div class="appbar">
+          <span class="title">채팅</span>
+          <span class="spacer"></span>
+          <button class="iconbtn" id="home-search-btn"><i data-lucide="search"></i></button>
+          <button class="iconbtn" id="home-create-btn"><i data-lucide="message-square-plus"></i></button>
+          <button class="iconbtn"><i data-lucide="settings-2"></i></button>
+        </div>
+
+        <div class="home-search-bar" id="home-search-bar">
+          <div class="searchbar"><i data-lucide="search"></i><input type="text" id="home-search" placeholder="채팅방 검색" autocomplete="off"><button class="hsb-cancel" id="home-search-cancel"><i data-lucide="x"></i></button></div>
+        </div>
+
+        <div class="list" id="home-list">
+          <div class="search-empty hidden" id="home-empty">검색 결과가 없습니다</div>
+
+          <!-- 건축방 -->
+          <div class="room">
+            <div class="avatar"><i data-lucide="building-2"></i><span class="grp">24</span></div>
+            <div class="room-main">
+              <div class="room-top"><span class="room-name">건축방</span></div>
+              <div class="room-preview">이형탁 소장: 3층 슬래브 배근 사진 확인 부탁드립니다</div>
+              <span class="agenda-sub"><span class="dot"></span>진행중 안건 3건</span>
+            </div>
+            <div class="room-right"><span class="room-time">오후 2:14</span><span class="unread">5</span></div>
+          </div>
+
+          <!-- 토목방 -->
+          <div class="room">
+            <div class="avatar"><i data-lucide="mountain"></i><span class="grp">18</span></div>
+            <div class="room-main">
+              <div class="room-top"><span class="room-name">토목방</span></div>
+              <div class="room-preview">되메우기 다짐 시험 결과 공유합니다</div>
+              <span class="agenda-sub"><span class="dot"></span>진행중 안건 1건</span>
+            </div>
+            <div class="room-right"><span class="room-time">오후 1:02</span><span class="unread">2</span></div>
+          </div>
+
+          <!-- 설비방 -->
+          <div class="room">
+            <div class="avatar"><i data-lucide="wrench"></i><span class="grp">15</span></div>
+            <div class="room-main">
+              <div class="room-top"><span class="room-name">설비방</span></div>
+              <div class="room-preview">지하 1층 소화배관 루트 협의 필요합니다</div>
+              <span class="agenda-sub"><span class="dot"></span>진행중 안건 2건</span>
+            </div>
+            <div class="room-right"><span class="room-time">오전 11:47</span></div>
+          </div>
+
+          <!-- 전기방 -->
+          <div class="room">
+            <div class="avatar"><i data-lucide="zap"></i><span class="grp">12</span></div>
+            <div class="room-main">
+              <div class="room-top"><span class="room-name">전기방</span></div>
+              <div class="room-preview">전기실 트레이 반입 일정 조율 건</div>
+            </div>
+            <div class="room-right"><span class="room-time">오전 9:30</span></div>
+          </div>
+
+          <!-- 협력사 단톡방 -->
+          <div class="room">
+            <div class="avatar"><i data-lucide="users"></i><span class="grp">41</span></div>
+            <div class="room-main">
+              <div class="room-top"><span class="room-name">협력사 단톡방</span></div>
+              <div class="room-preview">동부기초: 금일 크레인 반입 완료했습니다</div>
+            </div>
+            <div class="room-right"><span class="room-time">오전 8:55</span><span class="unread">12</span></div>
+          </div>
+
+          <!-- 1:1 -->
+          <div class="room">
+            <div class="avatar"><i data-lucide="user"></i></div>
+            <div class="room-main">
+              <div class="room-top"><span class="room-name">김공무 과장</span></div>
+              <div class="room-preview">기성 서류 검토 후 회신드리겠습니다</div>
+            </div>
+            <div class="room-right"><span class="room-time">어제</span></div>
+          </div>
+        </div>
+
+        <div class="tabbar">
+          <div class="tab"><i data-lucide="contact-round"></i>연락처</div>
+          <div class="tab"><i data-lucide="building-2"></i>현장</div>
+          <div class="tab active"><i data-lucide="message-square-more"></i>채팅</div><!--home-tabbar-->
+          <div class="tab"><i data-lucide="user-round"></i>마이페이지</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 2 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 2</b> — 건축방 · [+] 메뉴 열림</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+
+        <div class="appbar">
+          <button class="iconbtn backbtn"><i data-lucide="chevron-left"></i></button>
+          <span class="title">건축방</span>
+          <span class="sub">24</span>
+          <span class="spacer"></span>
+          <button class="iconbtn" id="room-search-btn"><i data-lucide="search"></i></button>
+          <button class="iconbtn"><i data-lucide="menu"></i></button>
+        </div>
+
+        <div class="room-search-bar hidden" id="room-search-bar">
+          <i data-lucide="search"></i>
+          <input type="text" id="room-search" placeholder="대화 내용 검색" autocomplete="off">
+          <span class="rsb-count" id="room-search-count"></span>
+          <span class="rsb-nav" id="room-search-prev"><i data-lucide="chevron-up"></i></span>
+          <span class="rsb-nav" id="room-search-next"><i data-lucide="chevron-down"></i></span>
+        </div>
+
+        <div class="chat" id="room-chat">
+          <div class="datediv">2026년 7월 28일 (화)</div>
+
+          <!-- incoming text -->
+          <div class="msg row-in">
+            <div class="av"><i data-lucide="user"></i></div>
+            <div class="msg-body">
+              <span class="sender">이형탁 소장</span>
+              <div class="bubble">3층 슬래브 배근 완료됐는데 피복두께가 도면보다 얇아 보입니다.</div>
+            </div>
+            <span class="stamp">2:09</span>
+          </div>
+
+          <!-- incoming photo -->
+          <div class="msg row-in">
+            <div class="av"><i data-lucide="user"></i></div>
+            <div class="msg-body">
+              <div class="ph-photo"><span>사진 — 3층 슬래브 배근 현장</span></div>
+            </div>
+            <span class="stamp">2:10</span>
+          </div>
+
+          <!-- outgoing text -->
+          <div class="msg row-out">
+            <div class="msg-body">
+              <div class="bubble">도면 확인해볼게요. 구조 검토서 첨부합니다.</div>
+            </div>
+            <span class="unread-n">3</span>
+            <span class="stamp">2:12</span>
+          </div>
+
+          <!-- outgoing file -->
+          <div class="msg row-out">
+            <div class="msg-body">
+              <div class="filecard">
+                <div class="fi"><i data-lucide="file-text"></i></div>
+                <div><div class="fn">구조검토_A동_3F.pdf</div><div class="fs">1.8 MB</div></div>
+              </div>
+            </div>
+            <span class="unread-n">2</span>
+            <span class="stamp">2:12</span>
+          </div>
+
+          <!-- 안건 카드 -->
+          <div class="agenda-card">
+            <div class="ac-head">
+              <i data-lucide="clipboard-list" style="width:18px;height:18px;color:var(--text-2)"></i>
+              <span class="ac-no">안건 #153</span>
+              <span class="ac-tag tag-review">검토중</span>
+            </div>
+            <div class="ac-title">A동 3층 슬래브 철근 피복두께 검토</div>
+            <div class="ac-meta">
+              <span class="ac-chip"><i data-lucide="moon"></i>야간 등록</span>
+              <span class="ac-dot"></span>
+              <span class="ac-age age-neutral"><i data-lucide="activity"></i>3일째 진행중</span>
+            </div>
+            <div class="ac-photo"><span>사진 — 배근 상세 (2장)</span></div>
+            <div class="ac-foot">
+              <i data-lucide="users"></i>참여자 5명
+              <span class="ac-go">탭하여 안건방 이동<i data-lucide="arrow-right"></i></span>
+            </div>
+          </div>
+
+          <!-- incoming text after card -->
+          <div class="msg row-in">
+            <div class="av"><i data-lucide="user"></i></div>
+            <div class="msg-body">
+              <span class="sender">박품질 부장</span>
+              <div class="bubble">안건방에서 조치 방안 논의하시죠. 감리단도 참여시키겠습니다.</div>
+            </div>
+            <span class="unread-n">1</span>
+            <span class="stamp">2:14</span>
+          </div>
+        </div>
+
+        <div class="inputbar">
+          <button class="plusbtn open"><i data-lucide="plus"></i></button>
+          <div class="inputfield">메시지 입력</div>
+          <button class="sendbtn"><i data-lucide="send"></i></button>
+        </div>
+
+        <!-- + menu -->
+        <div class="plusmenu">
+          <div class="pm-item"><div class="pm-ic"><i data-lucide="image"></i></div><span class="pm-label">사진</span></div>
+          <div class="pm-item"><div class="pm-ic"><i data-lucide="camera"></i></div><span class="pm-label">카메라</span></div>
+          <div class="pm-item"><div class="pm-ic"><i data-lucide="paperclip"></i></div><span class="pm-label">파일</span></div>
+          <div class="pm-item hi"><div class="pm-ic"><i data-lucide="clipboard-plus"></i></div><span class="pm-label">안건 올리기</span></div>
+          <div class="pm-item"><div class="pm-ic"><i data-lucide="help-circle"></i></div><span class="pm-label">질문하기</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 3 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 3</b> — 안건 올리기 (등록)</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+
+        <div class="modalbar">
+          <button class="iconbtn"><i data-lucide="x"></i></button>
+          <span class="title">안건 올리기</span>
+          <button class="postbtn">게시</button>
+        </div>
+
+        <div class="reg">
+          <div class="dropzone">
+            <div class="cam"><i data-lucide="camera"></i></div>
+            <div class="dz-main">사진 촬영 또는 선택</div>
+            <div class="dz-sub">현장 사진 한 장이면 충분합니다</div>
+          </div>
+
+          <div class="reg-input">간단한 문제 설명 (선택)</div>
+
+          <div class="field-label">자동 인식됨 <span class="ai">AI 추론</span></div>
+          <div class="chiprow">
+            <span class="chip"><i data-lucide="map-pin"></i>A동 3층<i data-lucide="pencil" class="edit"></i></span>
+            <span class="chip"><i data-lucide="hammer"></i>철근공사<i data-lucide="pencil" class="edit"></i></span>
+            <span class="chip empty"><i data-lucide="user-plus"></i>담당자 지정</span>
+          </div>
+
+          <div class="linkbtn"><i data-lucide="map" class="lead"></i>도면에서 위치 지정<i data-lucide="chevron-right" class="chev"></i></div>
+        </div>
+
+        <div class="reg-foot">
+          <button class="bigbtn">안건 게시</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 3-1 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 3-1</b> — 도면 위 위치 핀 찍기</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+
+        <div class="planbar">
+          <button class="iconbtn backbtn"><i data-lucide="chevron-left"></i></button>
+          <div class="plan-info">
+            <div class="plan-title">A동 3층 평면도</div>
+            <div class="plan-rev"><i data-lucide="badge-check"></i>Rev.04 · 최신 승인본</div>
+          </div>
+        </div>
+
+        <div class="plan-canvas">
+          <div class="plan-img"></div>
+          <div class="plan-walls">
+            <div style="left:24px;top:60px;width:6px;height:560px"></div>
+            <div style="right:24px;top:60px;width:6px;height:560px"></div>
+            <div style="left:24px;top:60px;right:24px;height:6px"></div>
+            <div style="left:24px;bottom:80px;right:24px;height:6px"></div>
+            <div style="left:150px;top:60px;width:6px;height:300px"></div>
+            <div style="left:150px;top:280px;width:130px;height:6px"></div>
+          </div>
+          <div class="plan-hint"><i data-lucide="pointer"></i>도면을 탭하여 위치를 지정하세요</div>
+          <div class="plan-ghost" style="left:60%;top:70%"></div>
+          <div class="pin" style="left:44%;top:46%">
+            <div class="pin-body"><i data-lucide="alert-triangle"></i></div>
+            <div class="pin-label">안건 #153 위치</div>
+          </div>
+        </div>
+
+        <div class="reg-foot">
+          <button class="bigbtn">이 위치로 지정</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 4 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 4</b> — 안건방 (서브 채팅방)</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+
+        <div class="agbar">
+          <button class="iconbtn backbtn"><i data-lucide="chevron-left"></i></button>
+          <div class="col">
+            <div class="topline">
+              <span class="agtitle">안건 #153</span>
+              <span class="status-badge sb-review">검토중<i data-lucide="chevron-down"></i></span>
+            </div>
+            <span class="agsub">A동 3층 슬래브 철근 피복두께 검토</span>
+          </div>
+        </div>
+
+        <div class="aisum">
+          <div class="aisum-head"><i data-lucide="pin" class="pin-ic"></i>AI 요약<i data-lucide="chevron-up" class="chev"></i></div>
+          <div class="aisum-body">스페이서 누락으로 피복두께 부족 가능성 제기. 재배근 결정, 재검측 대기중.</div>
+          <div class="aisum-open">
+            <div class="ttl">미결사항</div>
+            <ul>
+              <li>실제 피복두께 재측정</li>
+              <li>품질담당자 최종 승인</li>
+            </ul>
+          </div>
+          <div class="aisum-src"><i data-lucide="paperclip"></i>유사사례 12건 · 사내 품질기준 3.2조 기반<i data-lucide="chevron-down" class="chev"></i></div>
+        </div>
+
+        <div class="revbanner">
+          <i data-lucide="alert-triangle" class="rb-ic"></i>
+          <span class="rb-txt">검토하신 부위의 도면이 개정되었습니다 <b>Rev.04 → Rev.05</b></span>
+          <button class="rb-btn">변경 확인</button>
+          <span class="rb-close"><i data-lucide="x"></i></span>
+        </div>
+
+        <div class="chat">
+          <div class="datediv">2026년 7월 28일 (화)</div>
+
+          <div class="msg row-in">
+            <div class="av"><i data-lucide="user"></i></div>
+            <div class="msg-body">
+              <span class="sender">김대리</span>
+              <div class="bubble">슬래브 철근 피복이 부족해 보입니다. 이대로 타설 가능할까요?</div>
+            </div>
+            <span class="stamp">2:16</span>
+          </div>
+
+          <div class="msg row-in">
+            <div class="av"><i data-lucide="user"></i></div>
+            <div class="msg-body">
+              <div class="ph-photo"><span>사진 — 피복두께 실측</span></div>
+            </div>
+            <span class="stamp">2:16</span>
+          </div>
+
+          <div class="msg row-in">
+            <div class="av"><i data-lucide="user"></i></div>
+            <div class="msg-body">
+              <span class="sender">품질팀</span>
+              <div class="bubble">스페이서 상태와 실제 피복두께를 다시 측정해 주세요.</div>
+            </div>
+            <span class="stamp">2:19</span>
+          </div>
+
+          <div class="msg row-in">
+            <div class="av"><i data-lucide="user"></i></div>
+            <div class="msg-body">
+              <span class="sender">현장소장</span>
+              <div class="bubble decision">간격보다 피복 확보가 우선입니다. 부족 구간은 재배근하세요.</div>
+              <span class="decision-label"><i data-lucide="pin"></i>결정근거</span>
+            </div>
+            <span class="unread-n">1</span>
+            <span class="stamp">2:24</span>
+          </div>
+
+          <div class="msg row-out">
+            <div class="msg-body">
+              <div class="bubble">재배근 완료했습니다</div>
+            </div>
+            <span class="unread-n">2</span>
+            <span class="stamp">4:41</span>
+          </div>
+        </div>
+
+        <div class="chipbar">
+          <span class="actchip"><i data-lucide="circle-dot"></i>상태변경</span>
+          <span class="actchip"><i data-lucide="user-plus"></i>담당자</span>
+          <span class="actchip"><i data-lucide="layers"></i>유사사례</span>
+          <span class="actchip hi"><i data-lucide="file-text"></i>보고서 작성</span>
+          <span class="actchip"><i data-lucide="check-circle-2"></i>완료처리</span>
+        </div>
+
+        <div class="inputbar">
+          <button class="plusbtn"><i data-lucide="plus"></i></button>
+          <div class="inputfield">메시지 입력</div>
+          <button class="sendbtn"><i data-lucide="send"></i></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 4 · 컨텍스트 메뉴 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 4-1</b> — 메시지 롱프레스 메뉴</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+        <div class="agbar">
+          <button class="iconbtn backbtn"><i data-lucide="chevron-left"></i></button>
+          <div class="col">
+            <div class="topline">
+              <span class="agtitle">안건 #153</span>
+              <span class="status-badge sb-review">검토중<i data-lucide="chevron-down"></i></span>
+            </div>
+            <span class="agsub">A동 3층 슬래브 철근 피복두께 검토</span>
+          </div>
+        </div>
+
+        <div class="chat" style="filter:blur(1px);opacity:.5">
+          <div class="msg row-in">
+            <div class="av"><i data-lucide="user"></i></div>
+            <div class="msg-body"><span class="sender">김대리</span><div class="bubble">슬래브 철근 피복이 부족해 보입니다.</div></div>
+          </div>
+        </div>
+
+        <div class="ctx-scrim">
+          <div class="ctx-anchor">
+            <div class="bubble">간격보다 피복 확보가 우선입니다. 부족 구간은 재배근하세요.</div>
+          </div>
+          <div class="ctxmenu">
+            <div class="item"><i data-lucide="reply"></i>답장</div>
+            <div class="item"><i data-lucide="copy"></i>복사</div>
+            <div class="item tag"><i data-lucide="pin"></i>결정근거로 태그</div>
+            <div class="item danger"><i data-lucide="trash-2"></i>삭제</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 5 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 5</b> — 안건 리스트</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+        <div class="appbar">
+          <button class="iconbtn backbtn"><i data-lucide="chevron-left"></i></button>
+          <span class="title" style="font-size:17px">건축방 · 안건 리스트</span>
+          <span class="spacer"></span>
+          <button class="iconbtn"><i data-lucide="map-pinned"></i></button>
+        </div>
+
+        <div class="counters">
+          <div class="counter on" data-filter="all"><div class="num">64</div><div class="lab">전체</div></div>
+          <div class="counter" data-filter="progress"><div class="num" style="color:var(--st-action)">12</div><div class="lab">진행중</div></div>
+          <div class="counter" data-filter="done"><div class="num" style="color:var(--st-done)">47</div><div class="lab">완료</div></div>
+          <div class="counter" data-filter="new"><div class="num">5</div><div class="lab">이번 주 신규</div></div>
+        </div>
+
+        <div class="aglist" id="ag5-list">
+          <div class="aglist-empty hidden">해당하는 안건이 없습니다</div>
+          <div class="agitem stale" data-status="progress" data-new="1">
+            <div class="ag-thumb"></div>
+            <div class="ag-main">
+              <div class="ag-no">#151</div>
+              <div class="ag-title">지하 1층 방수 바탕면 하자 확인</div>
+              <div class="ag-meta"><span class="warn"><i data-lucide="alert-triangle"></i>3일간 응답 없음</span></div>
+            </div>
+            <span class="mini-badge sb-review">검토중</span>
+          </div>
+
+          <div class="agitem" data-status="progress" data-new="1">
+            <div class="ag-thumb"></div>
+            <div class="ag-main">
+              <div class="ag-no">#153</div>
+              <div class="ag-title">A동 3층 슬래브 철근 피복두께 검토</div>
+              <div class="ag-meta"><span class="ag-time">10분 전 업데이트</span></div>
+            </div>
+            <span class="mini-badge sb-review">검토중</span>
+          </div>
+
+          <div class="agitem" data-status="progress">
+            <div class="ag-thumb"></div>
+            <div class="ag-main">
+              <div class="ag-no">#152</div>
+              <div class="ag-title">2층 계단실 거푸집 오시공 수정</div>
+              <div class="ag-meta"><span class="ag-time">1시간 전 업데이트</span></div>
+            </div>
+            <span class="mini-badge sb-action">조치중</span>
+          </div>
+
+          <div class="agitem" data-status="done">
+            <div class="ag-thumb"></div>
+            <div class="ag-main">
+              <div class="ag-no">#149</div>
+              <div class="ag-title">외벽 커튼월 패널 줄눈 조정</div>
+              <div class="ag-meta"><span class="ag-time">어제 완료</span></div>
+            </div>
+            <span class="mini-badge sb-done">완료</span>
+          </div>
+
+          <div class="agitem" data-status="done">
+            <div class="ag-thumb"></div>
+            <div class="ag-main">
+              <div class="ag-no">#147</div>
+              <div class="ag-title">옥상 파라펫 방수 상세 확정</div>
+              <div class="ag-meta"><span class="ag-time">2일 전 완료</span></div>
+            </div>
+            <span class="mini-badge sb-done">완료</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 6 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 6</b> — 보고서 형식 선택 시트</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+        <div class="agbar">
+          <button class="iconbtn backbtn"><i data-lucide="chevron-left"></i></button>
+          <div class="col"><div class="topline"><span class="agtitle">안건 #153</span><span class="status-badge sb-review">검토중<i data-lucide="chevron-down"></i></span></div><span class="agsub">A동 3층 슬래브 철근 피복두께 검토</span></div>
+        </div>
+        <div class="chat" style="filter:blur(1px);opacity:.5">
+          <div class="msg row-out"><div class="msg-body"><div class="bubble">재배근 완료했습니다</div></div></div>
+        </div>
+
+        <div class="sheet-scrim">
+          <div class="sheet">
+            <div class="sheet-grip"></div>
+            <div class="sheet-title">어떤 형식으로 작성할까요?</div>
+            <div class="sheet-opt">
+              <div class="so-ic"><i data-lucide="clock"></i></div>
+              <div><div class="so-title">진행상황 중간보고</div><div class="so-sub">현재까지 논의된 내용 정리</div></div>
+              <i data-lucide="chevron-right" class="chev"></i>
+            </div>
+            <div class="sheet-opt">
+              <div class="so-ic"><i data-lucide="file-check-2"></i></div>
+              <div><div class="so-title">조치완료 보고서</div><div class="so-sub">사내 정식 보고서 형식</div></div>
+              <i data-lucide="chevron-right" class="chev"></i>
+            </div>
+            <div class="sheet-opt">
+              <div class="so-ic"><i data-lucide="stamp"></i></div>
+              <div><div class="so-title">발주처·감리 제출용 공문</div><div class="so-sub">공문 서식으로 자동 변환</div></div>
+              <i data-lucide="chevron-right" class="chev"></i>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 7 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 7</b> — 기술사례 자동 생성 카드</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+        <div class="agbar">
+          <button class="iconbtn backbtn"><i data-lucide="chevron-left"></i></button>
+          <div class="col"><div class="topline"><span class="agtitle">안건 #153</span><span class="status-badge sb-done">완료<i data-lucide="chevron-down"></i></span></div><span class="agsub">A동 3층 슬래브 철근 피복두께 검토</span></div>
+        </div>
+
+        <div class="chat">
+          <div class="datediv">안건이 완료 처리되었습니다</div>
+          <div class="case-card">
+            <div class="case-head">
+              <div class="ttl"><i data-lucide="check-circle-2"></i>기술사례 초안이 생성되었습니다</div>
+              <div class="case-no">CASE-2026-0153</div>
+            </div>
+            <div class="case-row"><span class="rk">문제</span><span class="rv">슬래브 철근 피복두께 부족</span><i data-lucide="chevron-down" class="chev"></i></div>
+            <div class="case-row"><span class="rk">원인</span><span class="rv">스페이서 설치 누락</span><i data-lucide="chevron-down" class="chev"></i></div>
+            <div class="case-row"><span class="rk">검토 대안</span><span class="rv">현장 보완 vs 재배근</span><i data-lucide="chevron-down" class="chev"></i></div>
+            <div class="case-row"><span class="rk">최종 결정</span><span class="rv">부족 구간 재배근</span><i data-lucide="chevron-down" class="chev"></i></div>
+            <div class="case-row"><span class="rk">결정 근거</span><span class="rv">피복 확보 우선 · 구조 안전성</span><i data-lucide="chevron-down" class="chev"></i></div>
+            <div class="case-row"><span class="rk">조치 결과</span><span class="rv">재배근 후 재검측 적합</span><i data-lucide="chevron-down" class="chev"></i></div>
+            <div class="case-row"><span class="rk">재발방지</span><span class="rv">배근 전 스페이서 체크리스트 적용</span><i data-lucide="chevron-down" class="chev"></i></div>
+            <div class="case-foot">
+              <button class="approve">승인</button>
+              <button>수정</button>
+              <button class="reject">반려</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="inputbar">
+          <button class="plusbtn"><i data-lucide="plus"></i></button>
+          <div class="inputfield">메시지 입력</div>
+          <button class="sendbtn"><i data-lucide="send"></i></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 7-1 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 7-1</b> — 기술사례 · 수정 모드 & 저장 피드백</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+        <div class="agbar">
+          <button class="iconbtn backbtn"><i data-lucide="chevron-left"></i></button>
+          <div class="col"><div class="topline"><span class="agtitle">안건 #153</span><span class="status-badge sb-done">완료<i data-lucide="chevron-down"></i></span></div><span class="agsub">A동 3층 슬래브 철근 피복두께 검토</span></div>
+        </div>
+
+        <div class="chat" style="position:relative">
+          <div class="case-card editing">
+            <div class="case-head">
+              <div class="ttl"><i data-lucide="check-circle-2"></i>기술사례 초안<span class="case-badge-edit"><i data-lucide="pencil"></i>수정 중</span></div>
+              <div class="case-no">CASE-2026-0153</div>
+            </div>
+            <div class="case-erow"><div class="rk">문제</div><div class="field-edit">슬래브 철근 피복두께 부족</div></div>
+            <div class="case-erow"><div class="rk">원인</div><div class="field-edit">스페이서 설치 누락</div></div>
+            <div class="case-erow"><div class="rk">검토 대안</div><div class="field-edit">현장 보완 vs 재배근</div></div>
+            <div class="case-erow"><div class="rk">최종 결정</div><div class="field-edit">부족 구간 재배근</div></div>
+            <div class="case-erow"><div class="rk">결정 근거</div><div class="field-edit">피복 확보 우선 · 구조 안전성</div></div>
+            <div class="case-erow"><div class="rk">조치 결과</div><div class="field-edit">재배근 후 재검측 적합</div></div>
+            <div class="case-erow"><div class="rk">재발방지</div><div class="field-edit">배근 전 스페이서 체크리스트 적용</div></div>
+            <div class="case-foot">
+              <button class="approve">저장</button>
+              <button class="cancel">취소</button>
+            </div>
+            <div class="case-toast"><i data-lucide="check-circle-2"></i>수정사항이 저장되었습니다</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 8 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 8</b> — 완료 처리 시트</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+        <div class="agbar">
+          <button class="iconbtn backbtn"><i data-lucide="chevron-left"></i></button>
+          <div class="col"><div class="topline"><span class="agtitle">안건 #153</span><span class="status-badge sb-review">검토중<i data-lucide="chevron-down"></i></span></div><span class="agsub">A동 3층 슬래브 철근 피복두께 검토</span></div>
+        </div>
+        <div class="chat" style="filter:blur(1px);opacity:.4"></div>
+
+        <div class="sheet-scrim">
+          <div class="sheet">
+            <div class="sheet-grip"></div>
+            <div class="cs-title">안건을 완료 처리합니다</div>
+            <div class="cs-sub">A동 3층 슬래브 철근 피복두께 검토</div>
+
+            <!-- 1단계 -->
+            <div class="cstep">
+              <div class="cstep-h"><span class="n">1</span>조치 이력<span class="cstep-hint">자동 감지</span></div>
+              <div class="autobox">
+                <div class="ab-ic"><i data-lucide="repeat"></i></div>
+                <div><div class="ab-main">재조치 2회 발생</div><div class="ab-sub">배근 보완 → 재검측 → 재배근</div></div>
+                <span class="value-badge" style="width:89px;height:40px"><i data-lucide="gem"></i>사례 가치 높음</span>
+              </div>
+            </div>
+
+            <!-- 2단계 -->
+            <div class="cstep">
+              <div class="cstep-h"><span class="n">2</span>이견 여부</div>
+              <div style="font-size:15px;font-weight:700;padding:0 2px 10px">검토 과정에서 전문가 간 이견이 있었나요?</div>
+              <div class="togglerow">
+                <button class="bigtoggle on"><i data-lucide="message-square-warning"></i>있었음</button>
+                <button class="bigtoggle">없었음</button>
+              </div>
+              <div class="disagree-panel">
+                <div class="dp-note">이견 기록은 판단 기준을 후배에게 전달하는 자료가 됩니다 · 선택사항, 건너뛰기 가능</div>
+                <div class="pgrid">
+                  <div class="prow on"><span class="pav"><i data-lucide="user"></i></span><span class="pname">품질팀 (보완 주장)</span><span class="pchk"><i data-lucide="check"></i></span></div>
+                  <div class="prow on"><span class="pav"><i data-lucide="user"></i></span><span class="pname">현장소장 (재배근 주장)</span><span class="pchk"><i data-lucide="check"></i></span></div>
+                  <div class="prow"><span class="pav"><i data-lucide="user"></i></span><span class="pname">김대리</span><span class="pchk"><i data-lucide="check"></i></span></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 3단계 -->
+            <div class="cstep">
+              <div class="cstep-h"><span class="n">3</span>우선 판단<span class="cstep-hint">최대 2개 선택</span></div>
+              <div style="font-size:15px;font-weight:700;padding:0 2px 10px">이 결정에서 우선한 것은?</div>
+              <div class="prio-grid">
+                <button class="prio"><i data-lucide="calendar-clock"></i><span class="pl">공기</span></button>
+                <button class="prio"><i data-lucide="coins"></i><span class="pl">원가</span></button>
+                <button class="prio on"><i data-lucide="badge-check"></i><span class="pl">품질</span></button>
+                <button class="prio on"><i data-lucide="shield-check"></i><span class="pl">안전</span></button>
+              </div>
+            </div>
+
+            <button class="cs-done">완료 처리</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 11 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 11</b> — 착공 전 사전검토 안건</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+        <div class="agbar">
+          <button class="iconbtn backbtn"><i data-lucide="chevron-left"></i></button>
+          <div class="col"><div class="topline"><span class="agtitle">건축방</span></div><span class="agsub">대화 중 사전검토 · 문제 적중</span></div>
+        </div>
+
+        <div class="chat">
+          <!-- 사전검토 안건 카드 -->
+          <div class="agenda-card">
+            <div class="ac-head">
+              <i data-lucide="shield-alert" style="width:18px;height:18px;color:#a78bfa"></i>
+              <span class="ac-no">안건 #128</span>
+              <span class="ac-tag tag-pre">사전검토</span>
+            </div>
+            <div class="ac-title">B동 지하 1층 옹벽 이음부 누수 위험 사전검토</div>
+            <div class="ac-pin"><span class="pin"><i data-lucide="map-pin"></i></span><span class="plabel">도면 — B동 B1F 평면 · 핀 지정</span></div>
+            <div class="ac-pred"><i data-lucide="calendar-clock"></i>착공 전 등록<span class="dcount">D-92</span></div>
+          </div>
+
+          <!-- 나중에 실제 문제와 연결된 카드 -->
+          <div class="agenda-card" style="border-color:rgba(139,92,246,.5)">
+            <div class="hit-banner">
+              <i data-lucide="target"></i>
+              <span class="ht">3개월 전 사전검토와 일치하는 문제가 발생했습니다</span>
+            </div>
+            <div class="hit-link"><i data-lucide="shield-check"></i>사전검토 안건 #128 보기<i data-lucide="arrow-up-right" class="arr"></i></div>
+            <div class="ac-head">
+              <i data-lucide="clipboard-list" style="width:18px;height:18px;color:var(--text-2)"></i>
+              <span class="ac-no">안건 #167</span>
+              <span class="ac-tag tag-review">검토중</span>
+            </div>
+            <div class="ac-title">B동 지하 1층 옹벽 이음부 누수 발생</div>
+            <div class="ac-photo"><span>사진 — 이음부 누수 흔적 (2장)</span></div>
+            <div class="ac-foot"><i data-lucide="users"></i>참여자 6명<span class="ac-go">탭하여 안건방 이동<i data-lucide="arrow-right"></i></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 12 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 12</b> — 6개월 후 추적 (알림 & 응답)</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+        <!-- 잠금화면 푸시 -->
+        <div class="pushwrap">
+          <div class="pushtime">9:41</div>
+          <div class="pushdate">2027년 1월 28일 목요일</div>
+          <div class="pushcard">
+            <div class="ph"><span class="badge"><i data-lucide="check"></i></span>안건톡<span class="pt">지금</span></div>
+            <div class="pmain">[안건 #153] 6개월이 지났습니다. A동 3층 슬래브 부위, 이상 없으신가요?</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 12-1 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 12-1</b> — 추적 응답 화면</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+        <div class="appbar">
+          <button class="iconbtn"><i data-lucide="x"></i></button>
+          <span class="title" style="font-size:18px">6개월 추적</span>
+          <span class="spacer"></span>
+        </div>
+
+        <div class="trace-body">
+          <div class="trace-sum">
+            <div class="trace-photo"></div>
+            <div class="tsrow"><span class="k">문제</span><span class="v">슬래브 철근 피복두께 부족</span></div>
+            <div class="tsrow"><span class="k">조치</span><span class="v">부족 구간 재배근</span></div>
+            <div class="tsrow" style="border-bottom:none"><span class="k">결과</span><span class="v">재검측 적합 · 2026.07 완료</span></div>
+          </div>
+
+          <div class="trace-mini"><span class="pin"><i data-lucide="map-pin"></i></span><span class="ml">A동 3F · 핀 위치</span></div>
+
+          <div class="trace-q">해당 부위에 현재 이상이 있습니까?</div>
+          <div class="trace-btns">
+            <button class="trace-btn tb-ok"><i data-lucide="check-circle-2"></i>이상 없음</button>
+            <button class="trace-btn tb-recur"><i data-lucide="alert-triangle"></i>재발 확인됨 → 새 안건 등록</button>
+            <button class="trace-btn tb-unsure"><i data-lucide="help-circle"></i>확인 어려움</button>
+          </div>
+          <div class="trace-note">응답 결과는 이 사례의 신뢰등급에 반영됩니다</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 14 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 14</b> — 연락처 탭 · 보유 연락처</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+        <div class="appbar">
+          <span class="title">연락처</span>
+          <span class="spacer"></span>
+          <button class="iconbtn" id="cont-search-btn"><i data-lucide="search"></i></button>
+        </div>
+
+        <div class="contact-search-bar hidden" id="cont-search-bar">
+          <input type="text" id="cont-search" placeholder="이름 · 직급 · 소속 검색" autocomplete="off">
+        </div>
+
+        <div class="cont-list" id="cont-list">
+          <div class="search-empty hidden" id="cont-empty">검색 결과가 없습니다</div>
+          <!-- 내 프로필 (명함 미등록) -->
+          <div class="myprofile">
+            <div class="mp-av empty"><i data-lucide="user-plus"></i></div>
+            <div class="mp-main">
+              <div class="mp-name">나 · 주기탁</div>
+              <div class="mp-hint">명함을 등록하면 함께 일하는 사람들에게 자동으로 보여요</div>
+              <div class="mp-cta"><i data-lucide="id-card"></i>명함 등록하기</div>
+            </div>
+            <i data-lucide="chevron-right" class="mp-chev"></i>
+          </div>
+
+          <div class="cont-sort">
+            <div class="sort-toggle group-toggle" id="cont-group-toggle"><span class="on" data-view="trade">공종별</span><span data-view="company">업체별</span></div>
+            <div class="sort-mini" id="cont-sort-mini"><i data-lucide="arrow-up-down"></i><span class="on">가나다순</span></div>
+          </div>
+
+          <!-- 공종별 보기 -->
+          <div id="cont-view-trade">
+          <!-- 건축 그룹 -->
+          <div class="cont-group">
+            <div class="cg-head"><span class="gtag">🔨 건축</span><span class="gcount">3명</span><i data-lucide="chevron-up" class="chev"></i></div>
+            <div class="contact">
+              <div class="ct-av"><i data-lucide="user"></i></div>
+              <div class="ct-main"><div class="ct-top"><span class="ct-name">김성호 소장</span></div><div class="ct-sub">현장소장 · 철근공사</div></div>
+              <span class="ct-corp">동부건설</span>
+            </div>
+            <div class="contact">
+              <div class="ct-av"><i data-lucide="user"></i></div>
+              <div class="ct-main"><div class="ct-top"><span class="ct-name">박정민 부장</span></div><div class="ct-sub">품질관리 · 구조</div></div>
+              <span class="ct-corp">동부건설</span>
+            </div>
+            <div class="contact unreg">
+              <div class="ct-av"><i data-lucide="user"></i></div>
+              <div class="ct-main"><div class="ct-top"><span class="ct-name">이형탁 소장</span><span class="ct-unreg">명함 미등록</span></div><div class="ct-sub">현장소장</div></div>
+              <span class="ct-corp">삼우이엔지</span>
+            </div>
+          </div>
+
+          <!-- 설비 그룹 -->
+          <div class="cont-group">
+            <div class="cg-head"><span class="gtag">🔧 설비</span><span class="gcount">2명</span><i data-lucide="chevron-up" class="chev"></i></div>
+            <div class="contact">
+              <div class="ct-av"><i data-lucide="user"></i></div>
+              <div class="ct-main"><div class="ct-top"><span class="ct-name">최재원 과장</span></div><div class="ct-sub">기계설비 · 배관</div></div>
+              <span class="ct-corp">한양기공</span>
+            </div>
+            <div class="contact unreg">
+              <div class="ct-av"><i data-lucide="user"></i></div>
+              <div class="ct-main"><div class="ct-top"><span class="ct-name">정우진 대리</span><span class="ct-unreg">명함 미등록</span></div><div class="ct-sub">소방설비</div></div>
+              <span class="ct-corp">세진소방</span>
+            </div>
+          </div>
+          </div>
+
+          <!-- 업체별 보기 -->
+          <div id="cont-view-company" class="hidden">
+            <div class="cont-group">
+              <div class="cg-head"><span class="gtag">🏢 동부건설</span><span class="gcount">2명</span><i data-lucide="chevron-up" class="chev"></i></div>
+              <div class="contact">
+                <div class="ct-av"><i data-lucide="user"></i></div>
+                <div class="ct-main"><div class="ct-top"><span class="ct-name">김성호 소장</span></div><div class="ct-sub">현장소장 · 철근공사</div></div>
+                <span class="ct-corp">🔨 건축</span>
+              </div>
+              <div class="contact">
+                <div class="ct-av"><i data-lucide="user"></i></div>
+                <div class="ct-main"><div class="ct-top"><span class="ct-name">박정민 부장</span></div><div class="ct-sub">품질관리 · 구조</div></div>
+                <span class="ct-corp">🔨 건축</span>
+              </div>
+            </div>
+            <div class="cont-group">
+              <div class="cg-head"><span class="gtag">🏢 삼우이엔지</span><span class="gcount">1명</span><i data-lucide="chevron-up" class="chev"></i></div>
+              <div class="contact unreg">
+                <div class="ct-av"><i data-lucide="user"></i></div>
+                <div class="ct-main"><div class="ct-top"><span class="ct-name">이형탁 소장</span><span class="ct-unreg">명함 미등록</span></div><div class="ct-sub">현장소장</div></div>
+                <span class="ct-corp">🔨 건축</span>
+              </div>
+            </div>
+            <div class="cont-group">
+              <div class="cg-head"><span class="gtag">🏢 한양기공</span><span class="gcount">1명</span><i data-lucide="chevron-up" class="chev"></i></div>
+              <div class="contact">
+                <div class="ct-av"><i data-lucide="user"></i></div>
+                <div class="ct-main"><div class="ct-top"><span class="ct-name">최재원 과장</span></div><div class="ct-sub">기계설비 · 배관</div></div>
+                <span class="ct-corp">🔧 설비</span>
+              </div>
+            </div>
+            <div class="cont-group">
+              <div class="cg-head"><span class="gtag">🏢 세진소방</span><span class="gcount">1명</span><i data-lucide="chevron-up" class="chev"></i></div>
+              <div class="contact unreg">
+                <div class="ct-av"><i data-lucide="user"></i></div>
+                <div class="ct-main"><div class="ct-top"><span class="ct-name">정우진 대리</span><span class="ct-unreg">명함 미등록</span></div><div class="ct-sub">소방설비</div></div>
+                <span class="ct-corp">🔧 설비</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="cont-counter">전체 연락처 5명 · 명함 등록 <b>3명</b></div>
+        </div>
+
+        <div class="tabbar">
+          <div class="tab active"><i data-lucide="contact-round"></i>연락처</div>
+          <div class="tab"><i data-lucide="building-2"></i>현장</div>
+          <div class="tab"><i data-lucide="message-square-more"></i>채팅</div>
+          <div class="tab"><i data-lucide="user-round"></i>마이페이지</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 15 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 15</b> — 프로필 상세 · 타인 조회</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+        <div class="appbar">
+          <button class="iconbtn backbtn"><i data-lucide="chevron-left"></i></button>
+          <span class="spacer"></span>
+          <button class="iconbtn"><i data-lucide="more-vertical"></i></button>
+        </div>
+
+        <div class="pf-note"><i data-lucide="badge-check"></i>본인이 등록한 정보입니다</div>
+        <div class="pf-header">
+          <div class="pf-h-main">
+            <div class="pf-h-name">김성호</div>
+            <div class="pf-h-rank">현장소장 · 철근공사</div>
+            <div class="pf-h-corp">동부건설 · 고창 물류센터 현장</div>
+          </div>
+          <div class="pf-h-av"><i data-lucide="user"></i></div>
+        </div>
+
+        <div class="pf-actions">
+          <div class="pf-act cta"><div class="ai"><i data-lucide="phone"></i></div><span class="al">전화</span></div>
+          <div class="pf-act cta"><div class="ai"><i data-lucide="message-square"></i></div><span class="al">채팅</span></div>
+          <div class="pf-act"><div class="ai"><i data-lucide="mail"></i></div><span class="al">이메일</span></div>
+          <div class="pf-act"><div class="ai"><i data-lucide="clipboard-list"></i></div><span class="al">함께한 안건</span></div>
+        </div>
+
+        <div class="pf-tabs">
+          <div class="pf-tab on">명함 정보</div>
+          <div class="pf-tab">메모</div>
+          <div class="pf-tab">활동 이력</div>
+        </div>
+
+        <div class="pf-body">
+          <div class="bizcard">
+            <div class="bc-corp">DONGBU CONSTRUCTION</div>
+            <div class="bc-name-en">KIM SUNG-HO</div>
+            <div class="bc-name">김성호</div>
+            <div class="bc-rank">현장소장 / 철근공사</div>
+            <div class="bc-div"></div>
+            <div class="bc-line"><span class="k">주소</span><span class="v">전북 고창CDC 물류센터 신축현장</span></div>
+            <div class="bc-line"><span class="k">전화</span><span class="v">010-0000-0000</span></div>
+            <div class="bc-line"><span class="k">팩스</span><span class="v">000-000-0000</span></div>
+            <div class="bc-line"><span class="k">이메일</span><span class="v">sh00000@dongbu.co.kr</span></div>
+          </div>
+
+          <div class="info-sec">
+            <div class="info-title">정보</div>
+            <div class="info-row"><span class="k">휴대전화</span><span class="v link">010-3245-8817</span></div>
+            <div class="info-row"><span class="k">이메일</span><span class="v link">sh.kim@dongbu.co.kr</span></div>
+            <div class="info-row"><span class="k">유선전화</span><span class="v">063-560-2100</span></div>
+            <div class="info-row"><span class="k">소속 현장</span><span class="v">고창 물류센터 신축현장</span></div>
+            <div class="info-row"><span class="k">담당 공종</span><span class="v">철근·골조공사</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 15-1 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 15-1</b> — 타인 조회 · 활동 이력 탭</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+        <div class="appbar">
+          <button class="iconbtn backbtn"><i data-lucide="chevron-left"></i></button>
+          <span class="spacer"></span>
+          <button class="iconbtn"><i data-lucide="more-vertical"></i></button>
+        </div>
+        <div class="pf-note"><i data-lucide="badge-check"></i>본인이 등록한 정보입니다</div>
+        <div class="pf-header">
+          <div class="pf-h-main">
+            <div class="pf-h-name">김성호</div>
+            <div class="pf-h-rank">현장소장 · 철근공사</div>
+            <div class="pf-h-corp">동부건설 · 고창 물류센터 현장</div>
+          </div>
+          <div class="pf-h-av"><i data-lucide="user"></i></div>
+        </div>
+        <div class="pf-actions">
+          <div class="pf-act cta"><div class="ai"><i data-lucide="phone"></i></div><span class="al">전화</span></div>
+          <div class="pf-act cta"><div class="ai"><i data-lucide="message-square"></i></div><span class="al">채팅</span></div>
+          <div class="pf-act"><div class="ai"><i data-lucide="mail"></i></div><span class="al">이메일</span></div>
+          <div class="pf-act"><div class="ai"><i data-lucide="clipboard-list"></i></div><span class="al">함께한 안건</span></div>
+        </div>
+        <div class="pf-tabs">
+          <div class="pf-tab">명함 정보</div>
+          <div class="pf-tab">메모</div>
+          <div class="pf-tab on">활동 이력</div>
+        </div>
+        <div class="pf-body">
+          <div class="act-hist">
+            <div class="ah-badge"><i data-lucide="sparkles"></i>안건톡 활동 데이터</div>
+            <div class="ah-title">이 사람과 함께한 안건 6건</div>
+            <div class="ah-item"><span class="ic"><i data-lucide="clipboard-list"></i></span><span class="t">#153 슬래브 철근 피복두께 검토</span><span class="st sb-review">검토중</span></div>
+            <div class="ah-item"><span class="ic"><i data-lucide="clipboard-list"></i></span><span class="t">#149 커튼월 패널 줄눈 조정</span><span class="st sb-done">완료</span></div>
+            <div class="ah-item" style="border-bottom:none"><span class="ic"><i data-lucide="clipboard-list"></i></span><span class="t">#128 옹벽 이음부 누수 사전검토</span><span class="st sb-verified">검증됨</span></div>
+            <div class="ah-note">본인이 등록한 명함 정보와 달리, 안건톡 활동 이력은 앱 데이터 기반이며 상대가 공개를 허용한 경우에만 표시됩니다</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 15-2 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 15-2</b> — 타인 조회 · ⋮ 메뉴 & 차단 확인</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+        <div class="appbar">
+          <button class="iconbtn backbtn"><i data-lucide="chevron-left"></i></button>
+          <span class="spacer"></span>
+          <button class="iconbtn"><i data-lucide="more-vertical"></i></button>
+        </div>
+        <div class="pf-note"><i data-lucide="badge-check"></i>본인이 등록한 정보입니다</div>
+        <div class="pf-header">
+          <div class="pf-h-main">
+            <div class="pf-h-name">김성호</div>
+            <div class="pf-h-rank">현장소장 · 철근공사</div>
+            <div class="pf-h-corp">동부건설 · 고창 물류센터 현장</div>
+          </div>
+          <div class="pf-h-av"><i data-lucide="user"></i></div>
+        </div>
+        <div class="pf-actions">
+          <div class="pf-act cta"><div class="ai"><i data-lucide="phone"></i></div><span class="al">전화</span></div>
+          <div class="pf-act cta"><div class="ai"><i data-lucide="message-square"></i></div><span class="al">채팅</span></div>
+          <div class="pf-act"><div class="ai"><i data-lucide="mail"></i></div><span class="al">이메일</span></div>
+          <div class="pf-act"><div class="ai"><i data-lucide="clipboard-list"></i></div><span class="al">함께한 안건</span></div>
+        </div>
+        <div class="pf-tabs">
+          <div class="pf-tab on">명함 정보</div>
+          <div class="pf-tab">메모</div>
+          <div class="pf-tab">활동 이력</div>
+        </div>
+
+        <!-- ⋮ popover -->
+        <div class="pf-popover">
+          <div class="ctxmenu" style="width:200px">
+            <div class="item star"><i data-lucide="star"></i>즐겨찾기 추가</div>
+            <div class="item"><i data-lucide="ban"></i>차단하기</div>
+            <div class="item danger"><i data-lucide="alert-triangle"></i>신고하기</div>
+          </div>
+        </div>
+
+        <!-- 차단 확인 다이얼로그 -->
+        <div class="dialog-scrim">
+          <div class="dialog">
+            <div class="dg-body">
+              <div class="dg-title">김성호님을 차단하시겠어요?</div>
+              <div class="dg-text">차단하면 서로의 메시지가 보이지 않으며, 안건방에서의 기존 기록은 유지됩니다.</div>
+            </div>
+            <div class="dg-foot">
+              <button>취소</button>
+              <button class="danger">차단</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 16 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 16</b> — 내 프로필 · 명함 미등록 최초 진입</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+        <div class="appbar">
+          <button class="iconbtn backbtn"><i data-lucide="chevron-left"></i></button>
+          <span class="title" style="font-size:18px">내 명함</span>
+          <span class="spacer"></span>
+        </div>
+        <div class="empty-card">
+          <div class="ec-frame">
+            <i data-lucide="id-card"></i>
+            <span style="font-size:13px;font-weight:700">명함이 아직 없어요</span>
+          </div>
+          <div class="ec-txt">명함을 등록하면 함께 일하는 동료들이 자동으로 확인할 수 있어요</div>
+          <button class="ec-btn"><i data-lucide="plus"></i>명함 등록하기</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 17 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 17</b> — 내 프로필 · 편집 모드</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+        <div class="appbar">
+          <button class="iconbtn backbtn"><i data-lucide="chevron-left"></i></button>
+          <span class="title" style="font-size:18px">내 명함 편집</span>
+          <span class="spacer"></span>
+          <button class="edit-btn">편집</button>
+        </div>
+        <div class="pf-body">
+          <div class="photo-field"><i data-lucide="camera"></i><span class="pl">명함 촬영 또는 업로드</span></div>
+          <div class="field"><div class="fl">이름</div><div class="fi">주기탁</div></div>
+          <div class="field"><div class="fl">직급</div><div class="fi">프로</div></div>
+          <div class="field"><div class="fl">회사</div><div class="fi">한미글로벌</div></div>
+          <div class="field"><div class="fl">파트</div><div class="fi">공무</div></div>
+          <div class="field"><div class="fl">휴대전화</div><div class="fi">010-0000-0000</div></div>
+          <div class="field"><div class="fl">이메일</div><div class="fi ph">이메일을 입력하세요</div></div>
+
+          <div class="info-title" style="margin-top:8px">안건톡 활동 공개</div>
+          <div class="privacy-row">
+            <div class="pi"><i data-lucide="eye-off"></i></div>
+            <div class="pmain">
+              <div class="pt">활동 데이터 공개</div>
+              <div class="ps">참여 안건 수·검증 사례 수를 상대에게 표시합니다. 명함과 달리 켜야만 공개됩니다</div>
+            </div>
+            <div class="switch"></div>
+          </div>
+        </div>
+        <button class="save-btn">저장</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 18 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 18</b> — 층별 다중핀 도면뷰 · 미니카드</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+        <div class="fp-topbar">
+          <button class="iconbtn backbtn"><i data-lucide="chevron-left"></i></button>
+          <span class="fp-title">A동 3층 · 안건 위치</span>
+          <span class="fp-floor">A동 3층<i data-lucide="chevron-down"></i></span>
+        </div>
+
+        <div class="fp-canvas">
+          <span class="plan-label">A동 3층 평면도 · Rev.05 (최신 승인)</span>
+          <div class="wall" style="left:30px;top:80px;right:30px;bottom:90px"></div>
+          <div class="wall" style="left:30px;top:80px;width:150px;height:180px"></div>
+          <div class="wall" style="right:30px;top:200px;width:130px;bottom:90px"></div>
+
+          <!-- pins -->
+          <div class="pin-marker pin-action" style="left:24%;top:66%"><div class="dot"><i data-lucide="wrench"></i></div></div>
+          <div class="pin-marker pin-done" style="left:70%;top:30%"><div class="dot"><i data-lucide="check"></i></div></div>
+          <div class="pin-marker pin-pre" style="left:78%;top:72%"><div class="dot"><i data-lucide="shield-alert"></i></div></div>
+          <div class="pin-marker pin-cluster" style="left:60%;top:78%"><div class="ring"></div><div class="dot">3</div></div>
+
+          <!-- open mini card on the review pin -->
+          <div class="pin-marker pin-review" style="left:40%;top:40%"><div class="dot"><i data-lucide="alert-circle"></i></div></div>
+          <div class="mini-card" style="left:40%;top:40%">
+            <div class="mc-top"><span class="mc-no">안건 #153</span><span class="mc-badge sb-review">검토중</span></div>
+            <div class="mc-title">A동 3층 슬래브 철근 피복두께 검토</div>
+            <div class="mc-link">자세히 보기<i data-lucide="arrow-right"></i></div>
+          </div>
+
+          <div class="fp-fab"><i data-lucide="locate-fixed"></i></div>
+        </div>
+
+        <div class="fp-legend">
+          <span class="lg-item"><span class="d" style="background:#f59e0b"></span>검토중</span>
+          <span class="lg-item"><span class="d" style="background:#3b82f6"></span>조치중</span>
+          <span class="lg-item"><span class="d" style="background:#22c55e"></span>완료</span>
+          <span class="lg-item"><span class="d" style="background:#8b5cf6"></span>사전검토</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 18-1 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 18-1</b> — 클러스터 핀 · 바텀시트</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+        <div class="fp-topbar">
+          <button class="iconbtn backbtn"><i data-lucide="chevron-left"></i></button>
+          <span class="fp-title">A동 3층 · 안건 위치</span>
+          <span class="fp-floor">A동 3층<i data-lucide="chevron-down"></i></span>
+        </div>
+
+        <div class="fp-canvas">
+          <span class="plan-label">A동 3층 평면도 · Rev.05 (최신 승인)</span>
+          <div class="wall" style="left:30px;top:80px;right:30px;bottom:90px"></div>
+          <div class="wall" style="left:30px;top:80px;width:150px;height:180px"></div>
+          <div class="wall" style="right:30px;top:200px;width:130px;bottom:90px"></div>
+
+          <div class="pin-marker pin-review" style="left:40%;top:40%"><div class="dot"><i data-lucide="alert-circle"></i></div></div>
+          <div class="pin-marker pin-done" style="left:70%;top:30%"><div class="dot"><i data-lucide="check"></i></div></div>
+          <div class="pin-marker pin-cluster" style="left:56%;top:60%"><div class="ring"></div><div class="dot">3</div></div>
+
+          <div class="fp-fab"><i data-lucide="locate-fixed"></i></div>
+
+          <!-- cluster bottom sheet -->
+          <div class="cluster-sheet">
+            <div class="cs-grip"></div>
+            <div class="cs-h">이 위치의 안건 3건</div>
+            <div class="cs-row"><span class="csr-th"></span><div><div class="csr-no">#153</div><div class="csr-t">슬래브 철근 피복두께 검토</div></div><span class="csr-badge sb-review">검토중</span></div>
+            <div class="cs-row"><span class="csr-th"></span><div><div class="csr-no">#141</div><div class="csr-t">동일 부위 균열 보수 이력</div></div><span class="csr-badge sb-action">조치중</span></div>
+            <div class="cs-row"><span class="csr-th"></span><div><div class="csr-no">#118</div><div class="csr-t">거푸집 존치기간 검토</div></div><span class="csr-badge sb-done">완료</span></div>
+          </div>
+        </div>
+
+        <div class="fp-legend">
+          <span class="lg-item"><span class="d" style="background:#f59e0b"></span>검토중</span>
+          <span class="lg-item"><span class="d" style="background:#3b82f6"></span>조치중</span>
+          <span class="lg-item"><span class="d" style="background:#22c55e"></span>완료</span>
+          <span class="lg-item"><span class="d" style="background:#8b5cf6"></span>사전검토</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 14-1 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 14-1</b> — 연락처 롱프레스 · 빠른 요약 카드</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+        <div class="appbar"><span class="title">연락처</span><span class="spacer"></span><button class="iconbtn"><i data-lucide="search"></i></button></div>
+        <div class="cont-list" style="filter:brightness(.5)">
+          <div class="cont-sort"><span class="sect">공종별 담당자</span><div class="sort-toggle"><span class="on">최근 대화순</span><span>가나다순</span></div></div>
+          <div class="cont-group">
+            <div class="cg-head"><span class="gtag">🔨 건축</span><span class="gcount">3명</span><i data-lucide="chevron-up" class="chev"></i></div>
+            <div class="contact" style="background:var(--surface-2)">
+              <div class="ct-av"><i data-lucide="user"></i></div>
+              <div class="ct-main"><div class="ct-top"><span class="ct-name">김대진 소장</span></div><div class="ct-sub">현장소장 · 골조</div></div>
+              <span class="ct-corp">동부건설</span>
+            </div>
+          </div>
+        </div>
+        <!-- summary popover -->
+        <div class="cd-scrim">
+          <div class="cd-card">
+            <div class="cd-name">김대진 소장 <span class="cd-rank">현장소장</span></div>
+            <div class="cd-meta"><span class="cd-corp">동부건설</span><span class="cd-field">골조 · 철근</span></div>
+            <div class="cd-div"></div>
+            <div class="cd-sub">담당 안건</div>
+            <div class="cd-stats">
+              <div class="cd-stat"><div class="cd-num" style="color:var(--st-review)">4</div><div class="cd-lab">처리중</div></div>
+              <div class="cd-stat"><div class="cd-num" style="color:var(--st-done)">23</div><div class="cd-lab">처리완료</div></div>
+            </div>
+            <div class="cd-div"></div>
+            <div class="cd-act"><i data-lucide="star"></i>즐겨찾기 추가</div>
+            <div class="cd-act danger"><i data-lucide="ban"></i>차단하기</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 5-1 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 5-1</b> — "처리중" 탭 → 담당자 필터 안건 리스트</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+        <div class="appbar">
+          <button class="iconbtn backbtn"><i data-lucide="chevron-left"></i></button>
+          <span class="title" style="font-size:17px">안건 리스트</span>
+          <span class="spacer"></span>
+        </div>
+        <div class="counters">
+          <div class="counter"><div class="num">5</div><div class="lab">전체</div></div>
+          <div class="counter"><div class="num" style="color:var(--st-action)">4</div><div class="lab">진행중</div></div>
+          <div class="counter"><div class="num" style="color:var(--st-done)">1</div><div class="lab">완료</div></div>
+          <div class="counter"><div class="num">0</div><div class="lab">이번 주 신규</div></div>
+        </div>
+        <div class="filterrow">
+          <span class="fchip assignee"><i data-lucide="user-check"></i>김대진 담당<i data-lucide="x" class="fx"></i></span>
+        </div>
+        <div class="aglist">
+          <div class="agitem">
+            <div class="ag-thumb"></div>
+            <div class="ag-main"><div class="ag-no">#153</div><div class="ag-title">A동 3층 슬래브 철근 피복두께 검토</div><div class="ag-meta"><span class="ag-time">10분 전 업데이트</span></div></div>
+            <span class="mini-badge sb-review">검토중</span>
+          </div>
+          <div class="agitem">
+            <div class="ag-thumb"></div>
+            <div class="ag-main"><div class="ag-no">#152</div><div class="ag-title">2층 계단실 거푸집 오시공 수정</div><div class="ag-meta"><span class="ag-time">1시간 전 업데이트</span></div></div>
+            <span class="mini-badge sb-action">조치중</span>
+          </div>
+          <div class="agitem">
+            <div class="ag-thumb"></div>
+            <div class="ag-main"><div class="ag-no">#150</div><div class="ag-title">B동 코어벽 수직도 재측량 요청</div><div class="ag-meta"><span class="ag-time">3시간 전 업데이트</span></div></div>
+            <span class="mini-badge sb-action">조치중</span>
+          </div>
+          <div class="agitem">
+            <div class="ag-thumb"></div>
+            <div class="ag-main"><div class="ag-no">#148</div><div class="ag-title">지하 1층 옹벽 이음부 검토</div><div class="ag-meta"><span class="ag-time">어제 업데이트</span></div></div>
+            <span class="mini-badge sb-review">검토중</span>
+          </div>
+          <div class="ag-footnote"><i data-lucide="info"></i>김대진 소장이 <b>담당자로 지정된</b> 진행중 안건만 표시됩니다</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 1-1 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 1-1</b> — 채팅방 롱프레스 메뉴</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+        <div class="appbar"><span class="title">채팅</span><span class="spacer"></span><button class="iconbtn"><i data-lucide="search"></i></button><button class="iconbtn"><i data-lucide="settings-2"></i></button></div>
+        <div class="list" style="filter:brightness(.5)">
+          <div class="room" style="background:var(--surface-2)">
+            <div class="avatar"><i data-lucide="building-2"></i><span class="grp">24</span></div>
+            <div class="room-main"><div class="room-top"><span class="room-name">건축방</span></div><div class="room-preview">이형탁 소장: 3층 슬래브 배근 사진 확인 부탁드립니다</div><span class="agenda-sub"><span class="dot"></span>진행중 안건 3건</span></div>
+            <div class="room-right"><span class="room-time">오후 2:14</span><span class="unread">5</span></div>
+          </div>
+          <div class="room">
+            <div class="avatar"><i data-lucide="mountain"></i><span class="grp">18</span></div>
+            <div class="room-main"><div class="room-top"><span class="room-name">토목방</span></div><div class="room-preview">되메우기 다짐 시험 결과 공유합니다</div></div>
+            <div class="room-right"><span class="room-time">오후 1:02</span></div>
+          </div>
+        </div>
+        <!-- room context menu -->
+        <div class="cd-scrim">
+          <div class="ctxmenu" style="align-self:center;width:260px;margin-top:118px">
+            <div class="ctx-roomname"><i data-lucide="building-2"></i>건축방</div>
+            <div class="item"><i data-lucide="settings"></i>채팅방 정보 설정</div>
+            <div class="item"><i data-lucide="user-plus"></i>참여자 초대</div>
+            <div class="item"><i data-lucide="pin"></i>상단 고정</div>
+            <div class="item"><i data-lucide="bell-off"></i>알림 끄기</div>
+          </div>
+        </div>
+        <div class="tabbar">
+          <div class="tab"><i data-lucide="contact-round"></i>연락처</div>
+          <div class="tab"><i data-lucide="building-2"></i>현장</div>
+          <div class="tab active"><i data-lucide="message-square-more"></i>채팅</div>
+          <div class="tab"><i data-lucide="user-round"></i>마이페이지</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 1-2 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 1-2</b> — 상단 고정 반영 홈</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+        <div class="appbar"><span class="title">채팅</span><span class="spacer"></span><button class="iconbtn"><i data-lucide="search"></i></button><button class="iconbtn"><i data-lucide="settings-2"></i></button></div>
+        <div class="list">
+          <div class="pin-sect"><i data-lucide="pin"></i>고정된 채팅방</div>
+          <div class="room pinned">
+            <div class="avatar"><i data-lucide="building-2"></i><span class="grp">24</span></div>
+            <div class="room-main"><div class="room-top"><span class="room-name">건축방</span><i data-lucide="pin" class="room-pin"></i></div><div class="room-preview">이형탁 소장: 3층 슬래브 배근 사진 확인 부탁드립니다</div><span class="agenda-sub"><span class="dot"></span>진행중 안건 3건</span></div>
+            <div class="room-right"><span class="room-time">오후 2:14</span><span class="unread">5</span></div>
+          </div>
+          <div class="room pinned">
+            <div class="avatar"><i data-lucide="users"></i><span class="grp">41</span></div>
+            <div class="room-main"><div class="room-top"><span class="room-name">협력사 단톡방</span><i data-lucide="pin" class="room-pin"></i></div><div class="room-preview">동부기초: 금일 크레인 반입 완료했습니다</div></div>
+            <div class="room-right"><span class="room-time">오전 8:55</span><span class="unread">12</span></div>
+          </div>
+          <div class="pin-div"></div>
+          <div class="room">
+            <div class="avatar"><i data-lucide="mountain"></i><span class="grp">18</span></div>
+            <div class="room-main"><div class="room-top"><span class="room-name">토목방</span></div><div class="room-preview">되메우기 다짐 시험 결과 공유합니다</div><span class="agenda-sub"><span class="dot"></span>진행중 안건 1건</span></div>
+            <div class="room-right"><span class="room-time">오후 1:02</span><span class="unread">2</span></div>
+          </div>
+          <div class="room">
+            <div class="avatar"><i data-lucide="wrench"></i><span class="grp">15</span></div>
+            <div class="room-main"><div class="room-top"><span class="room-name">설비방</span></div><div class="room-preview">지하 1층 소화배관 루트 협의 필요합니다</div><span class="agenda-sub"><span class="dot"></span>진행중 안건 2건</span></div>
+            <div class="room-right"><span class="room-time">오전 11:47</span></div>
+          </div>
+          <div class="room">
+            <div class="avatar"><i data-lucide="zap"></i><span class="grp">12</span></div>
+            <div class="room-main"><div class="room-top"><span class="room-name">전기방</span></div><div class="room-preview">전기실 트레이 반입 일정 조율 건</div></div>
+            <div class="room-right"><span class="room-time">오전 9:30</span></div>
+          </div>
+        </div>
+        <div class="tabbar">
+          <div class="tab"><i data-lucide="contact-round"></i>연락처</div>
+          <div class="tab"><i data-lucide="building-2"></i>현장</div>
+          <div class="tab active"><i data-lucide="message-square-more"></i>채팅</div>
+          <div class="tab"><i data-lucide="user-round"></i>마이페이지</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 19 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 19</b> — 현장 탭 · 현장 목록</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+        <div class="appbar"><span class="title">현장</span><span class="spacer"></span><button class="iconbtn"><i data-lucide="search"></i></button></div>
+        <div class="site-list">
+          <div class="site-card">
+            <div class="site-thumb"><i data-lucide="building-2"></i></div>
+            <div class="site-main">
+              <div class="site-name">고창CDC 물류센터 신축공사</div>
+              <div class="site-loc"><i data-lucide="map-pin"></i>전북 고창군 · A~C동</div>
+              <div class="site-badges"><span class="site-badge prog">골조공사 · 62%</span><span class="site-badge upd">오늘 업데이트 8</span></div>
+            </div>
+          </div>
+          <div class="site-card">
+            <div class="site-thumb"><i data-lucide="building-2"></i></div>
+            <div class="site-main">
+              <div class="site-name">평택 반도체 P3 부대공사</div>
+              <div class="site-loc"><i data-lucide="map-pin"></i>경기 평택시 · 전기·설비</div>
+              <div class="site-badges"><span class="site-badge prog">마감공사 · 88%</span><span class="site-badge upd">오늘 업데이트 3</span></div>
+            </div>
+          </div>
+          <div class="site-card">
+            <div class="site-thumb"><i data-lucide="building-2"></i></div>
+            <div class="site-main">
+              <div class="site-name">청라 데이터센터 신축</div>
+              <div class="site-loc"><i data-lucide="map-pin"></i>인천 서구 · 토목</div>
+              <div class="site-badges"><span class="site-badge prog">터파기 · 21%</span><span class="site-badge upd">오늘 업데이트 5</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="tabbar">
+          <div class="tab"><i data-lucide="contact-round"></i>연락처</div>
+          <div class="tab active"><i data-lucide="building-2"></i>현장</div>
+          <div class="tab"><i data-lucide="message-square-more"></i>채팅</div>
+          <div class="tab"><i data-lucide="user-round"></i>마이페이지</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 20 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 20</b> — 현장 상세 · 야적/작업 레이어 도면</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+        <div class="appbar">
+          <button class="iconbtn backbtn"><i data-lucide="chevron-left"></i></button>
+          <span class="title" style="font-size:16px">고창CDC 물류센터</span>
+          <span class="spacer"></span>
+        </div>
+        <div class="datenav">
+          <span class="dn-arrow"><i data-lucide="chevron-left"></i></span>
+          <span class="dn-date"><i data-lucide="calendar"></i>2026. 8. 6 (수)</span>
+          <span class="dn-arrow"><i data-lucide="chevron-right"></i></span>
+        </div>
+        <div class="fp-canvas" id="site-canvas">
+          <span class="plan-label">고창CDC 배치도 · A~C동</span>
+          <div class="wall" style="left:26px;top:60px;width:150px;height:150px"></div>
+          <div class="wall" style="right:26px;top:60px;width:150px;height:150px"></div>
+          <div class="wall" style="left:26px;bottom:60px;right:26px;height:120px"></div>
+          <div class="zone stack" data-layer="stack" style="left:40px;top:230px;width:130px;height:90px"><span class="zone-label">야적 · 철근</span></div>
+          <div class="zone stack" data-layer="stack" style="right:44px;top:80px;width:110px;height:70px"><span class="zone-label">야적 · 거푸집</span></div>
+          <div class="zone work" data-layer="work" style="left:44px;top:76px;width:110px;height:80px"><span class="zone-label">타워크레인</span></div>
+        </div>
+        <div class="layerbar">
+          <div class="layer-toggle stack on" data-layer="stack"><span class="layer-dot stack"></span>야적<span class="sw"></span></div>
+          <div class="layer-toggle work on" data-layer="work"><span class="layer-dot work"></span>작업·장비<span class="sw"></span></div>
+        </div>
+        <button class="fab"><i data-lucide="plus"></i>구역 추가</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 21 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 21</b> — 구역 지정 + 정보 입력</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+        <div class="appbar">
+          <button class="iconbtn backbtn"><i data-lucide="x"></i></button>
+          <span class="title" style="font-size:16px">구역 지정</span>
+          <span class="spacer"></span>
+        </div>
+        <div class="fp-canvas" style="flex:none;height:300px">
+          <span class="plan-label">고창CDC 배치도 · A~C동</span>
+          <div class="wall" style="left:26px;top:40px;width:130px;height:120px"></div>
+          <div class="wall" style="right:26px;top:40px;width:130px;height:120px"></div>
+          <div class="plan-hint"><i data-lucide="hand"></i>도면 위를 드래그해 구역을 그리세요</div>
+          <div class="zone-draw" style="left:70px;top:120px;width:150px;height:100px">
+            <span class="zh" style="left:-5px;top:-5px"></span><span class="zh" style="right:-5px;top:-5px"></span>
+            <span class="zh" style="left:-5px;bottom:-5px"></span><span class="zh" style="right:-5px;bottom:-5px"></span>
+          </div>
+        </div>
+        <div class="zsheet" id="zone-sheet">
+          <div class="seg" id="zone-seg">
+            <span class="on" data-t="stack">야적</span>
+            <span data-t="work">작업·장비</span>
+          </div>
+          <div id="zone-fields-stack">
+            <div class="zfield"><div class="zl">자재 종류</div><div class="zi ph">예) 이형철근 HD25</div></div>
+            <div class="zfield"><div class="zl">수량</div><div class="zi ph">예) 12톤</div></div>
+            <div class="zfield"><div class="zl">반입일</div><div class="zi">2026. 8. 6</div></div>
+          </div>
+          <div id="zone-fields-work" class="hidden">
+            <div class="zfield"><div class="zl">작업 내용</div><div class="zi ph">예) B동 코어벽 타설</div></div>
+            <div class="zfield"><div class="zl">투입 장비</div><div class="zi ph">예) 타워크레인 1, 펌프카 1</div></div>
+            <div class="zfield"><div class="zl">작업 인원</div><div class="zi ph">예) 8명</div></div>
+          </div>
+          <button class="zsave">저장</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 22 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 22</b> — 구역 탭 · 정보 확인 카드</div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span>
+        </div>
+        <div class="appbar">
+          <button class="iconbtn backbtn"><i data-lucide="chevron-left"></i></button>
+          <span class="title" style="font-size:16px">고창CDC 물류센터</span>
+          <span class="spacer"></span>
+        </div>
+        <div class="datenav">
+          <span class="dn-arrow"><i data-lucide="chevron-left"></i></span>
+          <span class="dn-date"><i data-lucide="calendar"></i>2026. 8. 6 (수)</span>
+          <span class="dn-arrow"><i data-lucide="chevron-right"></i></span>
+        </div>
+        <div class="fp-canvas">
+          <span class="plan-label">고창CDC 배치도 · A~C동</span>
+          <div class="wall" style="left:26px;top:60px;width:150px;height:150px"></div>
+          <div class="wall" style="right:26px;top:60px;width:150px;height:150px"></div>
+          <div class="zone stack sel" style="left:40px;top:230px;width:130px;height:90px"><span class="zone-label">야적 · 철근</span></div>
+          <div class="zcard" style="left:44px;top:334px">
+            <div class="zc-head"><span class="layer-dot stack"></span>야적 구역</div>
+            <div class="zc-row"><span class="k">자재 종류</span><span class="v">이형철근 HD25</span></div>
+            <div class="zc-row"><span class="k">수량</span><span class="v">12톤</span></div>
+            <div class="zc-row"><span class="k">반입일</span><span class="v">2026. 8. 6</span></div>
+            <div class="zc-meta">8/6 오전 9:12 · 김성호 소장 등록</div>
+            <div class="zc-acts"><button><i data-lucide="pencil"></i>수정</button><button class="del"><i data-lucide="trash-2"></i>삭제</button></div>
+          </div>
+        </div>
+        <div class="layerbar">
+          <div class="layer-toggle stack on"><span class="layer-dot stack"></span>야적<span class="sw"></span></div>
+          <div class="layer-toggle work on"><span class="layer-dot work"></span>작업·장비<span class="sw"></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 23 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 23</b> — 채팅방 만들기 <b style="color:var(--accent)">· REV12</b></div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar"><span>9:41</span><span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span></div>
+        <div class="appbar"><button class="iconbtn backbtn"><i data-lucide="chevron-left"></i></button><span class="title" style="font-size:17px">채팅방 만들기</span><span class="spacer"></span></div>
+        <div class="rc-body">
+          <div class="rc-iconpick">
+            <div class="rc-icon-current" id="rc-icon-current"><i data-lucide="camera"></i></div>
+            <div class="rc-icon-label">방 아이콘 선택</div>
+            <div class="rc-icon-grid" id="rc-icon-grid">
+              <div class="rc-icon-opt on" data-icon="hard-hat"><i data-lucide="hard-hat"></i></div>
+              <div class="rc-icon-opt" data-icon="wrench"><i data-lucide="wrench"></i></div>
+              <div class="rc-icon-opt" data-icon="building-2"><i data-lucide="building-2"></i></div>
+              <div class="rc-icon-opt" data-icon="users"><i data-lucide="users"></i></div>
+              <div class="rc-icon-opt" data-icon="star"><i data-lucide="star"></i></div>
+              <div class="rc-icon-opt" data-icon="truck"><i data-lucide="truck"></i></div>
+              <div class="rc-icon-opt" data-icon="hammer"><i data-lucide="hammer"></i></div>
+              <div class="rc-icon-opt" data-icon="cone"><i data-lucide="triangle-alert"></i></div>
+              <div class="rc-icon-opt" data-icon="mountain"><i data-lucide="mountain"></i></div>
+              <div class="rc-icon-opt" data-icon="zap"><i data-lucide="zap"></i></div>
+              <div class="rc-icon-opt" data-icon="flame"><i data-lucide="flame"></i></div>
+              <div class="rc-icon-opt" data-icon="clipboard-list"><i data-lucide="clipboard-list"></i></div>
+            </div>
+          </div>
+          <div class="field" style="margin-top:22px">
+            <div class="fl">방 이름</div>
+            <input type="text" class="fi-input" id="rc-name" placeholder="채팅방 이름을 입력하세요" autocomplete="off">
+          </div>
+        </div>
+        <div class="rc-footer"><button class="bigbtn" id="rc-next" disabled>다음</button></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SCREEN 24 ================= -->
+  <div class="frameblock">
+    <div class="frame-label"><b>화면 24</b> — 참여자 초대 (신규 방) <b style="color:var(--accent)">· REV12</b></div>
+    <div class="device">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="statusbar"><span>9:41</span><span class="sb-right"><i data-lucide="signal"></i><i data-lucide="wifi"></i><span class="batt"></span></span></div>
+        <div class="appbar"><button class="iconbtn backbtn"><i data-lucide="chevron-left"></i></button><span class="title" style="font-size:17px" id="inv-title">참여자 초대</span><span class="spacer"></span></div>
+        <div class="inv-summary"><div class="inv-summary-ic"><i data-lucide="hard-hat"></i></div><div class="inv-summary-name" id="inv-roomname">전기방</div></div>
+        <div class="contact-search-bar" style="padding:6px 16px 8px"><input type="text" id="inv-search" placeholder="이름 검색" autocomplete="off"></div>
+        <div class="inv-quick-lab">빠른 선택</div>
+        <div class="inv-quick-row" id="inv-quick-row">
+          <span class="inv-chip" data-corp="동부건설">동부건설</span>
+          <span class="inv-chip" data-corp="삼우이엔지">삼우이엔지</span>
+          <span class="inv-chip" data-corp="한양기공">한양기공</span>
+          <span class="inv-chip" data-corp="세진소방">세진소방</span>
+        </div>
+        <div class="inv-div"></div>
+        <div class="inv-list" id="inv-list">
+          <div class="cont-group">
+            <div class="cg-head"><span class="gtag">🔨 건축</span><span class="gcount">3명</span></div>
+            <div class="contact inv-row" data-corp="동부건설"><span class="inv-check"><i data-lucide="check"></i></span><div class="ct-av"><i data-lucide="user"></i></div><div class="ct-main"><div class="ct-top"><span class="ct-name">김성호 소장</span></div><div class="ct-sub">현장소장 · 철근공사</div></div><span class="ct-corp">동부건설</span></div>
+            <div class="contact inv-row" data-corp="동부건설"><span class="inv-check"><i data-lucide="check"></i></span><div class="ct-av"><i data-lucide="user"></i></div><div class="ct-main"><div class="ct-top"><span class="ct-name">박정민 부장</span></div><div class="ct-sub">품질관리 · 구조</div></div><span class="ct-corp">동부건설</span></div>
+            <div class="contact inv-row" data-corp="삼우이엔지"><span class="inv-check"><i data-lucide="check"></i></span><div class="ct-av"><i data-lucide="user"></i></div><div class="ct-main"><div class="ct-top"><span class="ct-name">이형탁 소장</span></div><div class="ct-sub">현장소장</div></div><span class="ct-corp">삼우이엔지</span></div>
+          </div>
+          <div class="cont-group">
+            <div class="cg-head"><span class="gtag">🔧 설비</span><span class="gcount">2명</span></div>
+            <div class="contact inv-row" data-corp="한양기공"><span class="inv-check"><i data-lucide="check"></i></span><div class="ct-av"><i data-lucide="user"></i></div><div class="ct-main"><div class="ct-top"><span class="ct-name">최재원 과장</span></div><div class="ct-sub">기계설비 · 배관</div></div><span class="ct-corp">한양기공</span></div>
+            <div class="contact inv-row" data-corp="세진소방"><span class="inv-check"><i data-lucide="check"></i></span><div class="ct-av"><i data-lucide="user"></i></div><div class="ct-main"><div class="ct-top"><span class="ct-name">정우진 대리</span></div><div class="ct-sub">소방설비</div></div><span class="ct-corp">세진소방</span></div>
+          </div>
+        </div>
+        <div class="rc-footer"><button class="bigbtn" id="inv-submit" disabled>0명 초대하고 방 만들기</button></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+<style>
+.hidden{display:none!important}
+.rc-body{padding:26px 20px;flex:1;overflow-y:auto}
+.rc-iconpick{display:flex;flex-direction:column;align-items:center}
+.rc-icon-current{width:76px;height:76px;border-radius:50%;background:var(--surface-2);border:1px solid var(--line-2);display:flex;align-items:center;justify-content:center;color:var(--accent)}
+.rc-icon-current svg{width:32px;height:32px}
+.rc-icon-label{margin-top:10px;font-size:12px;color:var(--text-3)}
+.rc-icon-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:16px;width:100%}
+.rc-icon-opt{aspect-ratio:1;border-radius:16px;background:var(--surface-2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--text-2);cursor:pointer}
+.rc-icon-opt svg{width:20px;height:20px}
+.rc-icon-opt.on{background:rgba(255,214,10,.14);border-color:var(--accent);color:var(--accent)}
+.fi-input{width:100%;height:48px;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;color:var(--text);font-size:15px;padding:0 14px;font-family:inherit;box-sizing:border-box;margin-top:8px}
+.fi-input::placeholder{color:var(--text-3)}
+.rc-footer{padding:14px 20px 22px;border-top:1px solid var(--line);flex:none}
+.bigbtn{width:100%;height:52px;border-radius:14px;background:var(--accent);color:#1a1300;font-size:16px;font-weight:800;border:none;cursor:pointer}
+.bigbtn:disabled{background:var(--surface-2);color:var(--text-3);cursor:default}
+.inv-summary{display:flex;align-items:center;gap:10px;padding:12px 16px}
+.inv-summary-ic{width:34px;height:34px;border-radius:50%;background:var(--surface-2);border:1px solid var(--line-2);display:flex;align-items:center;justify-content:center;color:var(--accent)}
+.inv-summary-ic svg{width:16px;height:16px}
+.inv-summary-name{font-size:15px;font-weight:800;color:var(--text)}
+.inv-quick-lab{font-size:12px;font-weight:700;color:var(--text-3);padding:6px 16px 0}
+.inv-quick-row{display:flex;gap:8px;padding:10px 16px 4px;overflow-x:auto}
+.inv-chip{flex:none;font-size:13px;font-weight:700;color:var(--text-2);background:var(--surface-2);border:1px solid var(--line);border-radius:999px;padding:7px 14px;cursor:pointer}
+.inv-chip.on{background:rgba(255,214,10,.14);border-color:var(--accent);color:var(--accent)}
+.inv-div{height:8px;background:var(--bg);border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin-top:8px}
+.inv-list{flex:1;overflow-y:auto}
+.inv-check{width:20px;height:20px;border-radius:6px;border:1.5px solid var(--line-2);display:flex;align-items:center;justify-content:center;color:transparent;flex:none;margin-right:10px}
+.inv-check svg{width:13px;height:13px}
+.inv-row.checked .inv-check{background:var(--accent);border-color:var(--accent);color:#1a1300}
+.inv-row.disabled{opacity:.4;pointer-events:none}
+/* ===== REV6: contact summary card + room ctx + pinned ===== */
+.cd-scrim{position:absolute;inset:0;background:rgba(6,6,8,.62);z-index:60;display:flex;flex-direction:column;align-items:center}
+.cd-card{width:300px;margin-top:150px;background:var(--surface-3);border:1px solid var(--line-2);border-radius:20px;padding:18px 18px 8px;box-shadow:0 24px 60px -12px rgba(0,0,0,.75)}
+.cd-name{font-size:19px;font-weight:800;color:var(--text)}
+.cd-rank{font-size:13px;font-weight:600;color:var(--text-2);margin-left:4px}
+.cd-meta{display:flex;gap:8px;align-items:center;margin-top:8px}
+.cd-corp{font-size:13px;color:var(--text-3)}
+.cd-field{font-size:11px;font-weight:700;color:var(--text-2);background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:3px 10px}
+.cd-div{height:1px;background:var(--line);margin:14px -18px}
+.cd-sub{font-size:12px;font-weight:700;color:var(--text-3);margin-bottom:8px}
+.cd-stats{display:flex;gap:10px}
+.cd-stat{flex:1;background:var(--surface-2);border:1px solid var(--line);border-radius:14px;padding:12px;text-align:center;cursor:pointer}
+.cd-stat:hover{background:var(--surface)}
+.cd-num{font-size:26px;font-weight:800;line-height:1}
+.cd-lab{font-size:12px;color:var(--text-2);margin-top:5px}
+.cd-act{display:flex;align-items:center;gap:12px;padding:14px 4px;font-size:15px;font-weight:600;color:var(--text);cursor:pointer;border-bottom:1px solid var(--line)}
+.cd-act:last-child{border-bottom:none}
+.cd-act svg{width:19px;height:19px;color:var(--text-2)}
+.cd-act.danger{color:#f2777a}
+.cd-act.danger svg{color:#f2777a}
+.fchip.assignee{background:rgba(255,214,10,.14);border:1px solid rgba(255,214,10,.45);color:var(--accent);display:inline-flex;align-items:center;gap:5px}
+.fchip.assignee svg{width:13px;height:13px}
+.fchip.assignee .fx{opacity:.7}
+.ag-footnote{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-3);padding:14px 4px 4px;line-height:1.5}
+.ag-footnote svg{width:14px;height:14px;flex:none}
+.ag-footnote b{color:var(--text-2);font-weight:800}
+.pin-sect{display:flex;align-items:center;gap:7px;padding:12px 16px 8px;font-size:12px;font-weight:800;color:var(--text-3)}
+.pin-sect svg{width:14px;height:14px}
+.room-pin{width:13px;height:13px;color:var(--text-3);margin-left:2px}
+.room.pinned{background:rgba(255,255,255,.02)}
+.pin-div{height:8px;background:var(--bg);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.counter{cursor:pointer;border-radius:12px;transition:background .12s}
+.counter.on{background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--line-2)}
+.aglist-empty{padding:44px 16px;text-align:center;color:var(--text-3);font-size:14px}
+.group-toggle span{cursor:pointer}
+.sort-mini{display:flex;align-items:center;gap:5px;font-size:12px;font-weight:600;color:var(--text-3);cursor:pointer}
+.sort-mini svg{width:13px;height:13px}
+.unread-n{font-size:11px;font-weight:800;color:#ffd60a;align-self:flex-end;margin:0 3px 1px 0;line-height:1}
+/* ===== REV8: 현장 탭 ===== */
+.site-list{flex:1;overflow-y:auto;padding:4px 0}
+.site-card{display:flex;gap:13px;padding:15px 16px;cursor:pointer;border-bottom:1px solid var(--line)}
+.site-thumb{width:78px;height:78px;border-radius:13px;background:linear-gradient(135deg,#2b303a,#191c23);flex:none;display:flex;align-items:center;justify-content:center;color:var(--text-3)}
+.site-thumb svg{width:30px;height:30px}
+.site-main{flex:1;min-width:0}
+.site-name{font-size:16px;font-weight:800;color:var(--text)}
+.site-loc{font-size:12.5px;color:var(--text-3);margin-top:4px;display:flex;align-items:center;gap:5px}
+.site-loc svg{width:13px;height:13px}
+.site-badges{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.site-badge{font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px;background:var(--surface-2);color:var(--text-2)}
+.site-badge.prog{color:#0ea5e9;background:rgba(14,165,233,.14)}
+.site-badge.upd{color:#ffd60a;background:rgba(255,214,10,.14)}
+.datenav{flex:none;display:flex;align-items:center;justify-content:center;gap:18px;padding:10px;background:var(--surface);border-bottom:1px solid var(--line)}
+.dn-arrow{width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:8px;color:var(--text-2);cursor:pointer}
+.dn-arrow:hover{background:var(--surface-2)}
+.dn-date{font-size:14px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:7px}
+.dn-date svg{width:15px;height:15px;color:var(--text-3)}
+.zone{position:absolute;border-radius:4px;border:2px solid;cursor:pointer;display:flex;align-items:flex-end;padding:5px;transition:opacity .12s}
+.zone .zone-label{font-size:10px;font-weight:800;padding:2px 6px;border-radius:5px;color:#141414}
+.zone.stack{background:rgba(245,158,11,.28);border-color:#f59e0b}
+.zone.stack .zone-label{background:#f59e0b}
+.zone.work{background:rgba(59,130,246,.30);border-color:#3b82f6}
+.zone.work .zone-label{background:#3b82f6;color:#fff}
+.zone.sel{box-shadow:0 0 0 3px rgba(255,214,10,.6)}
+.layerbar{flex:none;display:flex;gap:10px;padding:12px 16px;background:var(--surface);border-top:1px solid var(--line)}
+.layer-toggle{flex:1;display:flex;align-items:center;gap:8px;padding:11px 13px;border-radius:12px;background:var(--surface-2);border:1px solid var(--line);cursor:pointer;font-size:13px;font-weight:700;color:var(--text-3)}
+.layer-toggle .sw{margin-left:auto;width:34px;height:20px;border-radius:999px;background:#3a3f49;position:relative;flex:none;transition:background .15s}
+.layer-toggle .sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:transform .15s}
+.layer-toggle.on{color:var(--text)}
+.layer-toggle.on .sw::after{transform:translateX(14px)}
+.layer-toggle.on.stack .sw{background:#f59e0b}
+.layer-toggle.on.work .sw{background:#3b82f6}
+.layer-dot{width:12px;height:12px;border-radius:3px;flex:none}
+.layer-dot.stack{background:#f59e0b}
+.layer-dot.work{background:#3b82f6}
+.fab{position:absolute;right:18px;bottom:100px;height:50px;padding:0 20px;border:none;border-radius:999px;background:#ffd60a;color:#1a1a1a;font-size:15px;font-weight:800;display:flex;align-items:center;gap:7px;box-shadow:0 12px 30px -6px rgba(255,214,10,.5);cursor:pointer;z-index:20}
+.fab svg{width:20px;height:20px}
+.zone-draw{position:absolute;border:2px dashed #ffd60a;background:rgba(255,214,10,.14);border-radius:4px}
+.zone-draw .zh{position:absolute;width:10px;height:10px;background:#ffd60a;border:2px solid #141414;border-radius:2px}
+.zsheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface-3);border-radius:20px 20px 0 0;padding:18px 18px 26px;box-shadow:0 -20px 50px -10px rgba(0,0,0,.6);z-index:30}
+.seg{display:flex;background:var(--surface-2);border-radius:12px;padding:4px;margin-bottom:16px}
+.seg span{flex:1;text-align:center;padding:9px;border-radius:9px;font-size:14px;font-weight:700;color:var(--text-3);cursor:pointer}
+.seg span.on{background:var(--surface);color:var(--text)}
+.zfield{margin-bottom:12px}
+.zfield .zl{font-size:12px;font-weight:700;color:var(--text-3);margin-bottom:6px}
+.zfield .zi{height:46px;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;display:flex;align-items:center;padding:0 14px;font-size:15px;color:var(--text)}
+.zfield .zi.ph{color:var(--text-3)}
+.zsave{width:100%;height:52px;border-radius:12px;background:#ffd60a;color:#1a1a1a;font-size:16px;font-weight:800;border:none;margin-top:6px;cursor:pointer}
+.zcard{position:absolute;background:var(--surface-3);border:1px solid var(--line-2);border-radius:16px;padding:15px;width:220px;box-shadow:0 20px 50px -10px rgba(0,0,0,.7);z-index:25}
+.zc-head{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:800;color:var(--text)}
+.zc-row{display:flex;justify-content:space-between;font-size:13px;margin-top:9px}
+.zc-row .k{color:var(--text-3)}
+.zc-row .v{color:var(--text);font-weight:600}
+.zc-meta{font-size:11px;color:var(--text-3);margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
+.zc-acts{display:flex;gap:8px;margin-top:12px}
+.zc-acts button{flex:1;height:36px;border-radius:9px;font-size:13px;font-weight:700;border:1px solid var(--line);background:var(--surface-2);color:var(--text-2);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px}
+.zc-acts button svg{width:14px;height:14px}
+.zc-acts .del{color:#f2777a;border-color:rgba(242,119,122,.3)}
+.ctx-roomname{display:flex;align-items:center;gap:9px;padding:14px 18px;font-size:14px;font-weight:800;color:var(--text);background:var(--surface-2);border-bottom:1px solid var(--line-2)}
+.ctx-roomname svg{width:17px;height:17px;color:var(--text-2)}
+.searchbar input{flex:1;background:none;border:none;outline:none;color:var(--text-1);font-size:15px;font-family:inherit;padding:0}
+.searchbar input::placeholder{color:var(--text-3)}
+.home-search-bar{overflow:hidden;max-height:0;transition:max-height .22s ease;padding:0 16px;background:var(--bg,#0f0f13)}
+.home-search-bar.open{max-height:80px;padding:10px 16px}
+.home-search-bar .searchbar{width:100%;box-sizing:border-box}
+.hsb-cancel{background:none;border:none;padding:0;margin:0;display:flex;align-items:center;color:var(--text-3);cursor:pointer;flex:none}
+.hsb-cancel svg{width:18px;height:18px}
+.search-empty{padding:44px 16px;text-align:center;color:var(--text-3);font-size:14px}
+.contact-search-bar{padding:6px 16px 10px}
+.contact-search-bar input{width:100%;height:40px;background:var(--surface-2);border:none;outline:none;border-radius:10px;color:var(--text-1);font-size:15px;padding:0 14px;font-family:inherit;box-sizing:border-box}
+.contact-search-bar input::placeholder{color:var(--text-3)}
+.room-search-bar{display:flex;align-items:center;gap:6px;padding:8px 12px;background:var(--surface-2);border-bottom:1px solid var(--line)}
+.room-search-bar>svg{width:18px;height:18px;color:var(--text-3);flex:none}
+.room-search-bar input{flex:1;min-width:0;background:var(--bg,#0f0f13);border:1px solid var(--line);outline:none;color:var(--text-1);font-size:14px;height:36px;border-radius:8px;padding:0 12px;font-family:inherit}
+.room-search-bar input::placeholder{color:var(--text-3)}
+.rsb-count{font-size:12px;color:var(--text-3);min-width:52px;text-align:center;flex:none}
+.rsb-nav{width:30px;height:30px;display:flex;align-items:center;justify-content:center;color:var(--text-2);cursor:pointer;border-radius:8px;flex:none}
+.rsb-nav:hover{background:rgba(255,255,255,.06)}
+.rsb-nav svg{width:18px;height:18px}
+.msg.match .bubble{outline:2px solid #f59e0b;outline-offset:1px}
+.msg.match.current .bubble{background:rgba(245,158,11,.28)}
+/* ============ REV10: 온보딩 회원가입 흐름 ============ */
+.pc-td-dot{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:7px;vertical-align:middle;flex:none}
+.rd-dialog{width:296px;background:var(--surface-3);border:1px solid var(--line-2);border-radius:20px;padding:22px 20px 16px;text-align:center;box-shadow:0 24px 60px -12px rgba(0,0,0,.75)}
+.rd-dl-ic{width:52px;height:52px;border-radius:16px;background:rgba(255,214,10,.14);color:var(--accent);display:flex;align-items:center;justify-content:center;margin:0 auto 14px}
+.rd-dl-ic svg{width:26px;height:26px}
+.rd-dl-title{font-size:16px;font-weight:800;line-height:1.4;color:var(--text)}
+.rd-dl-body{font-size:13px;font-weight:600;color:var(--text-2);margin-top:8px;line-height:1.5}
+.rd-dl-acts{display:flex;gap:10px;margin-top:18px}
+.rd-dl-cancel,.rd-dl-ok{flex:1;height:46px;border-radius:12px;border:none;font-size:15px;font-weight:800;font-family:inherit;cursor:pointer}
+.rd-dl-cancel{background:var(--surface);color:var(--text-2)}
+.rd-dl-ok{background:var(--accent);color:#1a1204}
+.ob-step{position:absolute;inset:52px 0 0;display:flex;flex-direction:column}
+.ob-bar{flex:none;height:56px;display:flex;align-items:center;gap:6px;padding:0 8px 0 6px;border-bottom:1px solid var(--line)}
+.ob-bar-t{font-size:17px;font-weight:800}
+.ob-body{flex:1;overflow-y:auto;padding:22px 18px}
+.ob-q{font-size:22px;font-weight:800;letter-spacing:-.01em;margin-bottom:16px;line-height:1.3}
+.ob-note-sm{font-size:12px;font-weight:600;color:var(--text-3);margin:-8px 0 16px}
+.ob-splash-mid{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px}
+.ob-logo{width:96px;height:96px;border-radius:28px;background:var(--accent);color:#1a1204;display:flex;align-items:center;justify-content:center}
+.ob-logo svg{width:52px;height:52px}
+.ob-brand{font-size:34px;font-weight:800;letter-spacing:-.02em}
+.ob-tag{font-size:14px;font-weight:600;color:var(--text-2);text-align:center;padding:0 30px}
+.ob-cta{flex:none;margin:0 18px 30px;height:56px;border-radius:16px;background:var(--accent);color:#1a1204;border:none;font-size:17px;font-weight:800;font-family:inherit;cursor:pointer}
+.ob-cta:disabled{opacity:.4;cursor:not-allowed}
+.ob-rolelist{display:flex;flex-direction:column;gap:12px}
+.ob-rolecard{display:flex;align-items:center;gap:14px;background:var(--surface);border:2px solid var(--line);border-radius:16px;padding:16px 15px;cursor:pointer}
+.ob-rolecard:hover{border-color:var(--line-2)}
+.ob-rolecard.on{border-color:var(--accent);background:var(--surface-2)}
+.ob-ric{width:50px;height:50px;border-radius:14px;background:var(--surface-3);color:var(--text-2);display:flex;align-items:center;justify-content:center;flex:none}
+.ob-ric svg{width:25px;height:25px}
+.ob-rc-main{flex:1;min-width:0}
+.ob-rc-name{font-size:17px;font-weight:800}
+.ob-rc-sub{font-size:13px;font-weight:600;color:var(--text-2);margin-top:3px}
+.ob-rc-chk{width:22px;height:22px;color:var(--accent);opacity:0;flex:none}
+.ob-rolecard.on .ob-rc-chk{opacity:1}
+.ob-sitelist,.ob-originlist{display:flex;flex-direction:column;gap:10px}
+.ob-site{display:flex;align-items:center;gap:13px;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:12px 13px;cursor:pointer}
+.ob-site:hover{border-color:var(--accent)}
+.ob-site .site-thumb{width:58px;height:58px;border-radius:12px}
+.ob-site .site-main{flex:1;min-width:0}
+.ob-site-go,.ob-og-go{width:20px;height:20px;color:var(--text-3);flex:none}
+.ob-center{flex:1;overflow-y:auto;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:30px 20px;gap:8px}
+.ob-bigcheck{width:88px;height:88px;border-radius:50%;background:var(--st-done);color:#08260f;display:flex;align-items:center;justify-content:center;margin-bottom:10px}
+.ob-bigcheck svg{width:46px;height:46px;stroke-width:3}
+.ob-hourglass{width:88px;height:88px;border-radius:50%;background:rgba(245,158,11,.14);color:var(--st-review);display:flex;align-items:center;justify-content:center;margin-bottom:10px}
+.ob-hourglass svg{width:44px;height:44px}
+.ob-center-t{font-size:22px;font-weight:800;margin-bottom:8px}
+.ob-summary{width:100%;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:6px 16px;margin-top:6px}
+.ob-summary.tight{margin-top:0;margin-bottom:20px}
+.ob-sum-row{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
+.ob-sum-row:last-child{border-bottom:none}
+.ob-sum-row .k{font-size:13px;font-weight:700;color:var(--text-3);width:76px;flex:none}
+.ob-sum-row .v{font-size:14px;font-weight:700;color:var(--text);text-align:right;flex:1}
+.ob-wait-note{font-size:12px;font-weight:600;color:var(--text-3);text-align:center;margin-top:16px;line-height:1.5}
+.ob-cancel{flex:none;margin:0 18px 30px;height:48px;border-radius:14px;background:transparent;border:1px solid var(--line-2);color:var(--text-3);font-size:14px;font-weight:700;font-family:inherit;cursor:pointer}
+.ob-cancel:hover{color:var(--unread);border-color:var(--unread)}
+.ob-tradegrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.ob-trade{background:var(--surface);border:2px solid var(--line);border-radius:16px;padding:20px 12px;display:flex;flex-direction:column;align-items:center;gap:9px;cursor:pointer}
+.ob-trade:hover{border-color:var(--accent)}
+.ob-trade.taken{opacity:.5;cursor:not-allowed;background:var(--surface-2)}
+.ob-trade.taken:hover{border-color:var(--line)}
+.ob-tr-ic{width:48px;height:48px;border-radius:14px;background:var(--surface-3);color:var(--text-2);display:flex;align-items:center;justify-content:center}
+.ob-tr-ic svg{width:24px;height:24px}
+.ob-tr-name{font-size:16px;font-weight:800}
+.ob-tr-sub{font-size:12px;font-weight:700;color:var(--st-done)}
+.ob-tr-taken{font-size:12px;font-weight:700;color:var(--text-3)}
+.ob-origin{display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px 14px;cursor:pointer}
+.ob-origin:hover{border-color:var(--accent)}
+.ob-og-main{flex:1;min-width:0}
+.ob-og-name{font-size:16px;font-weight:800}
+.ob-og-sub{font-size:13px;font-weight:600;color:var(--text-2);margin-top:3px}
+.ob-field{margin-top:18px}
+.ob-field label{display:block;font-size:13px;font-weight:700;color:var(--text-2);margin-bottom:9px}
+.ob-field input{width:100%;height:54px;border-radius:14px;background:var(--surface-2);border:1px solid var(--line);color:var(--text);font-size:17px;font-weight:700;font-family:inherit;padding:0 16px;outline:none}
+.ob-field input::placeholder{color:var(--text-3);font-weight:600}
+.ob-field input:focus{border-color:var(--accent)}
+.ob-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:11px}
+.ob-chips span{font-size:13px;font-weight:700;color:var(--text-2);background:var(--surface-2);border:1px solid var(--line);padding:8px 13px;border-radius:999px;cursor:pointer}
+.ob-chips span:hover,.ob-chips span.on{border-color:var(--accent);color:var(--text)}
+.ob-ac{position:relative}
+.ob-ac-list{position:absolute;left:0;right:0;top:calc(100% + 6px);background:var(--surface-3);border:1px solid var(--line-2);border-radius:12px;overflow:hidden;z-index:6;box-shadow:0 16px 40px -12px rgba(0,0,0,.6)}
+.ob-ac-list div{padding:12px 14px;font-size:15px;font-weight:600;color:var(--text-2);cursor:pointer;border-bottom:1px solid var(--line)}
+.ob-ac-list div:last-child{border-bottom:none}
+.ob-ac-list div:hover{background:var(--surface-2);color:var(--text)}
+.ob-optdiv{display:flex;align-items:center;gap:12px;margin:24px 0 6px;color:var(--text-3);font-size:12px;font-weight:700}
+.ob-optdiv::before,.ob-optdiv::after{content:"";height:1px;background:var(--line);flex:1}
+.ob-opt{color:var(--text-3);font-weight:600;font-size:12px}
+.ob-select{width:100%;height:54px;border-radius:14px;background:var(--surface-2);border:1px solid var(--line);color:var(--text);font-size:16px;font-weight:700;font-family:inherit;padding:0 16px;outline:none;-webkit-appearance:none;appearance:none}
+.ob-select:focus{border-color:var(--accent)}
+</style>
+<script>lucide.createIcons();
+(function(){
+  const debounce=(fn,ms)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);};};
+  const norm=s=>(s||'').toLowerCase();
+
+  /* [1] HOME — 채팅방 검색 */
+  (function(){
+    const input=document.getElementById('home-search');
+    const list=document.getElementById('home-list');
+    const empty=document.getElementById('home-empty');
+    const btn=document.getElementById('home-search-btn');
+    const bar=document.getElementById('home-search-bar');
+    const cancel=document.getElementById('home-search-cancel');
+    if(!input||!list)return;
+    const rooms=[...list.querySelectorAll('.room')];
+    const run=debounce(()=>{
+      const q=norm(input.value.trim());let n=0;
+      rooms.forEach(r=>{
+        const name=norm(r.querySelector('.room-name')&&r.querySelector('.room-name').textContent);
+        const prev=norm(r.querySelector('.room-preview')&&r.querySelector('.room-preview').textContent);
+        const hit=!q||name.includes(q)||prev.includes(q);
+        r.classList.toggle('hidden',!hit);if(hit)n++;
+      });
+      empty.classList.toggle('hidden',n>0);
+    },250);
+    input.addEventListener('input',run);
+    btn.addEventListener('click',()=>{bar.classList.add('open');input.focus();});
+    cancel.addEventListener('click',()=>{bar.classList.remove('open');input.value='';run();});
+  })();
+
+  /* [2] CONTACTS — 이름·직급·소속 검색 */
+  (function(){
+    const btn=document.getElementById('cont-search-btn');
+    const bar=document.getElementById('cont-search-bar');
+    const input=document.getElementById('cont-search');
+    const list=document.getElementById('cont-list');
+    const empty=document.getElementById('cont-empty');
+    if(!btn||!list)return;
+    const groups=[...list.querySelectorAll('.cont-group')];
+    const run=debounce(()=>{
+      const q=norm(input.value.trim());let total=0;
+      groups.forEach(g=>{
+        let gn=0;
+        g.querySelectorAll('.contact').forEach(c=>{
+          const name=norm(c.querySelector('.ct-name')&&c.querySelector('.ct-name').textContent);
+          const sub=norm(c.querySelector('.ct-sub')&&c.querySelector('.ct-sub').textContent);
+          const corp=norm(c.querySelector('.ct-corp')&&c.querySelector('.ct-corp').textContent);
+          const hit=!q||name.includes(q)||sub.includes(q)||corp.includes(q);
+          c.classList.toggle('hidden',!hit);if(hit)gn++;
+        });
+        g.classList.toggle('hidden',gn===0);total+=gn;
+      });
+      empty.classList.toggle('hidden',!q||total>0);
+    },250);
+    btn.addEventListener('click',()=>{
+      bar.classList.toggle('hidden');
+      if(!bar.classList.contains('hidden')){input.focus();}
+      else{input.value='';run();}
+    });
+    input.addEventListener('input',run);
+  })();
+
+  /* [3] CHAT ROOM — 메시지 검색 + 이동/하이라이트 */
+  (function(){
+    const btn=document.getElementById('room-search-btn');
+    const bar=document.getElementById('room-search-bar');
+    const input=document.getElementById('room-search');
+    const chat=document.getElementById('room-chat');
+    const count=document.getElementById('room-search-count');
+    if(!btn||!chat)return;
+    const msgs=[...chat.querySelectorAll('.msg')];
+    let matches=[],cur=-1;
+    function clear(){matches=[];cur=-1;msgs.forEach(m=>m.classList.remove('match','current'));count.textContent='';}
+    function goto(i){
+      if(!matches.length)return;
+      cur=(i+matches.length)%matches.length;
+      matches.forEach(m=>m.classList.remove('current'));
+      const el=matches[cur];el.classList.add('current');
+      chat.scrollTo({top:el.offsetTop-chat.clientHeight/2+el.clientHeight/2,behavior:'smooth'});
+      count.textContent=(cur+1)+' / '+matches.length;
+    }
+    const run=debounce(()=>{
+      const q=norm(input.value.trim());
+      matches=[];cur=-1;
+      msgs.forEach(m=>{
+        const b=m.querySelector('.bubble');
+        const hit=q&&b&&norm(b.textContent).includes(q);
+        m.classList.toggle('match',!!hit);m.classList.remove('current');
+        if(hit)matches.push(m);
+      });
+      if(!q){count.textContent='';}
+      else if(!matches.length){count.textContent='결과 없음';}
+      else{goto(0);}
+    },250);
+    btn.addEventListener('click',()=>{
+      bar.classList.toggle('hidden');
+      if(!bar.classList.contains('hidden')){input.focus();}
+      else{input.value='';clear();}
+    });
+    input.addEventListener('input',run);
+    document.getElementById('room-search-prev').addEventListener('click',()=>goto(cur-1));
+    document.getElementById('room-search-next').addEventListener('click',()=>goto(cur+1));
+  })();
+
+  /* [화면5] 안건 리스트 상단 통계 탭 필터 */
+  (function(){
+    const list=document.getElementById('ag5-list');
+    if(!list)return;
+    const counters=[...list.parentElement.querySelectorAll('.counter[data-filter]')];
+    const items=[...list.querySelectorAll('.agitem')];
+    const empty=list.querySelector('.aglist-empty');
+    counters.forEach(c=>c.addEventListener('click',()=>{
+      const f=c.dataset.filter;
+      counters.forEach(x=>x.classList.toggle('on',x===c));
+      let n=0;
+      items.forEach(it=>{
+        const hit=f==='all'||(f==='progress'&&it.dataset.status==='progress')||(f==='done'&&it.dataset.status==='done')||(f==='new'&&it.dataset.new==='1');
+        it.classList.toggle('hidden',!hit);if(hit)n++;
+      });
+      empty.classList.toggle('hidden',n>0);
+    }));
+  })();
+  /* [화면14] 연락처 공종별/업체별 그룹핑 토글 */
+  (function(){
+    const tg=document.getElementById('cont-group-toggle');
+    if(!tg)return;
+    const trade=document.getElementById('cont-view-trade');
+    const company=document.getElementById('cont-view-company');
+    tg.querySelectorAll('span').forEach(s=>s.addEventListener('click',()=>{
+      tg.querySelectorAll('span').forEach(x=>x.classList.toggle('on',x===s));
+      const v=s.dataset.view;
+      trade.classList.toggle('hidden',v!=='trade');
+      company.classList.toggle('hidden',v!=='company');
+    }));
+  })();
+
+  /* [화면20] 현장 상세 레이어 온오프 토글 */
+  (function(){
+    const canvas=document.getElementById('site-canvas');
+    if(!canvas)return;
+    canvas.parentElement.querySelectorAll('.layer-toggle[data-layer]').forEach(t=>{
+      t.addEventListener('click',()=>{
+        t.classList.toggle('on');
+        const on=t.classList.contains('on');
+        canvas.querySelectorAll('.zone[data-layer="'+t.dataset.layer+'"]').forEach(z=>{
+          z.style.display=on?'flex':'none';
+        });
+      });
+    });
+  })();
+
+  /* [화면21] 구역 종류 세그먼트 → 필드 전환 */
+  (function(){
+    const seg=document.getElementById('zone-seg');
+    if(!seg)return;
+    const fs=document.getElementById('zone-fields-stack');
+    const fw=document.getElementById('zone-fields-work');
+    seg.querySelectorAll('span').forEach(s=>s.addEventListener('click',()=>{
+      seg.querySelectorAll('span').forEach(x=>x.classList.toggle('on',x===s));
+      const t=s.dataset.t;
+      fs.classList.toggle('hidden',t!=='stack');
+      fw.classList.toggle('hidden',t!=='work');
+    }));
+  })();
+
+  /* ============ REV10 · 온보딩 회원가입 흐름 ============ */
+  /* UserRegistration 로컬 상태. 서버 저장/실인증 없음 — 화면 전환·분기만 구현.
+     앱 진입 분기(미가입→splash / 대기→wait / 가입완료→홈)는 status 값으로 판단하도록 설계. */
+  (function(){
+    const screen=document.getElementById('ob-screen');
+    if(!screen)return;
+    const steps=[...screen.querySelectorAll('.ob-step')];
+    const scrim=document.getElementById('ob-scrim');
+    const dlTitle=document.getElementById('ob-dl-title');
+    const roleLabel={owner:'발주처',hmg:'한미글로벌',constructor:'시공사',partner:'협력사'};
+    const reg={role:null,site:null,trade:null,proc:null,origin:null,corp:null,approver:null,status:null};
+    let pending=null;
+    function goStep(name){steps.forEach(s=>s.classList.toggle('hidden',s.dataset.step!==name));onEnter(name);}
+    function txt(id,v){const el=document.getElementById(id);if(el)el.textContent=v||'—';}
+    function onEnter(name){
+      if(name==='done'){reg.status='active';txt('ob-d-role',roleLabel[reg.role]);txt('ob-d-site',reg.site);}
+      if(name==='cCompany'){txt('ob-cc-site',reg.site);txt('ob-cc-trade',reg.trade);}
+      if(name==='pCompany'){txt('ob-pc-site',reg.site);txt('ob-pc-origin',reg.origin);}
+      if(name==='profile'){
+        const isOH=(reg.role==='owner'||reg.role==='hmg');const isC=reg.role==='constructor';
+        txt('ob-pf-role',roleLabel[reg.role]);txt('ob-pf-site',reg.site);
+        const tw=document.getElementById('ob-pf-tradewrap');
+        if(isOH){tw.classList.add('hidden');}
+        else{tw.classList.remove('hidden');txt('ob-pf-tradek',isC?'공종':'공정');txt('ob-pf-trade',isC?reg.trade:reg.proc);}
+        document.getElementById('ob-pf-deptwrap').classList.toggle('hidden',!isOH);
+        document.getElementById('ob-prof-submit').textContent=isOH?'가입 완료':'승인 요청 보내기';
+        validateProfile();
+      }
+      if(name==='wait'){
+        reg.status='pending';
+        txt('ob-w-role',roleLabel[reg.role]);txt('ob-w-site',reg.site);
+        const isC=reg.role==='constructor';
+        txt('ob-w-tradek',isC?'공종':'공정');
+        txt('ob-w-trade',isC?reg.trade:reg.proc);
+        txt('ob-w-corp',reg.corp);txt('ob-w-approver',reg.approver);
+      }
+    }
+    function reset(){Object.keys(reg).forEach(k=>reg[k]=null);
+      screen.querySelectorAll('.ob-rolecard.on').forEach(c=>c.classList.remove('on'));
+      screen.querySelectorAll('.ob-chips span.on').forEach(c=>c.classList.remove('on'));
+      screen.querySelectorAll('#ob-cc-corp,#ob-pc-proc,#ob-pc-corp,#ob-pf-name,#ob-pf-title,#ob-pf-dept,#ob-pf-phone').forEach(i=>i.value='');
+      const ys=document.getElementById('ob-pf-year');if(ys)ys.value='';
+      const dl=document.getElementById('ob-pf-dept-list');if(dl){dl.classList.add('hidden');dl.innerHTML='';}
+    }
+    function validateProfile(){
+      const isOH=(reg.role==='owner'||reg.role==='hmg');
+      const need=['ob-pf-name','ob-pf-title','ob-pf-phone'];if(isOH)need.push('ob-pf-dept');
+      const ok=need.every(id=>{const el=document.getElementById(id);return el&&el.value.trim();});
+      document.getElementById('ob-prof-submit').disabled=!ok;
+    }
+    screen.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>{if(b.dataset.reset)reset();goStep(b.dataset.go);}));
+    screen.querySelectorAll('.ob-rolecard').forEach(c=>c.addEventListener('click',()=>{
+      screen.querySelectorAll('.ob-rolecard').forEach(x=>x.classList.toggle('on',x===c));
+      reg.role=c.dataset.role;setTimeout(()=>goStep('site'),160);
+    }));
+    screen.querySelectorAll('.ob-site').forEach(c=>c.addEventListener('click',()=>{
+      reg.site=c.dataset.site;
+      if(reg.role==='owner'||reg.role==='hmg')goStep('profile');
+      else if(reg.role==='constructor')goStep('trade');
+      else goStep('origin');
+    }));
+    screen.querySelectorAll('.ob-trade').forEach(c=>c.addEventListener('click',()=>{
+      if(c.classList.contains('taken'))return;
+      reg.trade=c.dataset.trade;goStep('cCompany');
+    }));
+    screen.querySelectorAll('.ob-origin').forEach(c=>c.addEventListener('click',()=>{
+      reg.origin=c.dataset.corp;reg.trade=c.dataset.trade;goStep('pCompany');
+    }));
+    const chips=document.getElementById('ob-proc-chips');
+    const procInput=document.getElementById('ob-pc-proc');
+    if(chips)chips.querySelectorAll('span').forEach(s=>s.addEventListener('click',()=>{
+      chips.querySelectorAll('span').forEach(x=>x.classList.toggle('on',x===s));
+      procInput.value=s.textContent;
+    }));
+    document.getElementById('ob-cc-next').addEventListener('click',()=>{
+      reg.corp=document.getElementById('ob-cc-corp').value.trim()||'(업체명 미입력)';goStep('profile');
+    });
+    document.getElementById('ob-pc-next').addEventListener('click',()=>{
+      reg.proc=procInput.value.trim()||'(공정 미입력)';
+      reg.corp=document.getElementById('ob-pc-corp').value.trim()||'(업체명 미입력)';goStep('profile');
+    });
+    // 본인 정보 입력 화면 (REV11)
+    const yearSel=document.getElementById('ob-pf-year');
+    if(yearSel)for(let y=2026;y>=1990;y--){const o=document.createElement('option');o.value=y;o.textContent=y+'년';yearSel.appendChild(o);}
+    const deptData={'공무':['공무부','공무팀','공무','공무부서'],'품질':['품질부','품질팀','품질관리팀','품질경영팀'],'안전':['안전관리부','안전팀','안전보건팀','안전환경팀'],'공사':['공사부','공사팀','공사관리팀','공무공사팀']};
+    const allDept=[...new Set([].concat(...Object.values(deptData)))];
+    const deptInput=document.getElementById('ob-pf-dept');
+    const deptList=document.getElementById('ob-pf-dept-list');
+    if(deptInput){
+      deptInput.addEventListener('input',()=>{
+        validateProfile();
+        const q=deptInput.value.trim();
+        if(!q){deptList.classList.add('hidden');deptList.innerHTML='';return;}
+        const m=allDept.filter(c=>c.includes(q)).slice(0,5);
+        if(!m.length){deptList.classList.add('hidden');deptList.innerHTML='';return;}
+        deptList.innerHTML=m.map(c=>'<div>'+c+'</div>').join('');deptList.classList.remove('hidden');
+      });
+      deptList.addEventListener('click',e=>{const d=e.target.closest('div');if(!d)return;deptInput.value=d.textContent;deptList.classList.add('hidden');validateProfile();});
+    }
+    screen.querySelectorAll('#ob-pf-spec span').forEach(s=>s.addEventListener('click',()=>s.classList.toggle('on')));
+    screen.querySelectorAll('[data-pf-req]').forEach(i=>i.addEventListener('input',validateProfile));
+    document.getElementById('ob-prof-back').addEventListener('click',()=>{
+      if(reg.role==='owner'||reg.role==='hmg')goStep('site');
+      else if(reg.role==='constructor')goStep('cCompany');
+      else goStep('pCompany');
+    });
+    document.getElementById('ob-prof-submit').addEventListener('click',()=>{
+      const btn=document.getElementById('ob-prof-submit');if(btn.disabled)return;
+      reg.name=document.getElementById('ob-pf-name').value.trim();
+      reg.title=document.getElementById('ob-pf-title').value.trim();
+      reg.phone=document.getElementById('ob-pf-phone').value.trim();
+      if(reg.role==='owner'||reg.role==='hmg'){reg.dept=document.getElementById('ob-pf-dept').value.trim();reg.status='active';goStep('done');}
+      else{
+        if(reg.role==='constructor'){reg.approver='한미글로벌 담당자';dlTitle.textContent='한미글로벌 담당자에게 승인 요청을 보냈습니다';}
+        else{reg.approver=reg.origin+' 소장';dlTitle.textContent=reg.origin+' 소장에게 승인 요청을 보냈습니다';}
+        pending='wait';scrim.classList.remove('hidden');
+      }
+    });
+    document.getElementById('ob-dl-cancel').addEventListener('click',()=>scrim.classList.add('hidden'));
+    document.getElementById('ob-dl-ok').addEventListener('click',()=>{scrim.classList.add('hidden');if(pending){goStep(pending);pending=null;}});
+  })();
+})();
+
+/* ===== REV12: 채팅방 만들기 / 참여자 초대 ===== */
+(function(){
+  const grid=document.getElementById('rc-icon-grid');
+  const cur=document.getElementById('rc-icon-current');
+  const nameInput=document.getElementById('rc-name');
+  const nextBtn=document.getElementById('rc-next');
+  if(grid){
+    grid.querySelectorAll('.rc-icon-opt').forEach(opt=>opt.addEventListener('click',()=>{
+      grid.querySelectorAll('.rc-icon-opt').forEach(o=>o.classList.remove('on'));
+      opt.classList.add('on');
+      cur.innerHTML=opt.innerHTML;
+      lucide.createIcons();
+    }));
+    nameInput.addEventListener('input',()=>{nextBtn.disabled=!nameInput.value.trim();});
+  }
+  const invList=document.getElementById('inv-list');
+  if(invList){
+    const rows=[...invList.querySelectorAll('.inv-row')];
+    const chips=[...document.querySelectorAll('.inv-chip')];
+    const submit=document.getElementById('inv-submit');
+    function refresh(){
+      const n=rows.filter(r=>r.classList.contains('checked')&&!r.classList.contains('disabled')).length;
+      submit.disabled=n<1;
+      submit.textContent=n+'명 초대하고 방 만들기';
+      chips.forEach(c=>{
+        const corp=c.dataset.corp;
+        const corpRows=rows.filter(r=>r.dataset.corp===corp&&!r.classList.contains('disabled'));
+        c.classList.toggle('on',corpRows.length>0&&corpRows.every(r=>r.classList.contains('checked')));
+      });
+    }
+    rows.forEach(r=>r.addEventListener('click',()=>{
+      if(r.classList.contains('disabled'))return;
+      r.classList.toggle('checked');refresh();
+    }));
+    chips.forEach(c=>c.addEventListener('click',()=>{
+      const corp=c.dataset.corp;
+      const on=!c.classList.contains('on');
+      rows.filter(r=>r.dataset.corp===corp&&!r.classList.contains('disabled')).forEach(r=>r.classList.toggle('checked',on));
+      refresh();
+    }));
+    refresh();
+  }
+})();
+</script>
+</body>
+</html>

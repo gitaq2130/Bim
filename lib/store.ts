@@ -3,6 +3,8 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { toDepartmentValue } from "./departmentData";
+import { ROOM_ICON_PRESETS } from "./roomIcons";
+import { ME_ID } from "./types";
 import {
   seedAgendas,
   seedContacts,
@@ -146,6 +148,16 @@ const emptyOnboardingDraft: OnboardingDraft = {
   specialties: [],
 };
 
+export interface NewRoomDraft {
+  icon: string;
+  name: string;
+}
+
+const emptyNewRoomDraft: NewRoomDraft = {
+  icon: ROOM_ICON_PRESETS[0],
+  name: "",
+};
+
 interface AgendaTalkState {
   rooms: Room[];
   messages: Message[];
@@ -173,6 +185,12 @@ interface AgendaTalkState {
   toggleRoomFavorite: (roomId: string) => void;
   toggleRoomPinned: (roomId: string) => void;
   toggleRoomMuted: (roomId: string) => void;
+
+  newRoomDraft: NewRoomDraft;
+  updateNewRoomDraft: (partial: Partial<NewRoomDraft>) => void;
+  resetNewRoomDraft: () => void;
+  createRoom: (input: { name: string; icon: string; memberIds: string[] }) => string;
+  inviteMembers: (roomId: string, contactIds: string[]) => void;
 
   sites: Site[];
   contractors: ContractorCompany[];
@@ -313,6 +331,42 @@ export const useStore = create<AgendaTalkState>()(
   toggleRoomMuted: (roomId) =>
     set((s) => ({
       rooms: s.rooms.map((r) => (r.id === roomId ? { ...r, muted: !r.muted } : r)),
+    })),
+
+  newRoomDraft: emptyNewRoomDraft,
+  updateNewRoomDraft: (partial) =>
+    set((s) => ({ newRoomDraft: { ...s.newRoomDraft, ...partial } })),
+  resetNewRoomDraft: () => set({ newRoomDraft: emptyNewRoomDraft }),
+
+  createRoom: ({ name, icon, memberIds }) => {
+    const id = `room-${Date.now()}`;
+    const members = [ME_ID, ...memberIds.filter((m) => m !== ME_ID)];
+    const room: Room = {
+      id,
+      type: "partner",
+      name,
+      icon,
+      memberCount: members.length,
+      time: nowLabel(),
+      creator: ME_ID,
+      members,
+    };
+    set((s) => ({ rooms: [room, ...s.rooms] }));
+    return id;
+  },
+
+  inviteMembers: (roomId, contactIds) =>
+    set((s) => ({
+      rooms: s.rooms.map((r) => {
+        if (r.id !== roomId) return r;
+        const newMembers = contactIds.filter((id) => !r.members.includes(id));
+        if (newMembers.length === 0) return r;
+        return {
+          ...r,
+          members: [...r.members, ...newMembers],
+          memberCount: (r.memberCount ?? r.members.length) + newMembers.length,
+        };
+      }),
     })),
 
   sites: seedSites,
@@ -793,7 +847,7 @@ export const useStore = create<AgendaTalkState>()(
       storage: createJSONStorage(() => safeLocalStorage),
       partialize: (state) => {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { draft, onboardingDraft, ...persisted } = state;
+        const { draft, onboardingDraft, newRoomDraft, ...persisted } = state;
         return persisted;
       },
     }

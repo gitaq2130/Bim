@@ -2,6 +2,10 @@ import type { FreeTextValue } from "./freeText";
 
 export type RoomType = "trade" | "partner" | "dm";
 
+// 로그인 개념이 따로 없는 목업 앱에서 "현재 사용자"를 가리키는 고정 식별자.
+// Contact.id와 겹치지 않는 별도 네임스페이스로 Room.members/creator에 사용된다.
+export const ME_ID = "me";
+
 export interface Room {
   id: string;
   type: RoomType;
@@ -13,6 +17,8 @@ export interface Room {
   favorite?: boolean;
   pinned?: boolean;
   muted?: boolean;
+  members: string[];
+  creator: string;
 }
 
 export type MessageKind =
