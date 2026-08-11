@@ -4,13 +4,14 @@ import { Suspense, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
 import FloorplanPane from "@/components/site-detail/FloorplanPane";
+import DailyDashboardPane from "@/components/site-detail/daily/DailyDashboardPane";
 import SummarySection from "@/components/site-dashboard/SummarySection";
 import WeeklyTableSection from "@/components/site-dashboard/WeeklyTableSection";
 import TradeCardsSection from "@/components/site-dashboard/TradeCardsSection";
 import TradeDonutSection from "@/components/site-dashboard/TradeDonutSection";
 import { useStore } from "@/lib/store";
 
-type Pane = "plan" | "dash";
+type Pane = "plan" | "dash" | "daily";
 
 function SiteDetailPageInner() {
   const siteId = useSearchParams().get("id") ?? "site-gochang";
@@ -49,6 +50,7 @@ function SiteDetailPageInner() {
           [
             ["plan", "도면"],
             ["dash", "공정현황"],
+            ["daily", "일일현황"],
           ] as [Pane, string][]
         ).map(([key, label]) => (
           <button
@@ -63,9 +65,8 @@ function SiteDetailPageInner() {
         ))}
       </div>
 
-      {pane === "plan" ? (
-        <FloorplanPane site={site} />
-      ) : (
+      {pane === "plan" && <FloorplanPane site={site} />}
+      {pane === "dash" && (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <SummarySection site={site} />
           <div className="mx-4 mt-6 border-t border-line" />
@@ -80,6 +81,11 @@ function SiteDetailPageInner() {
           <TradeCardsSection trades={trades} pendingCount={pendingCount} />
           <div className="mx-4 border-t border-line" />
           <TradeDonutSection trades={trades} />
+        </div>
+      )}
+      {pane === "daily" && (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <DailyDashboardPane site={site} />
         </div>
       )}
     </div>
