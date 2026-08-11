@@ -585,13 +585,13 @@ export default function DailyDashboardPane({ site }: { site: Site }) {
                 </div>
                 {overviewDetail.items.length === 0 ? (
                   <div className={styles.overviewDetailItem}>
-                    <span className="sub">표시할 상세 내용이 없습니다.</span>
+                    <span className={styles.sub}>표시할 상세 내용이 없습니다.</span>
                   </div>
                 ) : (
                   overviewDetail.items.map((item, i) => (
                     <div key={i} className={styles.overviewDetailItem}>
                       <b>{item.main}</b>
-                      <span className="sub">{item.sub}</span>
+                      <span className={styles.sub}>{item.sub}</span>
                     </div>
                   ))
                 )}
@@ -740,8 +740,8 @@ export default function DailyDashboardPane({ site }: { site: Site }) {
                     className={styles.zoneTooltip}
                     style={{ left: selectedZone.rect.x0 * canvasScale, top: Math.max(0, selectedZone.rect.y0 * canvasScale - 4) }}
                   >
-                    <div className="ttZone">{entryLocationText(selectedZone.entry)}</div>
-                    <div className="ttWork">
+                    <div className={styles.ttZone}>{entryLocationText(selectedZone.entry)}</div>
+                    <div className={styles.ttWork}>
                       {shortWorkTypeLabel(selectedZone.entry.workType)}
                       <span className={styles.smallMuted}> · {selectedZone.entry.workType}</span>
                     </div>
@@ -750,7 +750,7 @@ export default function DailyDashboardPane({ site }: { site: Site }) {
                         ? [selectedZone.entry.roomName, selectedZone.entry.desc].filter(Boolean).join(" ")
                         : selectedZone.entry.desc}
                     </div>
-                    <div className="ttDate">
+                    <div className={styles.ttDate}>
                       {selectedZone.entry.date}
                       {selectedZone.tag ? " · " + selectedZone.tag : ""}
                     </div>
@@ -760,7 +760,7 @@ export default function DailyDashboardPane({ site }: { site: Site }) {
             </div>
 
             <div className={styles.decimalBanner}>
-              <span className="strong">좌표 소숫점 지원 ·</span>
+              <span className={styles.strong}>좌표 소숫점 지원 ·</span>
               <span>X4.6은 X4~X5 구간을 10등분한 4.6 지점입니다.</span>
               <span className={styles.decimalBar}>
                 <span style={{ flex: 6, background: "var(--gold)" }} />
@@ -865,12 +865,12 @@ export default function DailyDashboardPane({ site }: { site: Site }) {
                   <div key={e.id} className={styles.entryCard}>
                     <span className={styles.dot} style={{ background: colorForWorkType(e.workType), marginTop: 4 }} />
                     <div style={{ flex: 1 }}>
-                      <div className="zone">{entryLocationText(e)}</div>
-                      <div className="work">{e.workType}</div>
-                      {e.roomName && <div className="room">{e.roomName}</div>}
-                      <div className="desc">{e.desc}</div>
+                      <div className={styles.zone}>{entryLocationText(e)}</div>
+                      <div className={styles.work}>{e.workType}</div>
+                      {e.roomName && <div className={styles.room}>{e.roomName}</div>}
+                      <div className={styles.desc}>{e.desc}</div>
                     </div>
-                    <button className="del" onClick={() => deleteEntry(e.id)} title="삭제">
+                    <button className={styles.del} onClick={() => deleteEntry(e.id)} title="삭제">
                       ✕
                     </button>
                   </div>
@@ -909,7 +909,7 @@ export default function DailyDashboardPane({ site }: { site: Site }) {
                           <span className={`${styles.manualState} ${e.manualRect ? styles.assigned : ""}`}>
                             {e.manualRect ? "● 도면 지정됨" : "○ 영역 미지정"}
                           </span>
-                          <button className="del" style={{ marginLeft: "auto" }} onClick={() => deleteEntry(e.id)} title="삭제">
+                          <button className={styles.del} style={{ marginLeft: "auto" }} onClick={() => deleteEntry(e.id)} title="삭제">
                             ✕
                           </button>
                         </div>
