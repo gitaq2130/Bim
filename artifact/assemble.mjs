@@ -12,6 +12,9 @@ const tailwindCss = fs.readFileSync(path.join(cssDir, cssFile), "utf8");
 
 const bundleJs = fs.readFileSync(path.join(__dirname, "dist", "bundle.js"), "utf8");
 
+const moduleCssPath = path.join(__dirname, "dist", "module-styles.css");
+const moduleCss = fs.existsSync(moduleCssPath) ? fs.readFileSync(moduleCssPath, "utf8") : "";
+
 const fontDir = path.join(root, "node_modules", "pretendard", "dist", "web", "static", "woff2");
 const weights = [
   { file: "Pretendard-SemiBold.woff2", weight: 600 },
@@ -33,6 +36,7 @@ ${fontFaces}
 html,body{height:100%;margin:0;background:#050506;color-scheme:dark;}
 #root{height:100%;}
 ${tailwindCss}
+${moduleCss}
 </style>
 <div id="root"></div>
 <script>
