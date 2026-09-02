@@ -157,6 +157,10 @@ def build_ifc() -> dict:
         rel.RelatedElements = sorted(rel.RelatedElements, key=lambda e: e.id())
     for rel in f.by_type("IfcRelAggregates"):
         rel.RelatedObjects = sorted(rel.RelatedObjects, key=lambda e: e.id())
+    for ua in f.by_type("IfcUnitAssignment"):          # unit.assign_unit 이 set 으로 만들어 id() 순서가 프로세스마다 다르다
+        ua.Units = sorted(ua.Units, key=lambda e: e.id())
+    for rel in f.by_type("IfcRelDefinesByProperties"):
+        rel.RelatedObjects = sorted(rel.RelatedObjects, key=lambda e: e.id())
     f.header.file_name.time_stamp = FIXED_TIMESTAMP
     f.write(str(OUT / "sample.ifc"))
     (OUT / "sample.ifc.expected.json").write_text(json.dumps({
