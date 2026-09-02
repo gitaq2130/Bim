@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, ForeignKeyConstraint, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -74,8 +74,9 @@ class ModelRow(Base):
 
 class BimObjectRow(Base):
     __tablename__ = "bim_objects"
-    global_id: Mapped[str] = mapped_column(String, primary_key=True)
-    project_id: Mapped[str] = mapped_column(ForeignKey("projects.project_id"), index=True)
+    # ADR 0005: 키의 범위는 프로젝트다. 같은 IFC를 여러 프로젝트에 올릴 수 있다.
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.project_id"), primary_key=True, index=True)
+    global_id: Mapped[str] = mapped_column(String, primary_key=True, index=True)
     model_id: Mapped[str] = mapped_column(ForeignKey("models.model_id"), index=True)
     model_version: Mapped[int] = mapped_column(Integer, default=1)
     ifc_type: Mapped[str] = mapped_column(String, index=True)
@@ -124,9 +125,12 @@ class DrawingEntityRow(Base):
 
 class EntityObjectMappingRow(Base):
     __tablename__ = "entity_object_mappings"
+    __table_args__ = (ForeignKeyConstraint(["project_id", "global_id"],
+                                          ["bim_objects.project_id", "bim_objects.global_id"]),)
     drawing_id: Mapped[str] = mapped_column(String, primary_key=True)
     entity_handle: Mapped[str] = mapped_column(String, primary_key=True)
-    global_id: Mapped[str] = mapped_column(ForeignKey("bim_objects.global_id"), primary_key=True)
+    global_id: Mapped[str] = mapped_column(String, primary_key=True)
+    project_id: Mapped[str] = mapped_column(String, index=True)   # ADR 0005: 도면의 프로젝트에서 유도
     confidence: Mapped[float] = mapped_column(Float)
     evidence: Mapped[dict] = mapped_column(JSON)
     needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -172,8 +176,11 @@ class ActivityRelationRow(Base):
 
 class ActivityObjectMappingRow(Base):
     __tablename__ = "activity_object_mappings"
+    __table_args__ = (ForeignKeyConstraint(["project_id", "global_id"],
+                                          ["bim_objects.project_id", "bim_objects.global_id"]),)
     activity_id: Mapped[str] = mapped_column(String, primary_key=True)
-    global_id: Mapped[str] = mapped_column(ForeignKey("bim_objects.global_id"), primary_key=True)
+    global_id: Mapped[str] = mapped_column(String, primary_key=True)
+    project_id: Mapped[str] = mapped_column(String, index=True)   # ADR 0005: Activity의 프로젝트에서 유도
     confidence: Mapped[float] = mapped_column(Float)
     evidence: Mapped[dict] = mapped_column(JSON)
     needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -194,8 +201,11 @@ class ScanRow(Base):
 
 class ScanVerdictRow(Base):
     __tablename__ = "scan_verdicts"
+    __table_args__ = (ForeignKeyConstraint(["project_id", "global_id"],
+                                          ["bim_objects.project_id", "bim_objects.global_id"]),)
     scan_id: Mapped[str] = mapped_column(ForeignKey("scans.scan_id"), primary_key=True)
-    global_id: Mapped[str] = mapped_column(ForeignKey("bim_objects.global_id"), primary_key=True)
+    global_id: Mapped[str] = mapped_column(String, primary_key=True)
+    project_id: Mapped[str] = mapped_column(String, index=True)   # ADR 0005: 스캔의 프로젝트에서 유도
     state: Mapped[str] = mapped_column(String)
     confidence: Mapped[float] = mapped_column(Float)
     evidence: Mapped[dict] = mapped_column(JSON)
@@ -205,8 +215,11 @@ class ScanVerdictRow(Base):
 
 class StateTransitionRow(Base):
     __tablename__ = "state_transitions"
+    __table_args__ = (ForeignKeyConstraint(["project_id", "global_id"],
+                                          ["bim_objects.project_id", "bim_objects.global_id"]),)
     transition_id: Mapped[str] = mapped_column(String, primary_key=True)
-    global_id: Mapped[str] = mapped_column(ForeignKey("bim_objects.global_id"), index=True)
+    global_id: Mapped[str] = mapped_column(String, index=True)
+    project_id: Mapped[str] = mapped_column(String, index=True)   # ADR 0005: 객체의 프로젝트에서 유도
     from_state: Mapped[str] = mapped_column(String)
     to_state: Mapped[str] = mapped_column(String)
     actor: Mapped[str] = mapped_column(String)

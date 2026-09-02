@@ -31,10 +31,6 @@ class PersistedModel(BaseModel):
     duplicate_global_ids: list[str] = Field(default_factory=list)   # 파서를 거치지 않은 결과에서 방어적으로 suffix 한 것
 
 
-class GlobalIdConflictError(ValueError):
-    """같은 GlobalId 가 다른 프로젝트의 객체로 이미 존재한다(bim_objects PK 는 전역)."""
-
-
 def _new_model_id() -> str:
     return f"m-{uuid.uuid4().hex[:12]}"
 
@@ -102,10 +98,8 @@ def persist_ingest_result(session: Session, project_id: str, file_id: str, resul
         seen.add(d.global_id)
         row = existing.get(d.global_id)
         if row is None:
-            foreign = session.get(BimObjectRow, d.global_id)
-            if foreign is not None:
-                raise GlobalIdConflictError(
-                    f"GlobalId {d.global_id} already belongs to project {foreign.project_id} (uploading into {project_id})")
+            # ADR 0005 규칙 4·5: 같은 GlobalId 가 다른 프로젝트에 있어도 충돌이 아니다.
+            # bim_objects PK 는 (project_id, global_id) 이므로 이 프로젝트 안에서만 신규/기존을 가른다.
             row = BimObjectRow(global_id=d.global_id, project_id=project_id, model_id=model.model_id,
                                state=ObjectState.PLANNED.value)   # 초기값. 이후 전이는 progress-engine 상태기계만
             session.add(row)
