@@ -9,9 +9,9 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from packages.core.models.evidence import Evidence
 from packages.core.models.identity import BimObject, BimObjectDraft
 from packages.core.models.mapping import ActivityObjectMapping
-from packages.core.models.evidence import Evidence
 from packages.core.models.progress import Activity, Schedule
 
 from .config_loader import load_activity_mapping_config, load_wbs_mapping_config

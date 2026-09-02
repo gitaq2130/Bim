@@ -17,7 +17,14 @@ from packages.core.models.orm import BimObjectRow, StateTransitionRow
 from packages.core.models.progress import DailyReport, DailyReportItem
 from packages.core.models.review import ReviewRequest
 from packages.core.models.scan import ScanState, ScanVerdict
-from packages.core.models.state import ALLOWED_TRANSITIONS, Actor, ObjectState, StateTransition, allowed_targets, validate_transition
+from packages.core.models.state import (
+    ALLOWED_TRANSITIONS,
+    Actor,
+    ObjectState,
+    StateTransition,
+    allowed_targets,
+    validate_transition,
+)
 
 from . import persistence as db
 from .verification import build_logic_context, run_verification

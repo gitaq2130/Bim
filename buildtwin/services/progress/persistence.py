@@ -10,9 +10,20 @@ from sqlalchemy.orm import Session
 from packages.core.models.evidence import Evidence
 from packages.core.models.identity import BimObject, BimObjectDraft
 from packages.core.models.mapping import ActivityObjectMapping
-from packages.core.models.orm import (ActivityObjectMappingRow, ActivityRelationRow, ActivityRow, BimObjectRow, DailyReportRow,
-                                      MaterialMovementRow, ModelRow, ProjectRow, ReviewRequestRow, ScanVerdictRow, ScheduleRow,
-                                      StateTransitionRow)
+from packages.core.models.orm import (
+    ActivityObjectMappingRow,
+    ActivityRelationRow,
+    ActivityRow,
+    BimObjectRow,
+    DailyReportRow,
+    MaterialMovementRow,
+    ModelRow,
+    ProjectRow,
+    ReviewRequestRow,
+    ScanVerdictRow,
+    ScheduleRow,
+    StateTransitionRow,
+)
 from packages.core.models.progress import Activity, ActivityRelation, DailyReport, MaterialMovement, Schedule
 from packages.core.models.review import ReviewRequest
 from packages.core.models.state import ObjectState, StateTransition

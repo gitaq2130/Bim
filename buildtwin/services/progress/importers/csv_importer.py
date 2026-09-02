@@ -11,8 +11,16 @@ from pathlib import Path
 
 from packages.core.models.progress import Activity, ActivityRelation, Schedule
 
-from ._common import (drop_dangling_relations, infer_level, infer_zone, normalize_discipline, normalize_level, parse_date,
-                      parse_float, parse_predecessors)
+from ._common import (
+    drop_dangling_relations,
+    infer_level,
+    infer_zone,
+    normalize_discipline,
+    normalize_level,
+    parse_date,
+    parse_float,
+    parse_predecessors,
+)
 
 KNOWN_COLUMNS = {
     "activity_id", "name", "wbs_code", "discipline", "level", "zone", "planned_start", "planned_finish",

@@ -7,7 +7,7 @@ config/resources.yaml 자원 한도. 목적: 착수 작업 수 최대화(동률�
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -35,7 +35,7 @@ def _lag_elapsed(session: Session, pred: ActivityProgress, lag_days: float, now:
     if confirmed_at is None:
         return True   # 확정 시각 기록이 없으면 lag 를 판정할 수 없어 통과시킨다(evidence 에 남김)
     if confirmed_at.tzinfo is None:
-        confirmed_at = confirmed_at.replace(tzinfo=timezone.utc)
+        confirmed_at = confirmed_at.replace(tzinfo=UTC)
     return now >= confirmed_at + timedelta(days=lag_days)
 
 
@@ -82,7 +82,7 @@ def compute_startable(session: Session, project_id: str, threshold: float | None
     threshold = float(readiness_cfg["start_threshold"]) if threshold is None else float(threshold)
     caps = {k: float(v) for k, v in (resources_cfg.get("caps") or {}).items()}
     time_limit = float(resources_cfg.get("solver_time_limit_seconds", readiness_cfg.get("solver_time_limit_seconds", 10)))
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
 
     activities = db.load_activities(session, project_id)
     relations = db.load_relations(session, project_id)
@@ -149,4 +149,4 @@ def recovery_scenarios(session: Session, project_id: str) -> list[dict]:
 
 
 def _today() -> date:
-    return datetime.now(timezone.utc).date()
+    return datetime.now(UTC).date()
