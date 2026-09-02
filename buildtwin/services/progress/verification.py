@@ -69,7 +69,7 @@ def _scan_context(verdict: ScanVerdict | None) -> dict[str, Any]:
     return {"state": verdict.state.value, "confidence": verdict.confidence, "scan_id": verdict.scan_id}
 
 
-def build_logic_context(session: Session, global_id: str, quantity_unit: str | None = None,
+def build_logic_context(session: Session, project_id: str, global_id: str, quantity_unit: str | None = None,
                         today: date | None = None) -> dict[str, Any]:
     """시스템 논리 축. rules/verification.yaml 과 rules/risk/*.yaml 이 쓰는 키를 모두 채운다.
 
@@ -77,11 +77,11 @@ def build_logic_context(session: Session, global_id: str, quantity_unit: str | N
     UNVERIFIABLE 횟수), clash_count(미결 verification 검토요청 수), inspection_passed(CONFIRMED→True, 검측 대기→False,
     그 외 None), matched_case_ids(knowledge 가 채움; 여기서는 빈 리스트), days_until_planned_start(귀속 Activity 중 가장 이른 착수일까지 일수).
     """
-    activity_ids = db.activity_ids_for_object(session, global_id)
-    ratios = [predecessor_completion(session, a)[0].value for a in activity_ids]
+    activity_ids = db.activity_ids_for_object(session, project_id, global_id)
+    ratios = [predecessor_completion(session, project_id, a)[0].value for a in activity_ids]
     predecessor_ratio = min(ratios) if ratios else 1.0
 
-    obj = db.load_objects_by_ids(session, [global_id])
+    obj = db.load_objects_by_ids(session, project_id, [global_id])
     quantity = dict((obj[0].quantity or {}) if obj else {})
     key = QUANTITY_UNIT_KEYS.get((quantity_unit or "").lower()) if quantity_unit else None
     bim_quantity = None
@@ -90,7 +90,7 @@ def build_logic_context(session: Session, global_id: str, quantity_unit: str | N
             bim_quantity = float(quantity[k])
             break
 
-    total_in, total_out, count = db.material_totals(session, activity_ids, [global_id])
+    total_in, total_out, count = db.material_totals(session, project_id, activity_ids, [global_id])
     required = None
     for a in activity_ids:
         row = db.load_activity(session, a)
@@ -104,15 +104,15 @@ def build_logic_context(session: Session, global_id: str, quantity_unit: str | N
     else:
         material_ratio = 1.0 if total_in > 0 else 0.0
     consecutive_unverifiable = 0
-    for verdict_row in db.load_scan_verdicts(session, global_id):
+    for verdict_row in db.load_scan_verdicts(session, project_id, global_id):
         if verdict_row.state != ScanState.UNVERIFIABLE.value:
             break
         consecutive_unverifiable += 1
-    open_verification = db.open_reviews(session, [global_id], kind="verification")
+    open_verification = db.open_reviews(session, [global_id], kind="verification", project_id=project_id)
     state = ObjectState(obj[0].state) if obj else None
     if state == ObjectState.CONFIRMED:
         inspection_passed: bool | None = True
-    elif state == ObjectState.INSPECTION_REQUESTED or db.open_reviews(session, [global_id], kind="inspection"):
+    elif state == ObjectState.INSPECTION_REQUESTED or db.open_reviews(session, [global_id], kind="inspection", project_id=project_id):
         inspection_passed = False
     else:
         inspection_passed = None
@@ -131,7 +131,7 @@ def run_verification(session: Session, project_id: str, global_id: str, report_i
                      scan_verdict: ScanVerdict | None, logic: dict[str, Any]) -> list[ReviewRequest]:
     context = {"report": _report_context(report_item), "scan": _scan_context(scan_verdict), "logic": dict(logic)}
     created: list[ReviewRequest] = []
-    existing_open = {r.rule_id for r in db.open_reviews(session, [global_id], kind="verification")}
+    existing_open = {r.rule_id for r in db.open_reviews(session, [global_id], kind="verification", project_id=project_id)}
     for pattern in load_patterns():
         try:
             hit = bool(pattern["_eval"](context))

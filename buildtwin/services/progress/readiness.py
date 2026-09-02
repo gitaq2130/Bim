@@ -43,11 +43,11 @@ class ActivityProgress:
     started: bool
 
 
-def activity_progress(session: Session, activity_id: str, row: ActivityRow | None = None) -> ActivityProgress:
+def activity_progress(session: Session, project_id: str, activity_id: str, row: ActivityRow | None = None) -> ActivityProgress:
     row = row or db.load_activity(session, activity_id)
     pct = float(row.percent_complete or 0.0) if row is not None else 0.0
     gids = db.mapped_global_ids(session, activity_id)
-    states = db.object_states(session, gids)
+    states = db.object_states(session, project_id, gids)
     if states:
         complete = all(s in DONE_STATES for s in states.values())
         estimated = all(s in ESTIMATED_STATES for s in states.values())
@@ -67,11 +67,11 @@ class ComponentResult:
     note: str | None = None
 
 
-def predecessor_completion(session: Session, activity_id: str) -> tuple[ComponentResult, float, list[ActivityProgress]]:
+def predecessor_completion(session: Session, project_id: str, activity_id: str) -> tuple[ComponentResult, float, list[ActivityProgress]]:
     preds = db.predecessors_of(session, activity_id)
     if not preds:
         return ComponentResult(1.0, note="no predecessors"), 1.0, []
-    progress = [activity_progress(session, p.predecessor_id) for p in preds]
+    progress = [activity_progress(session, project_id, p.predecessor_id) for p in preds]
     done = sum(1 for p in progress if p.complete)
     estimated = sum(1 for p in progress if p.estimated_complete)
     ratio = done / len(progress)
@@ -80,13 +80,13 @@ def predecessor_completion(session: Session, activity_id: str) -> tuple[Componen
     return ComponentResult(ratio, reason=reason, related_ids=pending), estimated / len(progress), progress
 
 
-def inspection_component(session: Session, predecessor_progress: list[ActivityProgress]) -> ComponentResult:
+def inspection_component(session: Session, project_id: str, predecessor_progress: list[ActivityProgress]) -> ComponentResult:
     gids = sorted({g for p in predecessor_progress for g in p.global_ids})
     if not gids:
         return ComponentResult(1.0, note="no predecessor objects")
-    states = db.object_states(session, gids)
+    states = db.object_states(session, project_id, gids)
     awaiting = {g for g, s in states.items() if s == ObjectState.INSPECTION_REQUESTED}
-    awaiting.update(r.global_id for r in db.open_reviews(session, gids, kind="inspection") if r.global_id)
+    awaiting.update(r.global_id for r in db.open_reviews(session, gids, kind="inspection", project_id=project_id) if r.global_id)
     value = 1.0 - len(awaiting) / len(gids)
     reason = f"{len(awaiting)} predecessor objects awaiting inspection" if awaiting else None
     return ComponentResult(value, reason=reason, related_ids=sorted(awaiting))

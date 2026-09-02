@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from packages.core.models.evidence import Evidence
 from packages.core.models.identity import BimObject
 from packages.core.models.orm import (
+    ActivityObjectMappingRow,
     ActivityRelationRow,
     ActivityRow,
     BimObjectRow,
@@ -71,8 +72,8 @@ def verdict_row_to_model(row: ScanVerdictRow) -> ScanVerdict:
                        diff_from_previous=ObjectDiff.model_validate(row.diff_from_previous) if row.diff_from_previous else None)
 
 
-def latest_scan_verdict(session: Session, global_id: str) -> ScanVerdict | None:
-    row = db.latest_scan_verdict(session, global_id)
+def latest_scan_verdict(session: Session, project_id: str, global_id: str) -> ScanVerdict | None:
+    row = db.latest_scan_verdict(session, project_id, global_id)
     return verdict_row_to_model(row) if row else None
 
 
@@ -80,12 +81,13 @@ def scan_verdicts(session: Session, scan_id: str) -> list[ScanVerdictRow]:
     return list(session.scalars(select(ScanVerdictRow).where(ScanVerdictRow.scan_id == scan_id).order_by(ScanVerdictRow.global_id)))
 
 
-def previous_verdicts(session: Session, global_ids: list[str], exclude_scan_id: str) -> dict[str, ScanVerdict]:
+def previous_verdicts(session: Session, project_id: str, global_ids: list[str], exclude_scan_id: str) -> dict[str, ScanVerdict]:
     """객체별 직전 스캔 판정(이번 스캔 제외) — diff 계산 입력."""
     out: dict[str, ScanVerdict] = {}
     if not global_ids:
         return out
-    rows = session.scalars(select(ScanVerdictRow).where(ScanVerdictRow.global_id.in_(global_ids),
+    rows = session.scalars(select(ScanVerdictRow).where(ScanVerdictRow.project_id == project_id,
+                                                        ScanVerdictRow.global_id.in_(global_ids),
                                                         ScanVerdictRow.scan_id != exclude_scan_id)
                            .order_by(ScanVerdictRow.created_at.desc()))
     for r in rows:
@@ -94,8 +96,9 @@ def previous_verdicts(session: Session, global_ids: list[str], exclude_scan_id: 
     return out
 
 
-def entity_mappings_for_object(session: Session, global_id: str) -> list[EntityObjectMappingRow]:
-    return list(session.scalars(select(EntityObjectMappingRow).where(EntityObjectMappingRow.global_id == global_id)))
+def entity_mappings_for_object(session: Session, project_id: str, global_id: str) -> list[EntityObjectMappingRow]:
+    return list(session.scalars(select(EntityObjectMappingRow).where(EntityObjectMappingRow.project_id == project_id,
+                                                                     EntityObjectMappingRow.global_id == global_id)))
 
 
 def entity_mapping(session: Session, drawing_id: str, handle: str) -> EntityObjectMappingRow | None:
@@ -103,14 +106,22 @@ def entity_mapping(session: Session, drawing_id: str, handle: str) -> EntityObje
                                                                 EntityObjectMappingRow.entity_handle == handle)).first()
 
 
-def material_ids_for_object(session: Session, global_id: str) -> list[str]:
-    rows = session.scalars(select(MaterialMovementRow.material_id).where(MaterialMovementRow.global_id == global_id).distinct())
+def material_ids_for_object(session: Session, project_id: str, global_id: str) -> list[str]:
+    """material_movements 는 project_id 를 이미 갖지만 global_id 가 FK 가 아니므로(ADR 0005), 조회 시 함께 필터링한다."""
+    rows = session.scalars(select(MaterialMovementRow.material_id).where(MaterialMovementRow.project_id == project_id,
+                                                                        MaterialMovementRow.global_id == global_id).distinct())
     return sorted(set(rows))
+
+
+def activity_ids_for_object(session: Session, project_id: str, global_id: str) -> list[str]:
+    rows = session.scalars(select(ActivityObjectMappingRow.activity_id).where(
+        ActivityObjectMappingRow.project_id == project_id, ActivityObjectMappingRow.global_id == global_id))
+    return list(rows)
 
 
 def latest_report_item(session: Session, project_id: str, global_id: str) -> DailyReportItem | None:
     """가장 최근 작업일보에서 이 객체(직접 global_id 또는 매핑된 Activity)를 가리키는 항목."""
-    activity_ids = set(db.activity_ids_for_object(session, global_id))
+    activity_ids = set(activity_ids_for_object(session, project_id, global_id))
     reports = session.scalars(select(DailyReportRow).where(DailyReportRow.project_id == project_id)
                               .order_by(DailyReportRow.submitted_at.desc()))
     for report in reports:
@@ -138,10 +149,11 @@ def relation_rows(session: Session, project_id: str) -> list[ActivityRelationRow
     return db.load_relations(session, project_id)
 
 
-def confirmed_since(session: Session, global_ids: list[str], since: datetime) -> int:
+def confirmed_since(session: Session, project_id: str, global_ids: list[str], since: datetime) -> int:
     if not global_ids:
         return 0
-    rows = session.scalars(select(StateTransitionRow).where(StateTransitionRow.global_id.in_(global_ids),
+    rows = session.scalars(select(StateTransitionRow).where(StateTransitionRow.project_id == project_id,
+                                                            StateTransitionRow.global_id.in_(global_ids),
                                                             StateTransitionRow.to_state == ObjectState.CONFIRMED.value))
     n = 0
     for r in rows:

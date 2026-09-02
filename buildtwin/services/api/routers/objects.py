@@ -36,21 +36,25 @@ def list_objects(project_id: str, level: str | None = None, ifc_type: str | None
     total = int(session.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
     rows = list(session.scalars(stmt.order_by(BimObjectRow.level, BimObjectRow.ifc_type, BimObjectRow.global_id)
                                 .offset((page - 1) * limit).limit(limit)))
-    open_ids = {r.global_id for r in db.open_reviews(session, [r.global_id for r in rows])} if rows else set()
+    open_ids = {r.global_id for r in db.open_reviews(session, [r.global_id for r in rows], project_id=project_id)} if rows else set()
     return ObjectList(items=[usecases.object_view(r, r.global_id in open_ids) for r in rows], total=total, page=page, page_size=limit)
 
 
 @router.get("/objects/{global_id}", response_model=ObjectDetail)
-def get_object(global_id: str, session: Session = Depends(get_session), user: CurrentUser = Depends(get_current_user)) -> ObjectDetail:
-    """한 번의 호출로 basic / current_state / history / next_actions / linked 를 모두 돌려준다."""
-    return usecases.object_detail(session, global_id, user.role)
+def get_object(global_id: str, project_id: str | None = Query(None), session: Session = Depends(get_session),
+               user: CurrentUser = Depends(get_current_user)) -> ObjectDetail:
+    """한 번의 호출로 basic / current_state / history / next_actions / linked 를 모두 돌려준다.
+    ADR 0005 §3: global_id 가 여러 프로젝트에 걸쳐 있으면 409 — `?project_id=` 로 직접 지정해 해소한다."""
+    return usecases.object_detail(session, global_id, user.role, project_id=project_id)
 
 
 @router.post("/objects/{global_id}/transitions", response_model=TransitionResponse, status_code=201)
-def request_transition(global_id: str, body: TransitionRequest, session: Session = Depends(get_session),
+def request_transition(global_id: str, body: TransitionRequest, project_id: str | None = Query(None),
+                       session: Session = Depends(get_session),
                        user: CurrentUser = Depends(require_role("contractor", "cm"))) -> TransitionResponse:
     """상태 전이 요청(ADR 0001 §4-1: contractor/cm 만, admin·client 403). CONFIRMED 는 라우터(역할 cm)와
-    상태기계(actor=cm) 이중 검사. 응답에 생성/종료된 검측 ReviewRequest id 포함."""
+    상태기계(actor=cm) 이중 검사. 응답에 생성/종료된 검측 ReviewRequest id 포함.
+    ADR 0005 §3: global_id 가 여러 프로젝트에 걸쳐 있으면 409 — `?project_id=` 로 직접 지정해 해소한다."""
     if body.to_state == ObjectState.CONFIRMED and user.role != usecases.CONFIRM_ROLE:
         raise Forbidden("CONFIRMED transition requires role cm")
-    return usecases.transition_object(session, global_id, body, user)
+    return usecases.transition_object(session, global_id, body, user, project_id=project_id)

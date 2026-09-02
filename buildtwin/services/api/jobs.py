@@ -220,7 +220,7 @@ def run_verdict(session: Session, job: JobRow, options: dict[str, Any]) -> tuple
     if not rows:
         raise JobError("no objects with geometry in project; upload an IFC first")
     specs = [{"global_id": r.global_id, "bbox": r.bbox, "ifc_type": r.ifc_type} for r in rows]
-    previous = queries.previous_verdicts(session, [r.global_id for r in rows], exclude_scan_id=scan_id)
+    previous = queries.previous_verdicts(session, job.project_id, [r.global_id for r in rows], exclude_scan_id=scan_id)
     job.progress = 0.3   # 같은 세션 안에서만 갱신(별도 세션은 SQLite 쓰기 잠금과 충돌)
     batch = run_scan_pipeline(_file_path(file_row), alignment, specs, scan_id, previous=previous or None)
     scan.registration = batch.registration.model_dump(mode="json")
@@ -233,8 +233,9 @@ def run_verdict(session: Session, job: JobRow, options: dict[str, Any]) -> tuple
     session.execute(delete(ScanVerdictRow).where(ScanVerdictRow.scan_id == scan_id))
     now = datetime.now(UTC)
     for v in batch.verdicts:
-        session.add(ScanVerdictRow(scan_id=scan_id, global_id=v.global_id, state=v.state.value, confidence=v.confidence,
-                                   evidence=v.evidence.model_dump(mode="json"),
+        # ADR 0005: project_id 는 스캔(부모)의 프로젝트에서 유도한다.
+        session.add(ScanVerdictRow(scan_id=scan_id, global_id=v.global_id, project_id=scan.project_id, state=v.state.value,
+                                   confidence=v.confidence, evidence=v.evidence.model_dump(mode="json"),
                                    diff_from_previous=v.diff_from_previous.model_dump(mode="json") if v.diff_from_previous else None,
                                    created_at=now))
     session.flush()
@@ -242,10 +243,10 @@ def run_verdict(session: Session, job: JobRow, options: dict[str, Any]) -> tuple
     transitions = 0
     reviews = 0
     for v in batch.verdicts:
-        if sm.apply_scan_verdict(session, v) is not None:
+        if sm.apply_scan_verdict(session, job.project_id, v) is not None:
             transitions += 1
         item = queries.latest_report_item(session, job.project_id, v.global_id)
-        logic = build_logic_context(session, v.global_id, quantity_unit=item.quantity_unit if item else None)
+        logic = build_logic_context(session, job.project_id, v.global_id, quantity_unit=item.quantity_unit if item else None)
         reviews += len(run_verification(session, job.project_id, v.global_id, item, v, logic))
     summary = {"status": "ok", "scan_id": scan_id, "registration": scan.registration, "stats": batch.stats,
                "bbox_margin": batch.bbox_margin, "verdict_count": len(batch.verdicts), "transition_count": transitions,

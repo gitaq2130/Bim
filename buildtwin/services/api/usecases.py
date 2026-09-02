@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from packages.core.models.coordinate import CoordinateSystem
@@ -82,13 +83,31 @@ def _initial_evidence(row: BimObjectRow) -> Evidence:
                     extra={"model_version": row.model_version})
 
 
-def object_detail(session: Session, global_id: str, role: str) -> ObjectDetail:
-    row = session.get(BimObjectRow, global_id)
-    if row is None:
+def resolve_object(session: Session, global_id: str, project_id: str | None = None) -> BimObjectRow:
+    """ADR 0005 §3: 공개 경로 `/api/objects/{global_id}` 는 그대로 두고, 여기서 프로젝트 범위를 좁힌다.
+    `project_id` 가 주어지면 그걸로 바로 조회(0건=404). 없으면 global_id 로 후보를 찾아
+    0건=404, 1건=그대로 사용, 2건 이상=409(모호함, ?project_id= 요구)."""
+    if project_id is not None:
+        row = session.get(BimObjectRow, (project_id, global_id))
+        if row is None:
+            raise NotFound(f"object not found: {global_id} (project {project_id})")
+        return row
+    candidates = list(session.scalars(select(BimObjectRow).where(BimObjectRow.global_id == global_id)))
+    if not candidates:
         raise NotFound(f"object not found: {global_id}")
+    if len(candidates) > 1:
+        project_ids = sorted(r.project_id for r in candidates)
+        raise Conflict(f"global_id {global_id} exists in multiple projects ({', '.join(project_ids)}); "
+                       f"pass ?project_id= to disambiguate")
+    return candidates[0]
+
+
+def object_detail(session: Session, global_id: str, role: str, project_id: str | None = None) -> ObjectDetail:
+    row = resolve_object(session, global_id, project_id)
+    project_id = row.project_id
     sm = ObjectStateMachine()
-    history = list(reversed(sm.history(session, global_id)))
-    open_reviews = db.open_reviews(session, [global_id])
+    history = list(reversed(sm.history(session, project_id, global_id)))
+    open_reviews = db.open_reviews(session, [global_id], project_id=project_id)
     latest = history[0] if history else None
     if latest is not None:
         confidence = latest.confidence if latest.confidence is not None else (1.0 if latest.actor != Actor.SYSTEM else None)
@@ -102,16 +121,16 @@ def object_detail(session: Session, global_id: str, role: str) -> ObjectDetail:
     actions = [NextAction(kind=a["kind"], label=NEXT_ACTION_LABELS.get(a["kind"], a["kind"]),
                           allowed_roles=list(a["allowed_roles"]), to_state=a.get("to_state"), actor=a.get("actor"),
                           review_request_id=a.get("review_request_id"), review_kind=a.get("review_kind"), rule_id=a.get("rule_id"))
-               for a in sm.next_actions(session, global_id, role)]
-    mappings = queries.entity_mappings_for_object(session, global_id)
+               for a in sm.next_actions(session, project_id, global_id, role)]
+    mappings = queries.entity_mappings_for_object(session, project_id, global_id)
     linked = LinkedRefs(
         entity_handles=[m.entity_handle for m in mappings],
         entity_refs=[EntityRef(drawing_id=m.drawing_id, handle=m.entity_handle, confidence=m.confidence,
                                needs_review=m.needs_review, reviewed_by=m.reviewed_by) for m in mappings],
         drawing_id=mappings[0].drawing_id if mappings else None,
-        activity_ids=db.activity_ids_for_object(session, global_id),
-        material_ids=queries.material_ids_for_object(session, global_id),
-        latest_scan_verdict=queries.latest_scan_verdict(session, global_id),
+        activity_ids=queries.activity_ids_for_object(session, project_id, global_id),
+        material_ids=queries.material_ids_for_object(session, project_id, global_id),
+        latest_scan_verdict=queries.latest_scan_verdict(session, project_id, global_id),
     )
     return ObjectDetail(basic=object_view(row, bool(open_reviews)), current_state=current, history=history,
                         next_actions=actions, linked=linked)
@@ -132,29 +151,29 @@ def _evidence_from_request(req: TransitionRequest, user: CurrentUser, actor: Act
     return Evidence.model_validate(data)
 
 
-def transition_object(session: Session, global_id: str, req: TransitionRequest, user: CurrentUser) -> TransitionResponse:
+def transition_object(session: Session, global_id: str, req: TransitionRequest, user: CurrentUser,
+                      project_id: str | None = None) -> TransitionResponse:
     try:
         actor = actor_for_role(user.role)
     except RoleNotAllowedError as exc:
         raise Forbidden(str(exc))
     if req.to_state == ObjectState.CONFIRMED and user.role != CONFIRM_ROLE:
         raise Forbidden("CONFIRMED requires role cm")
-    row = session.get(BimObjectRow, global_id)
-    if row is None:
-        raise NotFound(f"object not found: {global_id}")
+    row = resolve_object(session, global_id, project_id)
+    project_id = row.project_id
     from_state = ObjectState(row.state)
     evidence = _evidence_from_request(req, user, actor)
     sm = ObjectStateMachine()
     try:
-        result = sm.transition_with_effects(session, global_id, req.to_state, actor, evidence, actor_id=user.user_id,
+        result = sm.transition_with_effects(session, project_id, global_id, req.to_state, actor, evidence, actor_id=user.user_id,
                                             confidence=req.confidence, review_request_id=req.review_request_id)
     except (InvalidTransitionError, TransitionBlockedByReviewError) as exc:
         session.rollback()
         raise Conflict(str(exc))
     t = result.transition
     if t.to_state == ObjectState.CONFIRMED:
-        last_system = next((h for h in reversed(sm.history(session, global_id)) if h.actor == Actor.SYSTEM), None)
-        scan_verdict = queries.latest_scan_verdict(session, global_id)
+        last_system = next((h for h in reversed(sm.history(session, project_id, global_id)) if h.actor == Actor.SYSTEM), None)
+        scan_verdict = queries.latest_scan_verdict(session, project_id, global_id)
         record_expert_review(
             session, "object_state", global_id,
             proposal={"state": from_state.value, "system_state": last_system.to_state.value if last_system else None,
@@ -190,9 +209,10 @@ def submit_daily_report(session: Session, project_id: str, payload: DailyReportC
 # ------------------------------------------------------------------ mappings / drawings
 def confirm_entity_mapping(session: Session, drawing_id: str, handle: str, global_id: str, user: CurrentUser,
                            note: str | None = None) -> EntityObjectMapping:
-    if session.get(DrawingRow, drawing_id) is None:
+    drawing = session.get(DrawingRow, drawing_id)
+    if drawing is None:
         raise NotFound(f"drawing not found: {drawing_id}")
-    if session.get(BimObjectRow, global_id) is None:
+    if session.get(BimObjectRow, (drawing.project_id, global_id)) is None:
         raise NotFound(f"object not found: {global_id}")
     prev_row = queries.entity_mapping(session, drawing_id, handle)
     proposal: dict[str, Any] = (row_to_mapping(prev_row).model_dump(mode="json") if prev_row is not None
@@ -251,7 +271,8 @@ def resolve_review(session: Session, review_request_id: str, decision: str, note
     if row.kind == "inspection" and row.global_id and decision in ("approved", "rejected"):
         target = ObjectState.CONFIRMED if decision == "approved" else ObjectState.IN_PROGRESS
         try:
-            sm.transition_with_effects(session, row.global_id, target, Actor.CM, evidence, actor_id=user.user_id,
+            # ReviewRequestRow 는 이미 project_id 를 갖는다(ADR 0005: 모호한 global_id 단독 조회보다 우선 사용)
+            sm.transition_with_effects(session, row.project_id, row.global_id, target, Actor.CM, evidence, actor_id=user.user_id,
                                        review_request_id=review_request_id)   # 상태기계가 inspection 요청을 닫는다
         except InvalidTransitionError as exc:
             if decision == "approved":
@@ -285,7 +306,7 @@ def weekly_summary(session: Session, project_id: str) -> WeeklySummary:
         by_group[group][r.state] += 1
         dist[(level, group)][r.state] += 1
     since, now = queries.week_window()
-    confirmed = queries.confirmed_since(session, [r.global_id for r in rows], since)
+    confirmed = queries.confirmed_since(session, project_id, [r.global_id for r in rows], since)
     open_reviews = db.open_reviews(session, project_id=project_id)
     by_kind = Counter(r.kind for r in open_reviews)
     startable_set = compute_startable(session, project_id)
@@ -320,12 +341,12 @@ def list_rules() -> list[Rule]:
 
 
 def evaluate_rules(session: Session, project_id: str, global_id: str, persist: bool = True) -> RuleEvaluateResponse:
-    row = session.get(BimObjectRow, global_id)
-    if row is None or row.project_id != project_id:
+    row = session.get(BimObjectRow, (project_id, global_id))
+    if row is None:
         raise NotFound(f"object not found in project: {global_id}")
-    scan = queries.latest_scan_verdict(session, global_id)
+    scan = queries.latest_scan_verdict(session, project_id, global_id)
     item = queries.latest_report_item(session, project_id, global_id)
-    logic = build_logic_context(session, global_id, quantity_unit=item.quantity_unit if item else None)
+    logic = build_logic_context(session, project_id, global_id, quantity_unit=item.quantity_unit if item else None)
     activity: dict[str, Any] | None = None
     readiness = None
     if logic.get("activity_ids"):

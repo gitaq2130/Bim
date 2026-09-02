@@ -84,10 +84,12 @@ def object_row_to_model(row: BimObjectRow) -> BimObject:
     )
 
 
-def object_states(session: Session, global_ids: list[str]) -> dict[str, ObjectState]:
+def object_states(session: Session, project_id: str, global_ids: list[str]) -> dict[str, ObjectState]:
+    """ADR 0005 규칙 2: global_id 단독 조회 금지 — project_id 로 함께 건다."""
     if not global_ids:
         return {}
-    rows = session.scalars(select(BimObjectRow).where(BimObjectRow.global_id.in_(global_ids)))
+    rows = session.scalars(select(BimObjectRow).where(BimObjectRow.project_id == project_id,
+                                                       BimObjectRow.global_id.in_(global_ids)))
     return {r.global_id: ObjectState(r.state) for r in rows}
 
 
@@ -179,26 +181,39 @@ def predecessors_of(session: Session, activity_id: str) -> list[ActivityRelation
 
 # ------------------------------------------------------------------ mappings
 def save_mappings(session: Session, mappings: list[ActivityObjectMapping]) -> int:
+    """ADR 0005 규칙 1: project_id 는 호출자가 주입하지 않고 Activity의 프로젝트에서 유도한다."""
+    project_id_cache: dict[str, str] = {}
     count = 0
     for m in mappings:
+        if m.activity_id not in project_id_cache:
+            activity = session.get(ActivityRow, m.activity_id)
+            if activity is None:
+                raise LookupError(f"activity not found: {m.activity_id}")
+            project_id_cache[m.activity_id] = activity.project_id
+        project_id = project_id_cache[m.activity_id]
         row = session.get(ActivityObjectMappingRow, (m.activity_id, m.global_id))
         if row is None:
-            row = ActivityObjectMappingRow(activity_id=m.activity_id, global_id=m.global_id, confidence=m.confidence,
-                                           evidence=m.evidence.model_dump(mode="json"), needs_review=m.needs_review)
+            row = ActivityObjectMappingRow(activity_id=m.activity_id, global_id=m.global_id, project_id=project_id,
+                                           confidence=m.confidence, evidence=m.evidence.model_dump(mode="json"),
+                                           needs_review=m.needs_review)
             session.add(row)
         else:
+            row.project_id = project_id
             row.confidence, row.evidence, row.needs_review = m.confidence, m.evidence.model_dump(mode="json"), m.needs_review
         count += 1
     session.flush()
     return count
 
 
-def load_mappings(session: Session, activity_id: str | None = None, global_id: str | None = None) -> list[ActivityObjectMappingRow]:
+def load_mappings(session: Session, activity_id: str | None = None, global_id: str | None = None,
+                  project_id: str | None = None) -> list[ActivityObjectMappingRow]:
     stmt = select(ActivityObjectMappingRow)
     if activity_id is not None:
         stmt = stmt.where(ActivityObjectMappingRow.activity_id == activity_id)
     if global_id is not None:
         stmt = stmt.where(ActivityObjectMappingRow.global_id == global_id)
+    if project_id is not None:
+        stmt = stmt.where(ActivityObjectMappingRow.project_id == project_id)
     return list(session.scalars(stmt))
 
 
@@ -211,8 +226,9 @@ def mapped_global_ids(session: Session, activity_id: str) -> list[str]:
     return [m.global_id for m in load_mappings(session, activity_id=activity_id)]
 
 
-def activity_ids_for_object(session: Session, global_id: str) -> list[str]:
-    return [m.activity_id for m in load_mappings(session, global_id=global_id)]
+def activity_ids_for_object(session: Session, project_id: str, global_id: str) -> list[str]:
+    """ADR 0005 규칙 2: global_id 만으로는 프로젝트 간 모호하므로 project_id 를 함께 건다."""
+    return [m.activity_id for m in load_mappings(session, global_id=global_id, project_id=project_id)]
 
 
 # ------------------------------------------------------------------ reviews
@@ -230,8 +246,8 @@ def open_reviews(session: Session, global_ids: list[str] | None = None, kind: st
     return list(session.scalars(stmt))
 
 
-def has_open_verification_review(session: Session, global_id: str) -> bool:
-    return bool(open_reviews(session, [global_id], kind="verification"))
+def has_open_verification_review(session: Session, project_id: str, global_id: str) -> bool:
+    return bool(open_reviews(session, [global_id], kind="verification", project_id=project_id))
 
 
 def save_review_request(session: Session, review: ReviewRequest) -> ReviewRequestRow:
@@ -269,22 +285,25 @@ def transition_row_to_model(row: StateTransitionRow) -> StateTransition:
     )
 
 
-def load_transitions(session: Session, global_id: str) -> list[StateTransitionRow]:
-    return list(session.scalars(select(StateTransitionRow).where(StateTransitionRow.global_id == global_id)
+def load_transitions(session: Session, project_id: str, global_id: str) -> list[StateTransitionRow]:
+    return list(session.scalars(select(StateTransitionRow).where(StateTransitionRow.project_id == project_id,
+                                                                  StateTransitionRow.global_id == global_id)
                                 .order_by(StateTransitionRow.occurred_at)))
 
 
-def latest_transition_to(session: Session, global_ids: list[str], to_state: ObjectState) -> datetime | None:
+def latest_transition_to(session: Session, project_id: str, global_ids: list[str], to_state: ObjectState) -> datetime | None:
     if not global_ids:
         return None
-    rows = session.scalars(select(StateTransitionRow).where(StateTransitionRow.global_id.in_(global_ids),
+    rows = session.scalars(select(StateTransitionRow).where(StateTransitionRow.project_id == project_id,
+                                                            StateTransitionRow.global_id.in_(global_ids),
                                                             StateTransitionRow.to_state == to_state.value))
     times = [r.occurred_at for r in rows if r.occurred_at is not None]
     return max(times) if times else None
 
 
-def latest_scan_verdict(session: Session, global_id: str) -> ScanVerdictRow | None:
-    return session.scalars(select(ScanVerdictRow).where(ScanVerdictRow.global_id == global_id)
+def latest_scan_verdict(session: Session, project_id: str, global_id: str) -> ScanVerdictRow | None:
+    return session.scalars(select(ScanVerdictRow).where(ScanVerdictRow.project_id == project_id,
+                                                         ScanVerdictRow.global_id == global_id)
                            .order_by(ScanVerdictRow.created_at.desc())).first()
 
 
@@ -310,11 +329,14 @@ def save_material_movement(session: Session, project_id: str, movement: Material
     return row
 
 
-def material_totals(session: Session, activity_ids: list[str], global_ids: list[str]) -> tuple[float, float, int]:
-    """(반입 합계, 반출 합계, 기록 수). Activity 귀속 또는 객체 귀속 이동을 모두 센다."""
+def material_totals(session: Session, project_id: str, activity_ids: list[str], global_ids: list[str]) -> tuple[float, float, int]:
+    """(반입 합계, 반출 합계, 기록 수). Activity 귀속 또는 객체 귀속 이동을 모두 센다.
+
+    ADR 0005: material_movements 는 FK 는 아니지만 project_id 필터링은 지킨다(global_id 재사용 대비).
+    """
     if not activity_ids and not global_ids:
         return 0.0, 0.0, 0
-    stmt = select(MaterialMovementRow)
+    stmt = select(MaterialMovementRow).where(MaterialMovementRow.project_id == project_id)
     conds = []
     if activity_ids:
         conds.append(MaterialMovementRow.activity_id.in_(activity_ids))
@@ -326,13 +348,15 @@ def material_totals(session: Session, activity_ids: list[str], global_ids: list[
     return float(total_in), float(total_out), len(rows)
 
 
-def load_objects_by_ids(session: Session, global_ids: list[str]) -> list[BimObjectRow]:
+def load_objects_by_ids(session: Session, project_id: str, global_ids: list[str]) -> list[BimObjectRow]:
     if not global_ids:
         return []
-    return list(session.scalars(select(BimObjectRow).where(BimObjectRow.global_id.in_(global_ids))))
+    return list(session.scalars(select(BimObjectRow).where(BimObjectRow.project_id == project_id,
+                                                           BimObjectRow.global_id.in_(global_ids))))
 
 
-def load_scan_verdicts(session: Session, global_id: str) -> list[ScanVerdictRow]:
+def load_scan_verdicts(session: Session, project_id: str, global_id: str) -> list[ScanVerdictRow]:
     """최근 순."""
-    return list(session.scalars(select(ScanVerdictRow).where(ScanVerdictRow.global_id == global_id)
+    return list(session.scalars(select(ScanVerdictRow).where(ScanVerdictRow.project_id == project_id,
+                                                             ScanVerdictRow.global_id == global_id)
                                 .order_by(ScanVerdictRow.created_at.desc())))

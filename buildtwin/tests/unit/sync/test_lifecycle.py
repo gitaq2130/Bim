@@ -6,7 +6,14 @@ from sqlalchemy import select
 
 from packages.core.db import init_db, new_session, reset_engine
 from packages.core.models import MAPPING_REVIEW_THRESHOLD, EntityObjectMapping, Evidence
-from packages.core.models.orm import DrawingRow, EntityObjectMappingRow, FileRow, ProjectRow, ReviewRequestRow
+from packages.core.models.orm import (
+    BimObjectRow,
+    DrawingRow,
+    EntityObjectMappingRow,
+    FileRow,
+    ProjectRow,
+    ReviewRequestRow,
+)
 from services.sync.config import load_sync_config
 from services.sync.persistence import RebuildResult, load_mappings, open_mapping_reviews, rebuild_mappings
 from services.sync.review_queue import confirm_mapping_row, resolve_mapping_reviews
@@ -31,9 +38,9 @@ def session():
         reset_engine()
 
 
-def _m(handle: str, gid: str, conf: float) -> EntityObjectMapping:
-    ev = Evidence(source_type="mapping", source_id=D, method="grid_align|bbox_iou", extra={"iou": conf, "rule_score": 0})
-    return EntityObjectMapping(drawing_id=D, entity_handle=handle, global_id=gid, confidence=conf, evidence=ev)
+def _m(handle: str, gid: str, conf: float, drawing_id: str = D) -> EntityObjectMapping:
+    ev = Evidence(source_type="mapping", source_id=drawing_id, method="grid_align|bbox_iou", extra={"iou": conf, "rule_score": 0})
+    return EntityObjectMapping(drawing_id=drawing_id, entity_handle=handle, global_id=gid, confidence=conf, evidence=ev)
 
 
 def _reviews(s) -> dict[str, ReviewRequestRow]:
@@ -149,3 +156,49 @@ def test_review_threshold_single_sourced_and_penalty_from_config(tmp_path):
     rules = load_layer_rules()
     assert layer_rule_score("A-COL", None, "IfcBeam", rules) == cfg.rule_mismatch_penalty
     assert layer_rule_score("A-COL", None, "IfcBeam", rules, mismatch_penalty=-0.1) == -0.1
+
+
+def test_mappings_are_project_scoped(session):
+    """ADR 0005 회귀: 두 프로젝트가 같은 global_id 를 갖는 객체를 각자 소유해도 매핑이 섞이지 않는다.
+    A 의 rebuild_mappings 는 B 의 행을 절대 건드리지 않는다."""
+    s = session
+    P2, D2, SHARED = "p2", "d2", "SHARED-1"
+    s.add(ProjectRow(project_id=P2, name="P2"))
+    s.add(FileRow(file_id="f2", project_id=P2, kind="dxf", filename="b.dxf", uri="y", sha256="1", size=1))
+    s.add(DrawingRow(drawing_id=D2, project_id=P2, file_id="f2", level="1F", coordinate_system={"source": "dxf_local"}))
+    # 두 프로젝트가 같은 global_id 를 갖는 서로 다른 객체를 소유(ADR 0005 이전이면 PK 충돌)
+    s.add(BimObjectRow(project_id=P, global_id=SHARED, model_id="m1", ifc_type="IfcColumn"))
+    s.add(BimObjectRow(project_id=P2, global_id=SHARED, model_id="m2", ifc_type="IfcColumn"))
+    s.commit()
+
+    rebuild_mappings(s, D, P, [_m("A", SHARED, 0.9)])
+    rebuild_mappings(s, D2, P2, [_m("A", SHARED, 0.9, drawing_id=D2)])
+    s.commit()
+
+    a_rows = s.scalars(select(EntityObjectMappingRow).where(EntityObjectMappingRow.drawing_id == D)).all()
+    b_rows = s.scalars(select(EntityObjectMappingRow).where(EntityObjectMappingRow.drawing_id == D2)).all()
+    assert {r.project_id for r in a_rows} == {P}
+    assert {r.project_id for r in b_rows} == {P2}
+
+    # project_id 가 다르면 (같은 global_id 라도) 상대 프로젝트 도면의 매핑이 보이지 않는다
+    assert [m.global_id for m in load_mappings(s, D, project_id=P)] == [SHARED]
+    assert load_mappings(s, D, project_id=P2) == []       # 방어적 필터: 잘못된 project_id 면 빈 결과
+    assert [m.global_id for m in load_mappings(s, D2, project_id=P2)] == [SHARED]
+
+    b_before = {(m.entity_handle, m.global_id) for m in load_mappings(s, D2)}
+
+    # A 의 재구성은 B 의 매핑에 전혀 영향을 주지 않는다
+    r = rebuild_mappings(s, D, P, [_m("A", SHARED, 0.99)])
+    s.commit()
+    assert r.saved == 1
+    b_after = {(m.entity_handle, m.global_id) for m in load_mappings(s, D2)}
+    assert b_after == b_before
+
+    # confirm_mapping_row(도면에서 project_id 유도)도 상대 프로젝트 행을 건드리지 않는다
+    confirm_mapping_row(s, D2, "A", SHARED, user_id="cm-09")
+    s.commit()
+    confirmed_row = s.scalars(select(EntityObjectMappingRow).where(
+        EntityObjectMappingRow.drawing_id == D2, EntityObjectMappingRow.entity_handle == "A")).one()
+    assert confirmed_row.project_id == P2
+    a_untouched = s.scalars(select(EntityObjectMappingRow).where(EntityObjectMappingRow.drawing_id == D)).all()
+    assert {r.project_id for r in a_untouched} == {P}

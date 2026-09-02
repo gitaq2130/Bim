@@ -93,13 +93,13 @@ class TransitionResult:
     closed_review_ids: list[str] = field(default_factory=list)    # 종료된 inspection ReviewRequest id
 
 
-def ensure_inspection_review(session: Session, global_id: str, transition: StateTransition) -> list[str]:
+def ensure_inspection_review(session: Session, project_id: str, global_id: str, transition: StateTransition) -> list[str]:
     """INSPECTION_REQUESTED 진입 시 미결 inspection 검토요청이 없으면 하나 만든다. 생성된 id 목록을 돌려준다."""
     if transition.to_state != ObjectState.INSPECTION_REQUESTED:
         return []
-    if db.open_reviews(session, [global_id], kind="inspection"):
+    if db.open_reviews(session, [global_id], kind="inspection", project_id=project_id):
         return []
-    row = session.get(BimObjectRow, global_id)
+    row = session.get(BimObjectRow, (project_id, global_id))
     if row is None:
         raise ObjectNotFoundError(global_id)
     review = ReviewRequest(
@@ -114,7 +114,7 @@ def ensure_inspection_review(session: Session, global_id: str, transition: State
     return [str(review.review_request_id)]
 
 
-def close_inspection_reviews(session: Session, global_id: str, transition: StateTransition) -> list[str]:
+def close_inspection_reviews(session: Session, project_id: str, global_id: str, transition: StateTransition) -> list[str]:
     """cm 이 INSPECTION_REQUESTED 에서 CONFIRMED(approved) / IN_PROGRESS·MISMATCH(rejected) 로 전이하면 미결 inspection 요청을 닫는다."""
     if transition.actor != Actor.CM or transition.from_state != ObjectState.INSPECTION_REQUESTED:
         return []
@@ -122,7 +122,7 @@ def close_inspection_reviews(session: Session, global_id: str, transition: State
     if status is None:
         return []
     closed: list[str] = []
-    for review in db.open_reviews(session, [global_id], kind="inspection"):
+    for review in db.open_reviews(session, [global_id], kind="inspection", project_id=project_id):
         review.status = status
         review.resolved_by = transition.actor_id
         review.resolved_at = datetime.now(UTC)
@@ -143,56 +143,57 @@ class DailyReportOutcome:
 
 
 class ObjectStateMachine:
-    def _load(self, session: Session, global_id: str) -> BimObjectRow:
-        row = session.get(BimObjectRow, global_id)
+    def _load(self, session: Session, project_id: str, global_id: str) -> BimObjectRow:
+        row = session.get(BimObjectRow, (project_id, global_id))
         if row is None:
             raise ObjectNotFoundError(global_id)
         return row
 
-    def transition_with_effects(self, session: Session, global_id: str, to_state: ObjectState | str, actor: Actor | str,
-                                evidence: Evidence, actor_id: str | None = None, confidence: float | None = None,
+    def transition_with_effects(self, session: Session, project_id: str, global_id: str, to_state: ObjectState | str,
+                                actor: Actor | str, evidence: Evidence, actor_id: str | None = None,
+                                confidence: float | None = None,
                                 review_request_id: UUID | str | None = None) -> TransitionResult:
         """전이 + 부수효과(검측 ReviewRequest 생성/종료). 생성·종료된 검토요청 id 를 함께 돌려준다."""
-        row = self._load(session, global_id)
+        row = self._load(session, project_id, global_id)
         from_state, to_state, actor = ObjectState(row.state), ObjectState(to_state), Actor(actor)
         validate_transition(from_state, to_state, actor)
         if actor == Actor.SYSTEM:
-            open_reviews = db.open_reviews(session, [global_id], kind="verification")
+            open_reviews = db.open_reviews(session, [global_id], kind="verification", project_id=project_id)
             if open_reviews:
                 raise TransitionBlockedByReviewError(global_id, [r.review_request_id for r in open_reviews])
         rid = UUID(str(review_request_id)) if review_request_id else None
         transition = StateTransition(global_id=global_id, from_state=from_state, to_state=to_state, actor=actor,
                                      actor_id=actor_id, confidence=confidence, evidence=evidence, review_request_id=rid)
         session.add(StateTransitionRow(
-            transition_id=str(transition.transition_id), global_id=global_id, from_state=from_state.value,
-            to_state=to_state.value, actor=actor.value, actor_id=actor_id, confidence=confidence,
-            evidence=evidence.model_dump(mode="json"), review_request_id=str(rid) if rid else None,
+            transition_id=str(transition.transition_id), global_id=global_id, project_id=project_id,
+            from_state=from_state.value, to_state=to_state.value, actor=actor.value, actor_id=actor_id,
+            confidence=confidence, evidence=evidence.model_dump(mode="json"), review_request_id=str(rid) if rid else None,
             occurred_at=transition.occurred_at,
         ))
         row.state = to_state.value
         session.flush()
-        closed = close_inspection_reviews(session, global_id, transition)
-        created = ensure_inspection_review(session, global_id, transition)
+        closed = close_inspection_reviews(session, project_id, global_id, transition)
+        created = ensure_inspection_review(session, project_id, global_id, transition)
         return TransitionResult(transition=transition, created_review_ids=created, closed_review_ids=closed)
 
-    def transition(self, session: Session, global_id: str, to_state: ObjectState | str, actor: Actor | str, evidence: Evidence,
-                   actor_id: str | None = None, confidence: float | None = None,
+    def transition(self, session: Session, project_id: str, global_id: str, to_state: ObjectState | str,
+                   actor: Actor | str, evidence: Evidence, actor_id: str | None = None, confidence: float | None = None,
                    review_request_id: UUID | str | None = None) -> StateTransition:
         """transition_with_effects 와 같되 StateTransition 만 돌려준다(부수효과는 동일하게 적용)."""
-        return self.transition_with_effects(session, global_id, to_state, actor, evidence, actor_id=actor_id,
+        return self.transition_with_effects(session, project_id, global_id, to_state, actor, evidence, actor_id=actor_id,
                                             confidence=confidence, review_request_id=review_request_id).transition
 
     # ---------------------------------------------------------------- scan
-    def apply_scan_verdict(self, session: Session, verdict: ScanVerdict) -> StateTransition | None:
+    def apply_scan_verdict(self, session: Session, project_id: str, verdict: ScanVerdict) -> StateTransition | None:
         target = SCAN_TO_OBJECT_STATE[verdict.state]
         if target is None:
             return None
-        row = self._load(session, verdict.global_id)
+        row = self._load(session, project_id, verdict.global_id)
         from_state = ObjectState(row.state)
         if from_state == target or Actor.SYSTEM not in ALLOWED_TRANSITIONS.get((from_state, target), frozenset()):
             return None
         try:
-            return self.transition(session, verdict.global_id, target, Actor.SYSTEM, verdict.evidence,
+            return self.transition(session, project_id, verdict.global_id, target, Actor.SYSTEM, verdict.evidence,
                                    actor_id=verdict.scan_id, confidence=verdict.confidence)
         except TransitionBlockedByReviewError as exc:
             log.info("scan verdict not applied: %s", exc)
@@ -207,6 +208,8 @@ class ObjectStateMachine:
         return []
 
     def apply_daily_report(self, session: Session, report: DailyReport) -> DailyReportOutcome:
+        """ADR 0005 규칙 1: project_id 는 report.project_id 에서 유도한다(시그니처는 그대로)."""
+        project_id = report.project_id
         db.save_daily_report(session, report)
         outcome = DailyReportOutcome(report_id=report.report_id)
         for index, item in enumerate(report.items):
@@ -215,15 +218,15 @@ class ObjectStateMachine:
                 outcome.skipped.append({"item": index, "reason": "no global_id or mapped objects"})
                 continue
             for gid in gids:
-                row = session.get(BimObjectRow, gid)
+                row = session.get(BimObjectRow, (project_id, gid))
                 if row is None:
                     outcome.skipped.append({"item": index, "global_id": gid, "reason": "object not found"})
                     continue
-                scan_row = db.latest_scan_verdict(session, gid)
+                scan_row = db.latest_scan_verdict(session, project_id, gid)
                 scan = ScanVerdict(scan_id=scan_row.scan_id, global_id=gid, state=ScanState(scan_row.state),
                                    confidence=scan_row.confidence, evidence=Evidence(**scan_row.evidence)) if scan_row else None
-                logic = build_logic_context(session, gid, quantity_unit=item.quantity_unit)
-                reviews = run_verification(session, report.project_id, gid, item, scan, logic)
+                logic = build_logic_context(session, project_id, gid, quantity_unit=item.quantity_unit)
+                reviews = run_verification(session, project_id, gid, item, scan, logic)
                 outcome.review_requests.extend(reviews)
                 target = CLAIMED_TO_OBJECT_STATE[item.claimed_state]
                 if item.claimed_state == "completed" and reviews:
@@ -239,19 +242,19 @@ class ObjectStateMachine:
                                     note=f"claimed_state={item.claimed_state}",
                                     extra={"item_index": index, "item": item.model_dump(mode="json"),
                                            "photo_uris": list(item.photo_uris)})
-                result = self.transition_with_effects(session, gid, target, Actor.CONTRACTOR, evidence,
+                result = self.transition_with_effects(session, project_id, gid, target, Actor.CONTRACTOR, evidence,
                                                       actor_id=report.reporter_id)
                 outcome.transitions.append(result.transition)
                 outcome.inspection_review_ids.extend(result.created_review_ids)
         return outcome
 
     # ---------------------------------------------------------------- queries
-    def history(self, session: Session, global_id: str) -> list[StateTransition]:
-        return [db.transition_row_to_model(r) for r in db.load_transitions(session, global_id)]
+    def history(self, session: Session, project_id: str, global_id: str) -> list[StateTransition]:
+        return [db.transition_row_to_model(r) for r in db.load_transitions(session, project_id, global_id)]
 
-    def next_actions(self, session: Session, global_id: str, role: str) -> list[dict]:
+    def next_actions(self, session: Session, project_id: str, global_id: str, role: str) -> list[dict]:
         """역할별 다음 행동. kind 는 NEXT_ACTION_KINDS(glossary) 안에서만. client/admin 은 빈 목록(조회 전용)."""
-        row = self._load(session, global_id)
+        row = self._load(session, project_id, global_id)
         from_state = ObjectState(row.state)
         try:
             actor = actor_for_role(role)
@@ -263,7 +266,7 @@ class ObjectStateMachine:
             assert kind in NEXT_ACTION_KINDS
             actions.append({"kind": kind, "to_state": target.value, "actor": actor.value, "allowed_roles": ACTOR_TO_ROLES[actor]})
         if actor == Actor.CM:
-            for review in db.open_reviews(session, [global_id]):
+            for review in db.open_reviews(session, [global_id], project_id=project_id):
                 actions.append({"kind": "resolve_review", "to_state": None, "actor": actor.value,
                                 "allowed_roles": ACTOR_TO_ROLES[Actor.CM], "review_request_id": review.review_request_id,
                                 "review_kind": review.kind, "rule_id": review.rule_id})
