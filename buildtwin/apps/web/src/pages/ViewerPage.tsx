@@ -43,7 +43,7 @@ export function ViewerPage() {
 
   const entities = useDrawingEntities(drawing?.drawing_id);
   const mappings = useDrawingMappings(drawing?.drawing_id);
-  const objects = useObjects(projectId, { page_size: 10000 });
+  const objects = useObjects(projectId, { page_size: 2000 }) // API 상한(le=2000)과 일치. 초과 시 페이지네이션 필요(Deferred);
   // 단면 오프셋은 서버 값만 쓴다: models.plan_section_default_offset → plan-section.offset. 없으면 3D 뷰어를 띄우지 않는다.
   const needsOffsetFallback = !!model && model.plan_section_default_offset == null;
   const section = usePlanSection(ui.overlayVisible || needsOffsetFallback ? model?.model_id : null, level);
