@@ -2,7 +2,7 @@
 
 두 가지 실행 경로를 제공한다.
 - `api`      : FastAPI TestClient + Celery eager + 임시 sqlite/스토리지. tests/e2e/test_core_flow.py(8단계 핵심 흐름)가 쓴다.
-- `api_server` / `web_server` : 실제 uvicorn + `vite preview`(빌드된 apps/web/dist, /api 프록시) — Playwright 스모크가 쓴다.
+- `api_server` / `web_server` : 실제 uvicorn + `vite preview`(빌드된 apps/web/dist, /api 프록시; 설정은 apps/web 에 잠시 생성) — Playwright 스모크가 쓴다.
 
 settings 는 세션 픽스처 안에서 바꾸고 끝나면 되돌린다(임포트 시점 부작용 없음). 통합 테스트와 같은 프로세스에서
 DB 를 공유하지 않도록 `make e2e` / CI e2e 잡은 tests/e2e 만 따로 실행한다.
@@ -182,16 +182,29 @@ def seeded_project(api_server) -> dict:
         return {"project_id": pid, "ifc_job": ifc_job, "dxf_job": dxf_job}
 
 
+PREVIEW_CONFIG_TEMPLATE = """// 자동 생성(tests/e2e/conftest.py) — E2E 스모크용 vite preview 설정. 커밋하지 않는다(.gitignore).
+// apps/web/vite.config.ts 를 그대로 쓰되 /api 프록시 대상을 테스트가 띄운 uvicorn 포트로 바꾼다.
+// apps/web 안에 두는 이유: vite 가 설정 파일 위치 기준으로 'vite' 패키지를 해석한다(tests/ 아래에서는 못 찾는다).
+import { mergeConfig } from "vite";
+import base from "./vite.config";
+
+export default mergeConfig(base, {
+  preview: { proxy: { "/api": { target: "http://127.0.0.1:%(api_port)d", changeOrigin: true } } },
+});
+"""
+
+
 @pytest.fixture(scope="session")
 def web_server(api_server) -> Iterator[str]:
     """apps/web 를 빌드(dist 없으면)하고 vite preview 로 서빙. /api 는 api_server 로 프록시. base URL 을 준다."""
     if not (WEB / "dist" / "index.html").exists():
         subprocess.run(["npx", "vite", "build"], cwd=str(WEB), check=True)
     port = _free_port()
-    env = {**os.environ, "E2E_API_PORT": str(api_server["port"])}
-    proc = subprocess.Popen(["npx", "vite", "preview", "--config", "../../tests/e2e/vite.preview.config.mts",
-                             "--port", str(port), "--strictPort", "--host", "127.0.0.1"],
-                            cwd=str(WEB), env=env, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+    config = WEB / f".e2e-preview.{port}.config.mts"
+    config.write_text(PREVIEW_CONFIG_TEMPLATE % {"api_port": api_server["port"]}, encoding="utf-8")
+    log = (api_server["tmp"] / "vite-preview.log").open("w")
+    proc = subprocess.Popen(["npx", "vite", "preview", "--config", config.name, "--port", str(port), "--strictPort", "--host", "127.0.0.1"],
+                            cwd=str(WEB), env=os.environ.copy(), stdout=log, stderr=subprocess.STDOUT)
     base = f"http://127.0.0.1:{port}"
     try:
         _wait_http(f"{base}/", 60, proc)
@@ -203,3 +216,5 @@ def web_server(api_server) -> Iterator[str]:
             proc.wait(10)
         except subprocess.TimeoutExpired:
             proc.kill()
+        log.close()
+        config.unlink(missing_ok=True)

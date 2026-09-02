@@ -20,3 +20,5 @@ storage/
 # 공개 샘플(scripts/fetch_fixtures.py --public)은 대용량이라 git에 넣지 않는다
 tests/fixtures/public/
 *.egg-info/
+# E2E 스모크가 vite preview 용으로 잠시 생성하는 설정(tests/e2e/conftest.py 가 지운다)
+apps/web/.e2e-preview*.config.mts
