@@ -200,12 +200,20 @@ class ObjectStateMachine:
             return None
 
     # ---------------------------------------------------------------- daily report
-    def _resolve_global_ids(self, session: Session, item: DailyReportItem) -> list[str]:
+    def _resolve_global_ids(self, session: Session, project_id: str, item: DailyReportItem) -> tuple[list[str], str | None]:
+        """(global_ids, skip_reason). item.activity_id 가 report 의 project 소속이 아니면 매핑을 끌어오지 않고
+        skip_reason 을 채운다 — ADR 0005 규칙 2 위반(라운드3 리뷰 FAIL: activity_id 미검증으로 타 프로젝트 객체 전이)."""
         if item.global_id:
-            return [item.global_id]
+            return [item.global_id], None
         if item.activity_id:
-            return db.mapped_global_ids(session, item.activity_id)
-        return []
+            activity = db.load_activity(session, item.activity_id)
+            if activity is None:
+                return [], None
+            if activity.project_id != project_id:
+                return [], (f"activity {item.activity_id!r} belongs to project {activity.project_id!r}, "
+                           f"not report project {project_id!r}")
+            return db.mapped_global_ids(session, project_id, item.activity_id), None
+        return [], None
 
     def apply_daily_report(self, session: Session, report: DailyReport) -> DailyReportOutcome:
         """ADR 0005 규칙 1: project_id 는 report.project_id 에서 유도한다(시그니처는 그대로)."""
@@ -213,7 +221,10 @@ class ObjectStateMachine:
         db.save_daily_report(session, report)
         outcome = DailyReportOutcome(report_id=report.report_id)
         for index, item in enumerate(report.items):
-            gids = self._resolve_global_ids(session, item)
+            gids, skip_reason = self._resolve_global_ids(session, project_id, item)
+            if skip_reason is not None:
+                outcome.skipped.append({"item": index, "reason": skip_reason})
+                continue
             if not gids:
                 outcome.skipped.append({"item": index, "reason": "no global_id or mapped objects"})
                 continue

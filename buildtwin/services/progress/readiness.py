@@ -46,7 +46,7 @@ class ActivityProgress:
 def activity_progress(session: Session, project_id: str, activity_id: str, row: ActivityRow | None = None) -> ActivityProgress:
     row = row or db.load_activity(session, activity_id)
     pct = float(row.percent_complete or 0.0) if row is not None else 0.0
-    gids = db.mapped_global_ids(session, activity_id)
+    gids = db.mapped_global_ids(session, project_id, activity_id)
     states = db.object_states(session, project_id, gids)
     if states:
         complete = all(s in DONE_STATES for s in states.values())

@@ -205,15 +205,14 @@ def save_mappings(session: Session, mappings: list[ActivityObjectMapping]) -> in
     return count
 
 
-def load_mappings(session: Session, activity_id: str | None = None, global_id: str | None = None,
-                  project_id: str | None = None) -> list[ActivityObjectMappingRow]:
-    stmt = select(ActivityObjectMappingRow)
+def load_mappings(session: Session, project_id: str, activity_id: str | None = None,
+                  global_id: str | None = None) -> list[ActivityObjectMappingRow]:
+    """ADR 0005 규칙 2: project_id 는 필수 인자다(단독 global_id/activity_id 조회 금지 — 라운드3 리뷰 반려 사유)."""
+    stmt = select(ActivityObjectMappingRow).where(ActivityObjectMappingRow.project_id == project_id)
     if activity_id is not None:
         stmt = stmt.where(ActivityObjectMappingRow.activity_id == activity_id)
     if global_id is not None:
         stmt = stmt.where(ActivityObjectMappingRow.global_id == global_id)
-    if project_id is not None:
-        stmt = stmt.where(ActivityObjectMappingRow.project_id == project_id)
     return list(session.scalars(stmt))
 
 
@@ -222,13 +221,15 @@ def mapping_row_to_model(row: ActivityObjectMappingRow) -> ActivityObjectMapping
                                  evidence=Evidence(**row.evidence), needs_review=row.needs_review)
 
 
-def mapped_global_ids(session: Session, activity_id: str) -> list[str]:
-    return [m.global_id for m in load_mappings(session, activity_id=activity_id)]
+def mapped_global_ids(session: Session, project_id: str, activity_id: str) -> list[str]:
+    """ADR 0005 규칙 2: project_id 없이 activity_id 만으로 조회하지 않는다(다른 프로젝트 Activity 가 같은 global_id 를
+    가리키는 매핑을 잘못 끌어오는 것을 막는다 — 라운드3 리뷰 FAIL 사유)."""
+    return [m.global_id for m in load_mappings(session, project_id, activity_id=activity_id)]
 
 
 def activity_ids_for_object(session: Session, project_id: str, global_id: str) -> list[str]:
     """ADR 0005 규칙 2: global_id 만으로는 프로젝트 간 모호하므로 project_id 를 함께 건다."""
-    return [m.activity_id for m in load_mappings(session, global_id=global_id, project_id=project_id)]
+    return [m.activity_id for m in load_mappings(session, project_id, global_id=global_id)]
 
 
 # ------------------------------------------------------------------ reviews
