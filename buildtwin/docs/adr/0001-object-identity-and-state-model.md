@@ -17,6 +17,7 @@ BuildTwin의 핵심은 3D 뷰어가 아니라 "계획 / 신고 / 물리적 증�
 ### 1. 키 전략: IFC GlobalId를 1차 키로
 
 - `BimObject.global_id` = IFC `IfcGloballyUniqueId`(22자 base64 GUID). 이것이 PK이며 프로젝트 내에서 유일하다고 가정한다. 충돌 시 ingest가 `warnings`로 보고하고 두 번째 이후 객체는 `global_id + "#" + n`으로 suffix를 붙이되 `warnings`에 반드시 남긴다.
+- **키의 범위는 프로젝트다(ADR 0005).** `global_id`는 `(project_id, global_id)` 복합 키의 일부이며, 같은 IFC를 여러 프로젝트에 올릴 수 있다. 아래 "충돌 시" 접미사 규칙은 한 파일 안의 중복에만 적용된다.
 - IFC 없이 DXF만 있는 프로젝트는 MVP 범위에서 지원하지 않는다(2D 엔티티는 항상 객체에 매핑되는 부속 데이터).
 - 모델 재업로드 시 같은 GlobalId는 같은 객체로 간주하고 속성·기하만 갱신한다(`model_version` 증가). 상태·이력은 유지한다. GlobalId가 사라진 객체는 `is_orphaned=True`로 표시하고 삭제하지 않는다.
 - 파생 엔티티는 모두 `global_id` FK를 가진다:
@@ -160,4 +161,5 @@ class StateTransition(BaseModel):
 - 0002: RVT 처리 경로 — Revit 애드인(pyRevit/C#) 기반 IFC+메타데이터 내보내기 (MVP는 IFC 내보내기 안내 + APS)
 - 0003: 만회 시나리오(CP-SAT 목적함수 확장)
 - 0004: GlobalId 변경 객체의 수동 재연결
+- 0005: 객체 키를 프로젝트 범위로 (Accepted — `docs/adr/0005-project-scoped-object-key.md`)
 - 0005: `bim_objects` 복합 키 `(project_id, global_id)` 전환(같은 IFC를 여러 프로젝트에 올리는 경우)
