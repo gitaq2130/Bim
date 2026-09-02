@@ -4,6 +4,8 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
+  // 저장소 루트의 postcss.config.mjs 를 타지 않도록 격리
+  css: { postcss: { plugins: [] } },
   server: {
     port: 5173,
     proxy: {
