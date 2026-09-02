@@ -89,3 +89,15 @@ def test_quantity_over_bim_creates_ver_004(session, seeded):
     reviews = run_verification(session, seeded["project_id"], gid, item, None, build_logic_context(session, gid, "m3"))
     assert [r.rule_id for r in reviews] == ["VER-004"]
     assert db.has_open_verification_review(session, gid)
+
+
+def test_logic_context_supplies_risk_rule_keys(session, seeded):
+    from datetime import date as _date
+
+    gid = seeded["expected"]["A110"][0]
+    _store_scan(session, gid, ScanState.UNVERIFIABLE)
+    logic = build_logic_context(session, gid, today=_date(2026, 9, 1))
+    assert logic["consecutive_unverifiable"] == 1
+    assert logic["clash_count"] == 0 and logic["inspection_passed"] is None and logic["matched_case_ids"] == []
+    assert logic["days_until_planned_start"] == 10 and logic["predecessor_confirmed_ratio"] == 0.0
+    assert logic["material_delivered_ratio"] is None

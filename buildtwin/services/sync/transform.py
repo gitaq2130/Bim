@@ -239,7 +239,7 @@ def solve_grid_correspondence(D: np.ndarray, M: np.ndarray, unit_scale: float | 
     d_pairs = [(i, j) for i in range(n) for j in range(n) if i != j]
     if len(d_pairs) > cfg.grid_max_hypothesis_pairs:
         d_pairs = [d_pairs[k] for k in rng.choice(len(d_pairs), cfg.grid_max_hypothesis_pairs, replace=False)]
-    m_pairs = np.array([(k, l) for k in range(m) for l in range(m) if k != l], dtype=int)
+    m_pairs = np.array([(k, q) for k in range(m) for q in range(m) if k != q], dtype=int)
     m_vec = M[m_pairs[:, 1]] - M[m_pairs[:, 0]]
     m_len = np.linalg.norm(m_vec, axis=1)
     m_order = np.argsort(m_len)
@@ -260,7 +260,7 @@ def solve_grid_correspondence(D: np.ndarray, M: np.ndarray, unit_scale: float | 
             cand = m_order
         ang_d = math.atan2(dv[1], dv[0])
         for c in cand:
-            k, l = m_pairs[c]
+            k, _q = m_pairs[c]
             s = unit_scale if unit_scale is not None else float(m_len[c] / dl)
             rot = math.degrees(math.atan2(m_vec[c][1], m_vec[c][0]) - ang_d)
             t = M[k] - s * (_rot2(rot) @ D[i])
@@ -295,7 +295,7 @@ def solve_grid_correspondence(D: np.ndarray, M: np.ndarray, unit_scale: float | 
 
 
 def _grid_spacing(grid_x: list[float], grid_y: list[float]) -> float | None:
-    diffs = [b - a for axis in (sorted(grid_x), sorted(grid_y)) for a, b in zip(axis, axis[1:]) if b - a > 0]
+    diffs = [b - a for axis in (sorted(grid_x), sorted(grid_y)) for a, b in zip(axis, axis[1:], strict=False) if b - a > 0]
     return min(diffs) if diffs else None
 
 

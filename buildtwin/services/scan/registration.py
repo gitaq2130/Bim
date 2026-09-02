@@ -118,18 +118,28 @@ def _to_pcd(points: np.ndarray, normals: np.ndarray | None = None):
     return pcd
 
 
-def _fit_metrics(points_model: np.ndarray, reference_points: np.ndarray, cfg: ScanConfig) -> tuple[float, float, float]:
-    """(fitness, inlier_rmse, inlier_ratio). fitness=대응(≤icp_max_distance) 비율, inlier_ratio=표면 허용치(≤surface_distance) 안 비율."""
+def _fit_metrics(points_model: np.ndarray, reference_points: np.ndarray, cfg: ScanConfig) -> tuple[float, float, float, float]:
+    """(fitness, robust_rmse, inlier_ratio, rmse_all).
+
+    - fitness      : icp_max_distance 안에 대응이 있는 점 비율(Open3D 정의)
+    - robust_rmse  : Tukey 가중(k=surface_distance) 잔차 RMS — ICP 가 실제로 최소화하는 양. 모델과 다른 구조물(미시공·위치불일치)
+                     의 점이 정합 품질 지표를 오염시키지 않도록 대응 거리 안의 단순 RMS(rmse_all)와 구분한다.
+    - inlier_ratio : 표면 허용치(surface_distance) 안 점 비율
+    """
     tree = cKDTree(reference_points)
     d, _ = tree.query(points_model, k=1, distance_upper_bound=cfg.registration.icp_max_distance)
     corr = np.isfinite(d)
     n = len(points_model)
     if n == 0 or not corr.any():
-        return 0.0, float("inf"), 0.0
+        return 0.0, float("inf"), 0.0, float("inf")
+    r = d[corr]
     fitness = float(corr.sum() / n)
-    rmse = float(np.sqrt(np.mean(d[corr] ** 2)))
-    inlier_ratio = float(np.sum(d[corr] <= cfg.verdict.surface_distance) / n)
-    return fitness, rmse, inlier_ratio
+    rmse_all = float(np.sqrt(np.mean(r ** 2)))
+    k = cfg.verdict.surface_distance
+    w = np.where(r < k, (1.0 - (r / k) ** 2) ** 2, 0.0)
+    robust = float(np.sqrt(np.sum(w * r ** 2) / np.sum(w))) if w.sum() > 0 else float("inf")
+    inlier_ratio = float(np.sum(r <= k) / n)
+    return fitness, robust, inlier_ratio, rmse_all
 
 
 def _apply(matrix: np.ndarray, pts: np.ndarray) -> np.ndarray:
@@ -171,25 +181,34 @@ def register(points: np.ndarray, alignment: AlignmentInput, reference_points: np
     if not tgt.has_normals():
         tgt.estimate_normals()
 
-    init_fitness, init_rmse, init_inlier = _fit_metrics(_apply(init_m, points), reference_points, cfg)
+    init_fitness, init_rmse, init_inlier, init_rmse_all = _fit_metrics(_apply(init_m, points), reference_points, cfg)
     kernel = o3d.pipelines.registration.TukeyLoss(k=cfg.verdict.surface_distance)
     estimation = o3d.pipelines.registration.TransformationEstimationPointToPlane(kernel)
     criteria = o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=reg.icp_max_iterations)
     result = o3d.pipelines.registration.registration_icp(src, tgt, reg.icp_max_distance, init_m, estimation, criteria)
     icp_m = np.asarray(result.transformation, dtype=float)
-    icp_fitness, icp_rmse, icp_inlier = _fit_metrics(_apply(icp_m, points), reference_points, cfg)
+    icp_fitness, icp_rmse, icp_inlier, icp_rmse_all = _fit_metrics(_apply(icp_m, points), reference_points, cfg)
+    icp_cp_rmse = control_point_residual_rmse(cps, icp_m)
 
-    icp_accepted = np.isfinite(icp_rmse) and icp_rmse <= init_rmse and icp_fitness >= init_fitness * (init_rmse > 0 or 1.0) * 0 + init_fitness * 0 + 0.0 or icp_rmse <= init_rmse
-    # ↑ 단순화: ICP 결과가 초기 변환의 잔차보다 나쁘지 않을 때만 채택
-    icp_accepted = bool(np.isfinite(icp_rmse) and icp_rmse <= init_rmse)
-    final_m, fitness, rmse, inlier = ((icp_m, icp_fitness, icp_rmse, icp_inlier) if icp_accepted
-                                      else (init_m, init_fitness, init_rmse, init_inlier))
+    # ICP 는 (1) 로버스트 잔차를 나쁘게 하지 않고 (2) 사용자 기준점에서 max_rmse 이상 떠나지 않을 때만 채택.
+    # 기준점은 사용자가 준 실측이므로 ICP 가 표면만 맞추려고 기준점을 버리는 것을 막는다.
+    icp_accepted = bool(np.isfinite(icp_rmse) and icp_rmse <= init_rmse and icp_cp_rmse <= reg.max_rmse)
+    if icp_accepted:
+        final_m, fitness, surf_rmse, inlier, rmse_all, cp_final = icp_m, icp_fitness, icp_rmse, icp_inlier, icp_rmse_all, icp_cp_rmse
+    else:
+        final_m, fitness, surf_rmse, inlier, rmse_all, cp_final = init_m, init_fitness, init_rmse, init_inlier, init_rmse_all, cp_rmse
+    # 보고/판정용 rmse = max(표면 로버스트 잔차, 최종 변환의 기준점 잔차)
+    rmse = max(surf_rmse, cp_final) if np.isfinite(surf_rmse) else float("inf")
     method_full = method + ICP_SUFFIX
     extra = {
-        "cp_count": len(cps), "cp_rmse": cp_rmse,
-        "init_fitness": init_fitness, "init_rmse": init_rmse,
-        "icp_fitness": icp_fitness, "icp_rmse": icp_rmse, "icp_accepted": icp_accepted,
+        "cp_count": len(cps), "cp_rmse": cp_rmse, "cp_rmse_final": cp_final,
+        "surface_rmse_robust": surf_rmse if np.isfinite(surf_rmse) else None,
+        "surface_rmse_all_correspondences": rmse_all if np.isfinite(rmse_all) else None,
+        "init_fitness": init_fitness, "init_rmse": init_rmse if np.isfinite(init_rmse) else None,
+        "icp_fitness": icp_fitness, "icp_rmse": icp_rmse if np.isfinite(icp_rmse) else None,
+        "icp_cp_rmse": icp_cp_rmse, "icp_accepted": icp_accepted,
         "icp_max_distance": reg.icp_max_distance, "icp_max_iterations": reg.icp_max_iterations,
+        "robust_kernel": f"tukey(k={cfg.verdict.surface_distance})",
         "scan_point_count": int(len(points)), "reference_point_count": int(len(reference_points)),
         "max_rmse": reg.max_rmse, "min_fitness": reg.min_fitness,
     }

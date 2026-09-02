@@ -12,7 +12,7 @@ from services.progress import persistence as db
 from services.progress.activity_mapper import map_activities_to_objects
 from services.progress.importers import import_schedule
 
-FIXTURES = Path(__file__).resolve().parents[3] / "fixtures"
+FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
 PROJECT_ID = "P-TEST"
 MODEL_ID = "M-TEST"
 CATEGORY_TO_IFC = {"columns": "IfcColumn", "beams": "IfcBeam", "slabs": "IfcSlab", "walls": "IfcWall", "ducts": "IfcDuctSegment"}

@@ -45,22 +45,22 @@ def _solve_cpsat(candidates: list[ActivityRow], caps: dict[str, float], time_lim
     except ImportError:
         return None
     model = cp_model.CpModel()
-    x = {a.activity_id: model.NewBoolVar(a.activity_id) for a in candidates}
+    x = {a.activity_id: model.new_bool_var(a.activity_id) for a in candidates}
     for resource, cap in caps.items():
         terms = [(int(round(float((a.resources or {}).get(resource, 0.0)) * RESOURCE_INT_SCALE)), x[a.activity_id]) for a in candidates]
         if any(coef for coef, _ in terms):
-            model.Add(sum(coef * var for coef, var in terms) <= int(round(float(cap) * RESOURCE_INT_SCALE)))
+            model.add(sum(coef * var for coef, var in terms) <= int(round(float(cap) * RESOURCE_INT_SCALE)))
     n = len(candidates)
     count_weight = n * n + 1   # 어떤 우선순위 합(≤ n(n+1)/2)보다 크게 → 개수 최대화가 항상 우선
     ordered = sorted(candidates, key=_ordering_key)
     priority = {a.activity_id: n - rank for rank, a in enumerate(ordered)}
-    model.Maximize(sum((count_weight + priority[a.activity_id]) * x[a.activity_id] for a in candidates))
+    model.maximize(sum((count_weight + priority[a.activity_id]) * x[a.activity_id] for a in candidates))
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = time_limit
-    status = solver.Solve(model)
+    status = solver.solve(model)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        return [], solver.StatusName(status)
-    return [a.activity_id for a in ordered if solver.Value(x[a.activity_id])], solver.StatusName(status)
+        return [], solver.status_name(status)
+    return [a.activity_id for a in ordered if solver.value(x[a.activity_id])], solver.status_name(status)
 
 
 def _solve_greedy(candidates: list[ActivityRow], caps: dict[str, float]) -> list[str]:

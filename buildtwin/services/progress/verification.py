@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, date, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -16,7 +17,8 @@ from sqlalchemy.orm import Session
 from packages.core.models.evidence import Evidence
 from packages.core.models.progress import DailyReportItem
 from packages.core.models.review import ReviewRequest
-from packages.core.models.scan import ScanVerdict
+from packages.core.models.scan import ScanState, ScanVerdict
+from packages.core.models.state import ObjectState
 from packages.core.settings import ROOT, settings
 from services.common.safe_expr import SafeExprError, compile_expr
 
@@ -67,8 +69,14 @@ def _scan_context(verdict: ScanVerdict | None) -> dict[str, Any]:
     return {"state": verdict.state.value, "confidence": verdict.confidence, "scan_id": verdict.scan_id}
 
 
-def build_logic_context(session: Session, global_id: str, quantity_unit: str | None = None) -> dict[str, Any]:
-    """시스템 논리 축: 선행 확정 비율, BIM 수량, 자재 반입 비율."""
+def build_logic_context(session: Session, global_id: str, quantity_unit: str | None = None,
+                        today: date | None = None) -> dict[str, Any]:
+    """시스템 논리 축. rules/verification.yaml 과 rules/risk/*.yaml 이 쓰는 키를 모두 채운다.
+
+    predecessor_confirmed_ratio, bim_quantity, material_delivered_ratio, consecutive_unverifiable(최근 스캔부터 연속
+    UNVERIFIABLE 횟수), clash_count(미결 verification 검토요청 수), inspection_passed(CONFIRMED→True, 검측 대기→False,
+    그 외 None), matched_case_ids(knowledge 가 채움; 여기서는 빈 리스트), days_until_planned_start(귀속 Activity 중 가장 이른 착수일까지 일수).
+    """
     activity_ids = db.activity_ids_for_object(session, global_id)
     ratios = [predecessor_completion(session, a)[0].value for a in activity_ids]
     predecessor_ratio = min(ratios) if ratios else 1.0
@@ -95,9 +103,28 @@ def build_logic_context(session: Session, global_id: str, quantity_unit: str | N
         material_ratio = min(1.0, total_in / required)
     else:
         material_ratio = 1.0 if total_in > 0 else 0.0
+    consecutive_unverifiable = 0
+    for verdict_row in db.load_scan_verdicts(session, global_id):
+        if verdict_row.state != ScanState.UNVERIFIABLE.value:
+            break
+        consecutive_unverifiable += 1
+    open_verification = db.open_reviews(session, [global_id], kind="verification")
+    state = ObjectState(obj[0].state) if obj else None
+    if state == ObjectState.CONFIRMED:
+        inspection_passed: bool | None = True
+    elif state == ObjectState.INSPECTION_REQUESTED or db.open_reviews(session, [global_id], kind="inspection"):
+        inspection_passed = False
+    else:
+        inspection_passed = None
+    today = today or datetime.now(UTC).date()
+    starts = [date.fromisoformat(r.planned_start) for a in activity_ids
+              if (r := db.load_activity(session, a)) is not None and r.planned_start]
+    days_until_start = (min(starts) - today).days if starts else None
     return {"predecessor_confirmed_ratio": predecessor_ratio, "bim_quantity": bim_quantity,
-            "material_delivered_ratio": material_ratio, "activity_ids": activity_ids,
-            "material_in": total_in, "material_out": total_out}
+            "material_delivered_ratio": material_ratio, "consecutive_unverifiable": consecutive_unverifiable,
+            "clash_count": len(open_verification), "inspection_passed": inspection_passed, "matched_case_ids": [],
+            "days_until_planned_start": days_until_start, "object_state": state.value if state else None,
+            "activity_ids": activity_ids, "material_in": total_in, "material_out": total_out}
 
 
 def run_verification(session: Session, project_id: str, global_id: str, report_item: DailyReportItem | None,

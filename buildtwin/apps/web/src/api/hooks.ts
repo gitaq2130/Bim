@@ -113,7 +113,7 @@ export function useObjects(projectId: string | null | undefined, q: ObjectsQuery
   return useQuery({
     queryKey: queryKeys.objects(projectId ?? "", q),
     queryFn: async () =>
-      toPaginated(await api.get<BimObjectView[] | Paginated<BimObjectView>>(`/projects/${projectId}/objects`, q)),
+      toPaginated(await api.get<BimObjectView[] | Paginated<BimObjectView>>(`/projects/${projectId}/objects`, { ...q })),
     enabled: !!projectId && enabled,
   });
 }

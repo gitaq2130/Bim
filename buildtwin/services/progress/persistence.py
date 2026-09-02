@@ -1,12 +1,13 @@
 """ORM 저장/조회 헬퍼. Schedule/Activity/Relation/Mapping ↔ 행, 객체 상태·검토요청·자재 조회."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from packages.core.models.coordinate import BBox3D
 from packages.core.models.evidence import Evidence
 from packages.core.models.identity import BimObject, BimObjectDraft
 from packages.core.models.mapping import ActivityObjectMapping
@@ -74,7 +75,7 @@ def load_objects(session: Session, project_id: str) -> list[BimObjectRow]:
 def object_row_to_model(row: BimObjectRow) -> BimObject:
     return BimObject(
         global_id=row.global_id, ifc_type=row.ifc_type, name=row.name, level=row.level, level_elevation=row.level_elevation,
-        zone=row.zone, bbox=row.bbox, mesh_ref=row.mesh_ref, psets=row.psets or {}, material=row.material,
+        zone=row.zone, bbox=BBox3D.model_validate(row.bbox) if row.bbox else None, mesh_ref=row.mesh_ref, psets=row.psets or {}, material=row.material,
         quantity=row.quantity or {}, express_id=row.express_id, project_id=row.project_id, model_id=row.model_id,
         model_version=row.model_version, state=ObjectState(row.state), is_orphaned=row.is_orphaned,
     )
@@ -88,8 +89,12 @@ def object_states(session: Session, global_ids: list[str]) -> dict[str, ObjectSt
 
 
 # ------------------------------------------------------------------ schedule
-def _date_str(value) -> str | None:
+def _date_str(value: date | None) -> str | None:
     return value.isoformat() if value is not None else None
+
+
+def _parse_date(value: str | None) -> date | None:
+    return date.fromisoformat(value[:10]) if value else None
 
 
 def save_schedule(session: Session, schedule: Schedule) -> ScheduleRow:
@@ -102,10 +107,10 @@ def save_schedule(session: Session, schedule: Schedule) -> ScheduleRow:
         session.add(row)
     else:
         row.source_format, row.warnings = schedule.source_format, list(schedule.warnings)
-        for old in session.scalars(select(ActivityRelationRow).where(ActivityRelationRow.schedule_id == schedule.schedule_id)):
-            session.delete(old)
-        for old in session.scalars(select(ActivityRow).where(ActivityRow.schedule_id == schedule.schedule_id)):
-            session.delete(old)
+        for old_rel in session.scalars(select(ActivityRelationRow).where(ActivityRelationRow.schedule_id == schedule.schedule_id)):
+            session.delete(old_rel)
+        for old_act in session.scalars(select(ActivityRow).where(ActivityRow.schedule_id == schedule.schedule_id)):
+            session.delete(old_act)
         session.flush()
     for a in schedule.activities:
         existing = session.get(ActivityRow, a.activity_id)
@@ -129,7 +134,8 @@ def save_schedule(session: Session, schedule: Schedule) -> ScheduleRow:
 def activity_row_to_model(row: ActivityRow) -> Activity:
     return Activity(
         activity_id=row.activity_id, name=row.name, wbs_code=row.wbs_code, discipline=row.discipline, level=row.level,
-        zone=row.zone, planned_start=row.planned_start, planned_finish=row.planned_finish, duration_days=row.duration_days,
+        zone=row.zone, planned_start=_parse_date(row.planned_start), planned_finish=_parse_date(row.planned_finish),
+        duration_days=row.duration_days,
         resources=dict(row.resources or {}), percent_complete=row.percent_complete or 0.0, source_ref=row.source_ref,
     )
 
@@ -311,7 +317,6 @@ def material_totals(session: Session, activity_ids: list[str], global_ids: list[
         conds.append(MaterialMovementRow.activity_id.in_(activity_ids))
     if global_ids:
         conds.append(MaterialMovementRow.global_id.in_(global_ids))
-    from sqlalchemy import or_
     rows = list(session.scalars(stmt.where(or_(*conds))))
     total_in = sum(r.quantity for r in rows if r.kind == "in")
     total_out = sum(r.quantity for r in rows if r.kind == "out")
@@ -322,3 +327,9 @@ def load_objects_by_ids(session: Session, global_ids: list[str]) -> list[BimObje
     if not global_ids:
         return []
     return list(session.scalars(select(BimObjectRow).where(BimObjectRow.global_id.in_(global_ids))))
+
+
+def load_scan_verdicts(session: Session, global_id: str) -> list[ScanVerdictRow]:
+    """최근 순."""
+    return list(session.scalars(select(ScanVerdictRow).where(ScanVerdictRow.global_id == global_id)
+                                .order_by(ScanVerdictRow.created_at.desc())))

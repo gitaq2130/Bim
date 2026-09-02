@@ -44,8 +44,13 @@ def test_started_activities_are_not_candidates_and_ss_allows(session, seeded):
     rel.type = "SS"
     session.flush()
     result = compute_startable(session, seeded["project_id"])
-    assert result.startable == ["A110"]
-    assert "A100" not in result.blocked and "A100" not in result.startable
+    assert "A100" not in result.blocked and "A100" not in result.startable   # 착수한 작업은 후보가 아니다
+    # SS 선행은 만족(A100 착수) → 선후행 blocker 없음. 단 Readiness 는 CONFIRMED 기준이라 기본 임계값에서는 아직 차단된다.
+    assert not [b for b in result.blocked["A110"] if b.component == "predecessor"]
+    assert [b for b in result.blocked["A110"] if b.component == "readiness"]
+    relaxed = compute_startable(session, seeded["project_id"], threshold=0.5)
+    assert relaxed.startable == ["A110"]
+    assert all(any(b.component == "predecessor" for b in bl) for act, bl in relaxed.blocked.items())
 
 
 def test_resource_caps_limit_concurrent_starts(session, tmp_path, monkeypatch):

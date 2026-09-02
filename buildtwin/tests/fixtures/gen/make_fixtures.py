@@ -69,19 +69,28 @@ def build_ifc() -> dict:
     expected = {"IfcColumn": 0, "IfcBeam": 0, "IfcSlab": 0, "IfcWall": 0, "IfcDuctSegment": 0}
     ids: dict[str, list[dict]] = {"columns": [], "beams": [], "slabs": [], "walls": [], "ducts": []}
 
-    def add(ifc_class: str, name: str, storey, origin, size, key: str, extra: dict | None = None):
+    def add(ifc_class: str, name: str, storey, origin, size, key: str, extra: dict | None = None, rot_deg: float = 0.0):
+        """origin: 배치 원점(월드, m). size: (length, thickness, height) 로컬 축 기준. rot_deg: Z축 회전.
+        회전 시 로컬 +x → 월드 방향이 회전하므로 월드 bbox를 함께 계산해 expected에 기록한다."""
         el = ifcopenshell.api.run("root.create_entity", f, ifc_class=ifc_class, name=name)
+        ifcopenshell.api.run("spatial.assign_container", f, relating_structure=storey, products=[el])
         mat = np.eye(4)
+        mat[:2, :2] = _rot2(rot_deg)
         mat[:3, 3] = origin
         ifcopenshell.api.run("geometry.edit_object_placement", f, product=el, matrix=mat)
         rep = ifcopenshell.api.run("geometry.add_wall_representation", f, context=body,
                                    length=size[0], height=size[2], thickness=size[1])
         ifcopenshell.api.run("geometry.assign_representation", f, product=el, representation=rep)
-        ifcopenshell.api.run("spatial.assign_container", f, relating_structure=storey, products=[el])
         pset = ifcopenshell.api.run("pset.add_pset", f, product=el, name="Pset_BuildTwin")
         ifcopenshell.api.run("pset.edit_pset", f, pset=pset, properties={"Zone": extra.get("zone", "Z1") if extra else "Z1"})
+        # 월드 bbox
+        local = np.array([[0, 0, 0], [size[0], 0, 0], [size[0], size[1], 0], [0, size[1], 0]], dtype=float)
+        world = (mat[:3, :3] @ local.T).T + np.array(origin)
+        bmin = [float(world[:, 0].min()), float(world[:, 1].min()), float(origin[2])]
+        bmax = [float(world[:, 0].max()), float(world[:, 1].max()), float(origin[2] + size[2])]
         expected[ifc_class] += 1
-        ids[key].append({"global_id": el.GlobalId, "name": name, "origin": list(map(float, origin)), "size": list(map(float, size)), **(extra or {})})
+        ids[key].append({"global_id": el.GlobalId, "name": name, "origin": list(map(float, origin)),
+                         "size": list(map(float, size)), "rot_deg": rot_deg, "bbox": [bmin, bmax], **(extra or {})})
         return el
 
     for li, (lname, elev) in enumerate(LEVELS):
@@ -90,40 +99,38 @@ def build_ifc() -> dict:
         ifcopenshell.api.run("aggregate.assign_object", f, relating_object=bldg, products=[storey])
         ifcopenshell.api.run("geometry.edit_object_placement", f, product=storey,
                              matrix=np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, elev], [0, 0, 0, 1]], dtype=float))
+        z0 = elev
         # 기둥 6개 (3x2 그리드)
         for xi, gx in enumerate(GRID_X):
             for yi, gy in enumerate(GRID_Y):
-                add("IfcColumn", f"C{li+1}-{xi+1}{yi+1}", storey, (gx - COL / 2, gy - COL / 2, 0.0),
+                add("IfcColumn", f"C{li+1}-{xi+1}{yi+1}", storey, (gx - COL / 2, gy - COL / 2, z0),
                     (COL, COL, STOREY_H - SLAB_T), "columns", {"level": lname, "grid": f"{xi}{yi}"})
-        # 보 8개: X방향 4개(각 y라인 2스팬), Y방향 4개... 단순화: x방향 2*2=4, y방향 3*1=3 +1 = 8 → x: 4, y: 3, 대각 없음 -> 7. 8 맞추려 y 3 + x 4 + 1 캔틸레버
-        z = STOREY_H - SLAB_T - 0.5
+        # 보 8개: X방향 4 + Y방향 3 + 캔틸레버 1
+        z = z0 + STOREY_H - SLAB_T - 0.5
         for yi, gy in enumerate(GRID_Y):
             for xi in range(len(GRID_X) - 1):
                 x0 = GRID_X[xi] + COL / 2
-                add("IfcBeam", f"BX{li+1}-{xi+1}{yi+1}", storey, (x0, gy - 0.15, z), (GRID_X[xi + 1] - COL - x0 + GRID_X[xi] + COL / 2, 0.3, 0.5), "beams", {"level": lname})
+                add("IfcBeam", f"BX{li+1}-{xi+1}{yi+1}", storey, (x0, gy - 0.15, z),
+                    (GRID_X[xi + 1] - COL / 2 - x0, 0.3, 0.5), "beams", {"level": lname})
         for xi, gx in enumerate(GRID_X):
             y0 = GRID_Y[0] + COL / 2
-            el = add("IfcBeam", f"BY{li+1}-{xi+1}", storey, (gx - 0.15, y0, z), (0.3, GRID_Y[1] - COL, 0.5), "beams", {"level": lname})
-            # add_wall_representation은 x길이·y두께라 y방향 보는 회전 적용
-            m = np.eye(4); m[:3, 3] = (gx + 0.15, y0, z); m[:2, :2] = _rot2(90)
-            ifcopenshell.api.run("geometry.edit_object_placement", f, product=el, matrix=m)
-            rep = ifcopenshell.api.run("geometry.add_wall_representation", f, context=body, length=GRID_Y[1] - COL, height=0.5, thickness=0.3)
-            ifcopenshell.api.run("geometry.assign_representation", f, product=el, representation=rep)
-        add("IfcBeam", f"BC{li+1}", storey, (GRID_X[-1] + COL / 2, GRID_Y[0] - 0.15, z), (1.5, 0.3, 0.5), "beams", {"level": lname, "cantilever": True})
+            # 로컬 +x → 월드 +y (90° 회전). 로컬 +y(두께) → 월드 -x. 원점을 gx+0.15에 두면 x∈[gx-0.15, gx+0.15]
+            add("IfcBeam", f"BY{li+1}-{xi+1}", storey, (gx + 0.15, y0, z), (GRID_Y[1] - COL, 0.3, 0.5), "beams",
+                {"level": lname}, rot_deg=90)
+        add("IfcBeam", f"BC{li+1}", storey, (GRID_X[-1] + COL / 2, GRID_Y[0] - 0.15, z), (1.5, 0.3, 0.5), "beams",
+            {"level": lname, "cantilever": True})
         # 슬래브 1
-        add("IfcSlab", f"S{li+1}", storey, (-0.5, -0.5, STOREY_H - SLAB_T), (GRID_X[-1] + 1.0, GRID_Y[-1] + 1.0, SLAB_T), "slabs", {"level": lname})
+        add("IfcSlab", f"S{li+1}", storey, (-0.5, -0.5, z0 + STOREY_H - SLAB_T), (GRID_X[-1] + 1.0, GRID_Y[-1] + 1.0, SLAB_T), "slabs", {"level": lname})
         # 벽 4 (외벽)
-        add("IfcWall", f"W{li+1}-S", storey, (0.0, -0.4, 0.0), (GRID_X[-1], 0.2, STOREY_H - SLAB_T), "walls", {"level": lname})
-        add("IfcWall", f"W{li+1}-N", storey, (0.0, GRID_Y[-1] + 0.2, 0.0), (GRID_X[-1], 0.2, STOREY_H - SLAB_T), "walls", {"level": lname})
+        add("IfcWall", f"W{li+1}-S", storey, (0.0, -0.4, z0), (GRID_X[-1], 0.2, STOREY_H - SLAB_T), "walls", {"level": lname})
+        add("IfcWall", f"W{li+1}-N", storey, (0.0, GRID_Y[-1] + 0.2, z0), (GRID_X[-1], 0.2, STOREY_H - SLAB_T), "walls", {"level": lname})
         for tag, gx in (("W", GRID_X[0] - 0.4), ("E", GRID_X[-1] + 0.2)):
-            el = add("IfcWall", f"W{li+1}-{tag}", storey, (gx, 0.0, 0.0), (0.2, GRID_Y[-1], STOREY_H - SLAB_T), "walls", {"level": lname})
-            m = np.eye(4); m[:3, 3] = (gx + 0.2, 0.0, 0.0); m[:2, :2] = _rot2(90)
-            ifcopenshell.api.run("geometry.edit_object_placement", f, product=el, matrix=m)
-            rep = ifcopenshell.api.run("geometry.add_wall_representation", f, context=body, length=GRID_Y[-1], height=STOREY_H - SLAB_T, thickness=0.2)
-            ifcopenshell.api.run("geometry.assign_representation", f, product=el, representation=rep)
+            # 90° 회전: 원점 x=gx+0.2 → 월드 x∈[gx, gx+0.2]
+            add("IfcWall", f"W{li+1}-{tag}", storey, (gx + 0.2, 0.0, z0), (GRID_Y[-1], 0.2, STOREY_H - SLAB_T), "walls",
+                {"level": lname}, rot_deg=90)
         # 덕트 2
         for di, gy in enumerate((2.0, 6.0)):
-            add("IfcDuctSegment", f"D{li+1}-{di+1}", storey, (0.5, gy - 0.2, STOREY_H - SLAB_T - 1.2), (GRID_X[-1] - 1.0, 0.4, 0.4), "ducts", {"level": lname})
+            add("IfcDuctSegment", f"D{li+1}-{di+1}", storey, (0.5, gy - 0.2, z0 + STOREY_H - SLAB_T - 1.2), (GRID_X[-1] - 1.0, 0.4, 0.4), "ducts", {"level": lname})
 
     f.write(str(OUT / "sample.ifc"))
     (OUT / "sample.ifc.expected.json").write_text(json.dumps({
@@ -169,18 +176,18 @@ def build_dxf(ids: dict) -> None:
     for b in ids["beams"]:
         if b["level"] != "1F":
             continue
-        o, s = b["origin"], b["size"]
+        (x0, y0, _), (x1, y1, _) = b["bbox"]
         if b["name"].startswith("BY"):
-            e = line((o[0] + 0.15, o[1]), (o[0] + 0.15, o[1] + s[1]), "S-BEAM")
+            e = line(((x0 + x1) / 2, y0), ((x0 + x1) / 2, y1), "S-BEAM")
         else:
-            e = line((o[0], o[1] + 0.15), (o[0] + s[0], o[1] + 0.15), "S-BEAM")
+            e = line((x0, (y0 + y1) / 2), (x1, (y0 + y1) / 2), "S-BEAM")
         mapping_expected.append({"handle": e.dxf.handle, "global_id": b["global_id"], "layer": "S-BEAM"})
     # 1F 벽
     for w in ids["walls"]:
         if w["level"] != "1F":
             continue
-        o, s = w["origin"], w["size"]
-        e = rect(o[0], o[1], s[0], s[1], "A-WALL") if not w["name"].endswith(("-W", "-E")) else rect(o[0], o[1], 0.2, s[1], "A-WALL")
+        (x0, y0, _), (x1, y1, _) = w["bbox"]
+        e = rect(x0, y0, x1 - x0, y1 - y0, "A-WALL")
         mapping_expected.append({"handle": e.dxf.handle, "global_id": w["global_id"], "layer": "A-WALL"})
     # 1F 덕트
     for d in ids["ducts"]:
@@ -249,7 +256,8 @@ def build_ply(ids: dict) -> None:
     pts.append(_sample_box_surface((-0.5, -0.5, -0.02), (GRID_X[-1] + 1.0, GRID_Y[-1] + 1.0, 0.02), 150))
     # 벽 1F 남측 완료
     w = [w for w in ids["walls"] if w["level"] == "1F" and w["name"].endswith("-S")][0]
-    pts.append(_sample_box_surface(w["origin"], w["size"], 500)); verdict_expected[w["global_id"]] = "ESTIMATED_DONE"
+    (wx0, wy0, wz0), (wx1, wy1, wz1) = w["bbox"]
+    pts.append(_sample_box_surface((wx0, wy0, wz0), (wx1 - wx0, wy1 - wy0, wz1 - wz0), 500)); verdict_expected[w["global_id"]] = "ESTIMATED_DONE"
     for w in ids["walls"]:
         if w["level"] == "1F" and w["global_id"] not in verdict_expected:
             verdict_expected[w["global_id"]] = "NOT_BUILT"
