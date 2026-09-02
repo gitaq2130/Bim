@@ -87,7 +87,7 @@ def compute_occlusion(bbox: BBox3D, scanner_pos: Sequence[float] | np.ndarray, a
                 d, _ = tree.query(flat, k=1, distance_upper_bound=step)
                 hit = np.zeros(valid.shape, dtype=bool)
                 hit[valid] = np.isfinite(d)
-                blocked_pts = hit.any(axis=1)
+                blocked_pts = np.asarray(hit.any(axis=1), dtype=bool)
 
     blocked = blocked_bbox | blocked_pts
     if tree is not None:

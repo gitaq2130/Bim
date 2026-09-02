@@ -13,6 +13,7 @@ DXF $TDCREATE/$TDUPDATE/$VERSIONGUID/$FINGERPRINTGUID(ezdxf 고정 메타데이�
 from __future__ import annotations
 
 import json
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -25,6 +26,12 @@ import numpy as np
 
 OUT = Path(__file__).resolve().parents[1]
 rng = np.random.default_rng(42)
+
+# GUID 결정적 생성: ifcopenshell.guid.new()는 uuid4를 쓰므로 seed 고정 생성기로 교체한다(재생성 시 파일 diff 없음)
+import random  # noqa: E402
+
+_guid_rng = random.Random(20260902)
+ifcopenshell.guid.new = lambda: ifcopenshell.guid.compress(uuid.UUID(int=_guid_rng.getrandbits(128)).hex)
 
 # GlobalId 를 결정적으로: ifcopenshell.api root.create_entity 는 ifcopenshell.guid.new()(uuid4)를 호출한다.
 GUID_SEED = 4242
@@ -364,6 +371,9 @@ def build_schedules(ids: dict) -> None:
 
 
 if __name__ == "__main__":
+    # ifcopenshell/ezdxf 내부의 set 순회가 문자열 해시 랜덤화에 좌우되므로(파일 바이트 순서), 해시 시드를 고정해 재실행한다.
+    if os.environ.get("PYTHONHASHSEED") != "0":
+        os.execve(sys.executable, [sys.executable, __file__, *sys.argv[1:]], {**os.environ, "PYTHONHASHSEED": "0"})
     ids = build_ifc()
     build_dxf(ids)
     build_ply(ids)

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 from scipy.spatial import cKDTree
@@ -167,13 +168,17 @@ def register(points: np.ndarray, alignment: AlignmentInput, reference_points: np
     init_tf, cps, method = initial_transform_from_alignment(alignment)
     init_m = init_tf.as_array()
     cp_rmse = init_tf.rmse or 0.0
-    evidence_base = dict(source_type="scan", source_id=scan_id, file_uri=source_file,
-                         coordinates=[tuple(map(float, c.model_xyz)) for c in cps])
+    cp_model_coords: list[tuple[float, float, float]] = [
+        (float(c.model_xyz[0]), float(c.model_xyz[1]), float(c.model_xyz[2])) for c in cps]
+
+    def make_evidence(method_name: str, extra: dict[str, Any]) -> Evidence:
+        return Evidence(source_type="scan", source_id=scan_id, file_uri=source_file,
+                        coordinates=cp_model_coords, method=method_name, extra=extra)
 
     if len(reference_points) == 0 or len(points) == 0:
         return Registration(scan_id=scan_id, status="registration_failed", transform=None, rmse=None,
                             method=method, message="empty scan or empty BIM reference — cannot refine/validate",
-                            evidence=Evidence(**evidence_base, method=method, extra={"cp_rmse": cp_rmse}))
+                            evidence=make_evidence(method, {"cp_rmse": cp_rmse}))
 
     reg = cfg.registration
     src = _to_pcd(points)
@@ -212,7 +217,7 @@ def register(points: np.ndarray, alignment: AlignmentInput, reference_points: np
         "scan_point_count": int(len(points)), "reference_point_count": int(len(reference_points)),
         "max_rmse": reg.max_rmse, "min_fitness": reg.min_fitness,
     }
-    evidence = Evidence(**evidence_base, method=method_full, extra=extra)
+    evidence = make_evidence(method_full, extra)
     transform = CoordinateTransform(matrix=final_m.tolist(), from_source="scan_local", to_source="ifc_local",
                                     rmse=float(rmse) if np.isfinite(rmse) else None, method=method_full)
 

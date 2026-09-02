@@ -187,7 +187,7 @@ def compute_metrics(points_model: np.ndarray, spec: ObjectSpec, cfg: ScanConfig,
         if len(cand):
             shift, n_in, n_match = _shift_search(cand, bmin, bmax, cfg)
             m.shift_searched = True
-            m.offset_vector = tuple(float(x) for x in shift)
+            m.offset_vector = (float(shift[0]), float(shift[1]), float(shift[2]))
             m.offset_norm = float(np.linalg.norm(shift))
             m.shifted_point_count = n_in
             m.shifted_surface_match_ratio = n_match / n_in if n_in else 0.0

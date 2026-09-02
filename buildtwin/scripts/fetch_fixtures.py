@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import subprocess
 import sys
 import urllib.request
@@ -56,7 +57,8 @@ def _warn(msg: str) -> None:
 
 def run_synthetic() -> int:
     print(f"[fetch_fixtures] generating synthetic fixtures via {GENERATOR.relative_to(ROOT)}")
-    proc = subprocess.run([sys.executable, str(GENERATOR)], cwd=str(ROOT))
+    # PYTHONHASHSEED=0: ifcopenshell/ezdxf 의 set 순회 순서까지 고정해 산출물이 바이트 단위로 재현되게 한다
+    proc = subprocess.run([sys.executable, str(GENERATOR)], cwd=str(ROOT), env={**os.environ, "PYTHONHASHSEED": "0"})
     if proc.returncode != 0:
         _warn(f"synthetic fixture generation failed (exit {proc.returncode})")
     return proc.returncode
