@@ -304,7 +304,7 @@ def run_verdict(session: Session, job: JobRow, options: dict[str, Any]) -> tuple
         raise JobError("no objects with geometry in project; upload an IFC first")
     specs = [{"global_id": r.global_id, "bbox": r.bbox, "ifc_type": r.ifc_type} for r in rows]
     previous = queries.previous_verdicts(session, [r.global_id for r in rows], exclude_scan_id=scan_id)
-    _set_job(job.job_id, progress=0.3)
+    job.progress = 0.3   # 같은 세션 안에서만 갱신(별도 세션은 SQLite 쓰기 잠금과 충돌)
     batch = run_scan_pipeline(_file_path(file_row), alignment, specs, scan_id, previous=previous or None)
     scan.registration = batch.registration.model_dump(mode="json")
     session.flush()
@@ -312,7 +312,7 @@ def run_verdict(session: Session, job: JobRow, options: dict[str, Any]) -> tuple
     if batch.registration.status != "ok":
         return "failed", {"status": batch.registration.status, "scan_id": scan_id, "message": batch.registration.message,
                           "registration": scan.registration, "stats": batch.stats}, warnings
-    _set_job(job.job_id, progress=0.7)
+    job.progress = 0.7
     session.execute(delete(ScanVerdictRow).where(ScanVerdictRow.scan_id == scan_id))
     now = datetime.now(UTC)
     for v in batch.verdicts:

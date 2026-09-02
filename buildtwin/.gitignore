@@ -19,3 +19,4 @@ storage/
 *.db
 # 공개 샘플(scripts/fetch_fixtures.py --public)은 대용량이라 git에 넣지 않는다
 tests/fixtures/public/
+*.egg-info/

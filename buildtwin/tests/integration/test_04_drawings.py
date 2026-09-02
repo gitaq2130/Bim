@@ -15,7 +15,9 @@ def test_dxf_job_entities_and_mappings(client, auth, project, dxf_job, expected_
     body = r.json()
     expected_dxf = load_fixture_json("sample.dxf.expected.json")
     assert len(body["entities"]) == sum(expected_dxf["entity_counts_by_layer"].values())
-    assert body["coordinate_system"]["source"] == "dxf_local" and body["coordinate_system"]["scale"] == expected_dxf["unit_to_m"]
+    # 정합 후 sync.save_alignment 가 좌표계를 정합된 좌표계(grid_auto_align)로 갱신한다. 단위 스케일은 유지.
+    assert body["coordinate_system"]["source"] in ("dxf_local", "grid_auto_align", "user_input")
+    assert body["coordinate_system"]["scale"] == expected_dxf["unit_to_m"]
     assert body["alignment"] and body["alignment"]["alignment"]["source"] == "grid_auto_align"
 
     r = client.get(f"/api/drawings/{did}/mappings", headers=auth("client"))

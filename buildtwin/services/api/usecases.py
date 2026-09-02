@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from packages.core.models.coordinate import CoordinateSystem
 from packages.core.models.evidence import Evidence
-from packages.core.models.identity import IFC_TYPE_GROUP
+from packages.core.models.identity import IFC_TYPE_GROUP, BimObjectDraft
 from packages.core.models.knowledge import Rule
 from packages.core.models.mapping import EntityObjectMapping
 from packages.core.models.orm import (
@@ -274,7 +274,7 @@ def realign_drawing(session: Session, drawing: DrawingRow, req: AlignmentRequest
 
 
 def plan_section(session: Session, model: ModelRow, level: str | None, offset: float | None) -> PlanSectionView:
-    objects = queries.as_models(queries.model_objects(session, model.model_id))
+    objects: list[BimObjectDraft] = list(queries.as_models(queries.model_objects(session, model.model_id)))
     res = plan_section_from_objects(objects, level, offset)
     if res["elevation"] is None:
         raise NotFound(f"no objects with geometry for level {level!r} in model {model.model_id}")

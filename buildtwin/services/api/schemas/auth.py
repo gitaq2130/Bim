@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, EmailStr, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from packages.core.models.state import UserRole
 
@@ -31,7 +31,16 @@ class LoginResponse(BaseModel):
 
 
 class RegisterRequest(BaseModel):
-    email: EmailStr
+    email: str = Field(min_length=3)
+
+    @field_validator("email")
+    @classmethod
+    def _looks_like_email(cls, v: str) -> str:
+        v = v.strip().lower()
+        if "@" not in v or v.startswith("@") or v.endswith("@"):
+            raise ValueError("invalid email address")
+        return v
+
     password: str = Field(min_length=6)
     role: UserRole = "contractor"
     name: str | None = None
