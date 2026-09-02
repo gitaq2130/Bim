@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     minio_access_key: str | None = None
     minio_secret_key: str | None = None
     minio_bucket: str = "buildtwin"
-    jwt_secret: str = "dev-only-change-me"
+    jwt_secret: str | None = None            # 운영은 .env JWT_SECRET 필수. 미설정 시 SQLite 개발 환경에서만 임시 값 사용
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 480
     aps_client_id: str | None = None
@@ -27,6 +27,20 @@ class Settings(BaseSettings):
     oda_file_converter_path: str | None = None
     config_dir: str = str(ROOT / "config")
     rules_dir: str = str(ROOT / "rules")
+
+
+    cors_allow_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+    def resolve_jwt_secret(self) -> str:
+        """운영(DB가 SQLite가 아님)에서 JWT_SECRET 미설정이면 기동을 거부한다. §3-4 시크릿은 .env에만."""
+        if self.jwt_secret:
+            return self.jwt_secret
+        if self.database_url.startswith("sqlite"):
+            import logging
+
+            logging.getLogger("buildtwin.settings").warning("JWT_SECRET 미설정: SQLite 개발 환경 임시 시크릿을 사용합니다")
+            return "dev-only-sqlite-secret"
+        raise RuntimeError("JWT_SECRET 환경변수가 필요합니다 (.env)")
 
 
 settings = Settings()
