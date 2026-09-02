@@ -1,17 +1,17 @@
-"""비동기 작업 본체(동기 함수). Celery 태스크(tasks.py)가 감싼다. 서비스 함수를 호출하고 결과를 DB 에 저장한다.
+"""비동기 작업 본체(동기 함수). Celery 태스크(tasks.py)가 감싼다. 서비스 함수를 호출하고 JobRow 를 갱신한다.
 
-작업 종류(JobRow.kind):
-- ingest      : IFC → ModelRow + BimObjectRow(PLANNED, 재업로드 시 상태 유지·model_version 증가·누락은 is_orphaned)
-                DXF/DWG → DrawingRow + DrawingEntityRow → 최신 모델에 대해 2D↔3D 매핑 자동 실행(+ 검토요청)
+작업 종류(JobRow.kind, glossary "작업 종류"):
+- ingest      : IFC → services.ingest.persistence.persist_ingest_result (재업로드·orphan 규칙은 ingest 소유)
+                DXF/DWG → persist_drawing → 최신 모델과 2D↔3D 매핑(sync.run_build_mapping) → sync.rebuild_mappings
                 RVT → APS 변환 시도, 불가 시 result.status = needs_ifc_export
-- registration: E57/LAS/PLY → ScanRow(정합 입력 대기). 판정은 /scans/{sid}/alignment → verdict 작업
-- schedule    : CSV/XML/XER → Schedule/Activity/Relation + Activity↔객체 매핑
-- verdict     : run_scan_pipeline → Registration/ScanVerdictRow 저장 → 상태기계 apply_scan_verdict → 3중 검증
+- scan_upload : E57/LAS/PLY → ScanRow(정합 입력 대기). 판정은 /scans/{sid}/alignment → verdict 작업
+- schedule    : CSV/XML/XER → progress.import_schedule + save_schedule + map_activities_to_objects
+- mapping     : 도면 재정합 후 매핑 재구성(usecases.realign_drawing 가 동기 실행하며 기록)
+- verdict     : scan.run_scan_pipeline → Registration/ScanVerdictRow 저장 → 상태기계 apply_scan_verdict → 3중 검증
 """
 from __future__ import annotations
 
 import logging
-import re
 import traceback
 import uuid
 from datetime import UTC, datetime
@@ -23,20 +23,11 @@ from sqlalchemy.orm import Session
 
 from packages.core.db import session_scope
 from packages.core.models.identity import BimObjectDraft, DrawingEntityDraft
-from packages.core.models.ingest import FileKind, IngestResult
+from packages.core.models.ingest import FileKind
 from packages.core.models.mapping import EntityObjectMapping
-from packages.core.models.orm import (
-    BimObjectRow,
-    DrawingEntityRow,
-    DrawingRow,
-    FileRow,
-    JobRow,
-    ModelRow,
-    ScanRow,
-    ScanVerdictRow,
-)
-from packages.core.models.scan import AlignmentInput, Registration, ScanVerdict
-from packages.core.models.state import ObjectState
+from packages.core.models.orm import DrawingEntityRow, DrawingRow, FileRow, JobRow, ScanRow, ScanVerdictRow
+from packages.core.models.scan import AlignmentInput, Registration
+from services.progress import infer_level
 from services.progress import persistence as db
 from services.progress.activity_mapper import map_activities_to_objects
 from services.progress.importers import import_schedule
@@ -52,7 +43,7 @@ INGEST_KINDS: frozenset[str] = frozenset({"ifc", "dxf", "dwg", "rvt"})
 SCAN_KINDS: frozenset[str] = frozenset({"e57", "las", "ply"})
 SCHEDULE_KINDS: frozenset[str] = frozenset({"csv", "xml", "xer"})
 SCHEDULE_FORMAT: dict[str, str] = {"csv": "csv", "xml": "msproject_xml", "xer": "p6_xer"}
-_LEVEL_RE = re.compile(r"(?<![A-Za-z0-9])(B\d{1,2}F?|\d{1,2}F|RF|PH)(?![A-Za-z0-9])", re.IGNORECASE)
+JOB_KINDS: tuple[str, ...] = ("ingest", "scan_upload", "schedule", "mapping", "verdict")
 
 
 class JobError(Exception):
@@ -63,16 +54,10 @@ def job_kind_for(file_kind: FileKind | str) -> str:
     if file_kind in INGEST_KINDS:
         return "ingest"
     if file_kind in SCAN_KINDS:
-        return "registration"
+        return "scan_upload"
     if file_kind in SCHEDULE_KINDS:
         return "schedule"
     raise JobError(f"unsupported file kind: {file_kind}")
-
-
-def infer_level_from_filename(name: str) -> str | None:
-    """'plan_1F.dxf' → '1F', 'B1_전기.dxf' → 'B1'. 없으면 None."""
-    m = _LEVEL_RE.search(Path(name).stem)
-    return m.group(1).upper() if m else None
 
 
 def _warning(code: str, message: str, **context: Any) -> dict[str, Any]:
@@ -80,7 +65,7 @@ def _warning(code: str, message: str, **context: Any) -> dict[str, Any]:
 
 
 def _set_job(job_id: str, **fields: Any) -> None:
-    """짧은 세션으로 JobRow 를 갱신(진행률이 폴링에 즉시 보이도록)."""
+    """짧은 세션으로 JobRow 를 갱신(작업 세션이 열리기 전/후에만 사용 — SQLite 쓰기 잠금 충돌 방지)."""
     with session_scope() as s:
         job = s.get(JobRow, job_id)
         if job is None:
@@ -97,61 +82,7 @@ def _file_path(file_row: FileRow) -> Path:
     return p
 
 
-# ------------------------------------------------------------------ ingest: model
-def persist_model(session: Session, project_id: str, file_row: FileRow, result: IngestResult) -> tuple[ModelRow, dict[str, Any]]:
-    """ADR 0001 §1: 같은 GlobalId 는 같은 객체(상태·이력 유지, 기하 갱신), 사라진 객체는 is_orphaned."""
-    prev = queries.latest_model(session, project_id)
-    version = (prev.version + 1) if prev else 1
-    model = ModelRow(model_id=f"m-{uuid.uuid4().hex[:12]}", project_id=project_id, file_id=file_row.file_id, version=version,
-                     coordinate_system=result.coordinate_system.model_dump(mode="json"), levels=list(result.levels),
-                     mesh_uri=result.mesh_uri, stats=dict(result.stats))
-    session.add(model)
-    session.flush()
-    existing = {r.global_id: r for r in queries.project_objects(session, project_id, include_orphaned=True)}
-    created = updated = 0
-    seen: set[str] = set()
-    for d in result.objects:
-        seen.add(d.global_id)
-        row = existing.get(d.global_id)
-        if row is None:
-            row = BimObjectRow(global_id=d.global_id, project_id=project_id, model_id=model.model_id, ifc_type=d.ifc_type,
-                               state=ObjectState.PLANNED.value)
-            session.add(row)
-            created += 1
-        else:
-            updated += 1
-        row.model_id, row.model_version, row.ifc_type, row.is_orphaned = model.model_id, version, d.ifc_type, False
-        row.name, row.level, row.level_elevation, row.zone = d.name, d.level, d.level_elevation, d.zone
-        row.bbox = d.bbox.model_dump(mode="json") if d.bbox is not None else None
-        row.mesh_ref, row.psets, row.material, row.quantity, row.express_id = d.mesh_ref, d.psets, d.material, d.quantity, d.express_id
-    orphaned = [gid for gid, row in existing.items() if gid not in seen and not row.is_orphaned]
-    for gid in orphaned:
-        existing[gid].is_orphaned = True
-    session.flush()
-    summary = {"status": result.status, "source_kind": result.source_kind, "model_id": model.model_id, "version": version,
-               "object_count": len(result.objects), "created": created, "updated": updated, "orphaned": len(orphaned),
-               "orphaned_global_ids": orphaned[:100], "levels": list(result.levels), "stats": dict(result.stats),
-               "mesh_uri": result.mesh_uri, "coordinate_system": model.coordinate_system}
-    return model, summary
-
-
-# ------------------------------------------------------------------ ingest: drawing
-def persist_drawing(session: Session, project_id: str, file_row: FileRow, result: IngestResult, level: str | None) -> DrawingRow:
-    drawing = DrawingRow(drawing_id=f"d-{uuid.uuid4().hex[:12]}", project_id=project_id, file_id=file_row.file_id, level=level,
-                         coordinate_system=result.coordinate_system.model_dump(mode="json"), stats=dict(result.stats))
-    session.add(drawing)
-    for e in result.entities:
-        session.add(DrawingEntityRow(
-            drawing_id=drawing.drawing_id, handle=e.handle, layer=e.layer, dxftype=e.dxftype,
-            points=[list(p) for p in e.points], bbox=e.bbox.model_dump(mode="json") if e.bbox else None,
-            block_name=e.block_name, insert_point=list(e.insert_point) if e.insert_point else None,
-            rotation_deg=e.rotation_deg, scale=list(e.scale) if e.scale else None, text=e.text, radius=e.radius,
-            attrs=dict(e.attrs),
-        ))
-    session.flush()
-    return drawing
-
-
+# ------------------------------------------------------------------ drawing entities (읽기)
 def entity_row_to_draft(r: DrawingEntityRow) -> DrawingEntityDraft:
     return DrawingEntityDraft(
         handle=r.handle, layer=r.layer, dxftype=r.dxftype, points=[tuple(p) for p in (r.points or [])],  # type: ignore[misc]
@@ -168,9 +99,9 @@ def drawing_entities(session: Session, drawing_id: str) -> list[DrawingEntityDra
 
 def build_and_persist_mappings(session: Session, job_id: str, drawing: DrawingRow, entities: list[DrawingEntityDraft],
                                alignment_json: dict[str, Any] | None, keep_confirmed: bool = True) -> dict[str, Any]:
-    """sync.run_build_mapping 호출 → 정합·매핑·검토요청 저장. 실패해도 예외 대신 결과 dict(status=failed)."""
-    from services.sync.persistence import save_alignment, save_mappings
-    from services.sync.review_queue import mappings_needing_review
+    """sync.run_build_mapping → sync.save_alignment → sync.rebuild_mappings(매핑 생명주기·검토요청은 sync 소유).
+    실패해도 예외 대신 결과 dict(status=failed)."""
+    from services.sync.persistence import rebuild_mappings, save_alignment
     from services.sync.tasks import run_build_mapping
     from services.sync.transform import DrawingAlignment
 
@@ -185,37 +116,17 @@ def build_and_persist_mappings(session: Session, job_id: str, drawing: DrawingRo
     if res.get("status") != "done":
         return {"status": "failed", "reason": res.get("error"), "mapping_count": 0, "review_count": 0,
                 "warnings": list(res.get("warnings") or [])}
-    alignment = DrawingAlignment.model_validate(res["alignment"])
-    save_alignment(session, drawing.drawing_id, alignment)
+    save_alignment(session, drawing.drawing_id, DrawingAlignment.model_validate(res["alignment"]))
     mappings = [EntityObjectMapping.model_validate(m) for m in res["mappings"]]
-    from packages.core.models.orm import EntityObjectMappingRow, ReviewRequestRow
-
-    confirmed_handles: set[str] = set()
-    if keep_confirmed:
-        confirmed_handles = {r.entity_handle for r in session.scalars(select(EntityObjectMappingRow).where(
-            EntityObjectMappingRow.drawing_id == drawing.drawing_id, EntityObjectMappingRow.reviewed_by.is_not(None)))}
-    session.execute(delete(EntityObjectMappingRow).where(EntityObjectMappingRow.drawing_id == drawing.drawing_id,
-                                                          EntityObjectMappingRow.reviewed_by.is_(None)))
-    mappings = [m for m in mappings if m.entity_handle not in confirmed_handles]
-    save_mappings(session, mappings, replace=False)
-    # 이전 자동 생성 매핑 검토요청은 재정합으로 대체됨
-    for old in session.scalars(select(ReviewRequestRow).where(ReviewRequestRow.project_id == drawing.project_id,
-                                                              ReviewRequestRow.kind == "mapping", ReviewRequestRow.status == "open")):
-        if (old.conflicting_sources or {}).get("drawing_id") == drawing.drawing_id:
-            old.status, old.resolved_by, old.resolved_at = "rejected", "system", datetime.now(UTC)
-            old.resolution_note = f"superseded by mapping rebuild (job {job_id})"
-    reviews = mappings_needing_review(mappings, project_id=drawing.project_id)
-    for review in reviews:
-        db.save_review_request(session, review)
-    session.flush()
+    rebuilt = rebuild_mappings(session, drawing.drawing_id, drawing.project_id, mappings, keep_confirmed=keep_confirmed)
     return {"status": "done", "alignment": res["alignment"], "grid_source": res.get("grid_source"), "level": drawing.level,
-            "mapping_count": len(mappings), "review_count": len(reviews), "entity_count": len(entities),
-            "object_count": len(objects), "kept_confirmed": len(confirmed_handles), "warnings": list(res.get("warnings") or [])}
+            "mapping_count": rebuilt.saved, "review_count": rebuilt.review_requests_created, "entity_count": len(entities),
+            "object_count": len(objects), "warnings": list(res.get("warnings") or []), **rebuilt.model_dump()}
 
 
 # ------------------------------------------------------------------ job runners
 def run_ingest(session: Session, job: JobRow, file_row: FileRow, options: dict[str, Any]) -> tuple[str, dict[str, Any], list[dict]]:
-    from services.ingest import ingest_file
+    from services.ingest import ingest_file, persist_drawing, persist_ingest_result
 
     path = _file_path(file_row)
     kind: FileKind = file_row.kind  # type: ignore[assignment]
@@ -225,18 +136,24 @@ def run_ingest(session: Session, job: JobRow, file_row: FileRow, options: dict[s
         msg = next((w.message for w in result.warnings), "RVT 는 IFC 내보내기가 필요합니다.")
         return "done", {"status": "needs_ifc_export", "source_kind": result.source_kind, "message": msg}, warnings
     if result.objects:
-        _, summary = persist_model(session, job.project_id, file_row, result)
+        persisted = persist_ingest_result(session, job.project_id, file_row.file_id, result)
+        model = session.get(type(queries.latest_model(session, job.project_id)), persisted.model_id)
+        summary = {"status": result.status, "source_kind": result.source_kind, **persisted.model_dump(),
+                   "levels": list(result.levels), "stats": dict(result.stats), "mesh_uri": result.mesh_uri,
+                   "coordinate_system": model.coordinate_system if model else result.coordinate_system.model_dump(mode="json")}
         return "done", summary, warnings
     if result.entities:
-        level = options.get("level") or infer_level_from_filename(file_row.filename)
-        drawing = persist_drawing(session, job.project_id, file_row, result, level)
-        entities = drawing_entities(session, drawing.drawing_id)
+        level = options.get("level") or infer_level(file_row.filename)
+        drawing_id = persist_drawing(session, job.project_id, file_row.file_id, result, level)
+        drawing = session.get(DrawingRow, drawing_id)
+        assert drawing is not None
+        entities = drawing_entities(session, drawing_id)
         mapping = build_and_persist_mappings(session, job.job_id, drawing, entities, None)
         if mapping["status"] != "done":
-            warnings.append(_warning("MAPPING_NOT_BUILT", str(mapping.get("reason")), drawing_id=drawing.drawing_id))
+            warnings.append(_warning("MAPPING_NOT_BUILT", str(mapping.get("reason")), drawing_id=drawing_id))
         for w in mapping.get("warnings") or []:
-            warnings.append(_warning("MAPPING_WARNING", str(w), drawing_id=drawing.drawing_id))
-        summary = {"status": result.status, "source_kind": result.source_kind, "drawing_id": drawing.drawing_id, "level": level,
+            warnings.append(_warning("MAPPING_WARNING", str(w), drawing_id=drawing_id))
+        summary = {"status": result.status, "source_kind": result.source_kind, "drawing_id": drawing_id, "level": level,
                    "entity_count": len(result.entities), "stats": dict(result.stats),
                    "coordinate_system": drawing.coordinate_system, "mapping": mapping}
         return "done", summary, warnings
@@ -244,8 +161,8 @@ def run_ingest(session: Session, job: JobRow, file_row: FileRow, options: dict[s
     return "failed", {"status": result.status, "source_kind": result.source_kind, "message": msg}, warnings
 
 
-def run_registration(session: Session, job: JobRow, file_row: FileRow, options: dict[str, Any]) -> tuple[str, dict[str, Any], list[dict]]:
-    """스캔 파일 등록. 정합은 사용자 기준점 입력 후(/scans/{sid}/alignment)."""
+def run_scan_upload(session: Session, job: JobRow, file_row: FileRow, options: dict[str, Any]) -> tuple[str, dict[str, Any], list[dict]]:
+    """스캔 파일 등록. 정합은 사용자 기준점 입력 후(/scans/{sid}/alignment → verdict 작업)."""
     warnings: list[dict] = []
     path = _file_path(file_row)
     model = queries.latest_model(session, job.project_id)
@@ -325,8 +242,7 @@ def run_verdict(session: Session, job: JobRow, options: dict[str, Any]) -> tuple
     transitions = 0
     reviews = 0
     for v in batch.verdicts:
-        t = sm.apply_scan_verdict(session, v)
-        if t is not None:
+        if sm.apply_scan_verdict(session, v) is not None:
             transitions += 1
         item = queries.latest_report_item(session, job.project_id, v.global_id)
         logic = build_logic_context(session, v.global_id, quantity_unit=item.quantity_unit if item else None)
@@ -347,22 +263,15 @@ def run_job(job_id: str, options: dict[str, Any] | None = None) -> dict[str, Any
             if job is None:
                 raise JobError(f"job not found: {job_id}")
             file_row = session.get(FileRow, job.file_id) if job.file_id else None
-            if job.kind == "ingest":
-                if file_row is None:
-                    raise JobError("ingest job has no file")
-                status, result, warnings = run_ingest(session, job, file_row, options)
-            elif job.kind == "registration":
-                if file_row is None:
-                    raise JobError("registration job has no file")
-                status, result, warnings = run_registration(session, job, file_row, options)
-            elif job.kind == "schedule":
-                if file_row is None:
-                    raise JobError("schedule job has no file")
-                status, result, warnings = run_schedule(session, job, file_row, options)
-            elif job.kind == "verdict":
+            if job.kind == "verdict":
                 status, result, warnings = run_verdict(session, job, options)
+            elif job.kind in ("ingest", "scan_upload", "schedule"):
+                if file_row is None:
+                    raise JobError(f"{job.kind} job has no file")
+                runner = {"ingest": run_ingest, "scan_upload": run_scan_upload, "schedule": run_schedule}[job.kind]
+                status, result, warnings = runner(session, job, file_row, options)
             else:
-                raise JobError(f"unknown job kind: {job.kind}")
+                raise JobError(f"unknown job kind: {job.kind} (expected one of {JOB_KINDS})")
             job.status, job.progress, job.result, job.warnings = status, 1.0, result, warnings
             job.result_ref = result.get("model_id") or result.get("drawing_id") or result.get("scan_id") or result.get("schedule_id") or job.result_ref
             job.error = result.get("message") if status == "failed" else None
@@ -372,9 +281,3 @@ def run_job(job_id: str, options: dict[str, Any] | None = None) -> dict[str, Any
         log.error("job %s failed: %s\n%s", job_id, exc, traceback.format_exc())
         _set_job(job_id, status="failed", error=f"{type(exc).__name__}: {exc}", progress=1.0)
         return {"job_id": job_id, "status": "failed", "error": str(exc)}
-
-
-def apply_verdict_models(session: Session, project_id: str, verdicts: list[ScanVerdict]) -> int:
-    """(테스트·재적용용) 저장된 판정을 상태기계에 다시 적용한다."""
-    sm = ObjectStateMachine()
-    return sum(1 for v in verdicts if sm.apply_scan_verdict(session, v) is not None)

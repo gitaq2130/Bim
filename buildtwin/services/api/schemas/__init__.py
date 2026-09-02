@@ -67,6 +67,7 @@ __all__ = [
     "StartableActivityView",
     "StateDistributionRow",
     "TransitionRequest",
+    "TransitionResponse",
     "UploadResponse",
     "UserView",
     "WarningView",

@@ -43,8 +43,9 @@ def get_review_request(review_request_id: str, session: Session = Depends(get_se
 
 @router.post("/review-requests/{review_request_id}/resolve", response_model=ReviewRequest)
 def resolve_review_request(review_request_id: str, body: ResolveRequest, session: Session = Depends(get_session),
-                           user: CurrentUser = Depends(require_role("cm", "admin"))) -> ReviewRequest:
-    """승인/반려/보류. ExpertReviewLog(proposal=처리 전, final=처리 후) 기록. inspection 승인 → CM CONFIRMED 전이,
-    mapping 승인 → 매핑 확정, verification 승인 → 차단 해제만."""
+                           user: CurrentUser = Depends(require_role("cm"))) -> ReviewRequest:
+    """승인/반려/보류(cm 만, ADR 0001 §4-1). ExpertReviewLog(proposal=처리 전, final=처리 후) 기록.
+    inspection 승인 → 상태기계 CONFIRMED 전이(요청 종료 포함), mapping → sync.resolve_mapping_reviews(+승인 시 매핑 확정),
+    verification 승인 → 차단 해제만."""
     row = usecases.resolve_review(session, review_request_id, body.resolved_decision, body.note, user)
     return db.review_row_to_model(row)

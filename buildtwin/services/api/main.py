@@ -41,7 +41,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app() -> FastAPI:
     app = FastAPI(title="BuildTwin API", version=APP_VERSION, lifespan=lifespan,
                   description="건설 PM/CM 용 계획·신고·물리증거·전문가판단·승인 상태 비교 API. 모든 판정 응답은 confidence·evidence 를 포함한다.")
-    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+    app.add_middleware(CORSMiddleware, allow_origins=list(settings.cors_allow_origins), allow_credentials=True,
+                       allow_methods=["*"], allow_headers=["*"])
     install_handlers(app)
     api = APIRouter(prefix=API_PREFIX)
 

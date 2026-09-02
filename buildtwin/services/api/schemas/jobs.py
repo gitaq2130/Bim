@@ -8,13 +8,14 @@ from pydantic import BaseModel, Field
 from packages.core.models.ingest import FileKind
 
 JobStatus = Literal["queued", "running", "done", "failed"]
+JobKind = Literal["ingest", "scan_upload", "schedule", "mapping", "verdict"]   # glossary "작업 종류"
 
 
 class UploadResponse(BaseModel):
     job_id: str
     file_id: str
     kind: FileKind
-    job_kind: str
+    job_kind: JobKind
 
 
 class WarningView(BaseModel):
@@ -26,7 +27,7 @@ class WarningView(BaseModel):
 class JobView(BaseModel):
     job_id: str
     project_id: str
-    kind: str
+    kind: JobKind
     status: JobStatus
     progress: float = Field(ge=0.0, le=1.0)
     file_id: str | None = None

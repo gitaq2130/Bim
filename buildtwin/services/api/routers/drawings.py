@@ -87,7 +87,8 @@ def set_alignment(drawing_id: str, body: AlignmentRequest, session: Session = De
 
 @router.post("/drawings/{drawing_id}/mappings/{handle}/confirm", response_model=EntityObjectMapping)
 def confirm_mapping(drawing_id: str, handle: str, body: ConfirmMappingRequest, session: Session = Depends(get_session),
-                    user: CurrentUser = Depends(require_role("cm", "admin"))) -> EntityObjectMapping:
+                    user: CurrentUser = Depends(require_role("cm"))) -> EntityObjectMapping:
+    """매핑 확정(cm 만). sync.confirm_mapping_row + ExpertReviewLog."""
     return usecases.confirm_entity_mapping(session, drawing_id, handle, body.global_id, user, body.note)
 
 

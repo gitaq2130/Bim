@@ -30,7 +30,7 @@ class ActivityView(BaseModel):
 
 class StateDistributionRow(BaseModel):
     level: str
-    discipline: str
+    group: str            # 부재 그룹(IFC_TYPE_GROUP). 공종(discipline)과 다른 개념
     counts: dict[ObjectState, int]
     total: int
 

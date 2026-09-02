@@ -107,6 +107,12 @@ class TransitionRequest(BaseModel):
     review_request_id: str | None = None
 
 
+class TransitionResponse(StateTransition):
+    """전이 기록 + 상태기계 부수효과(검측 ReviewRequest 생성/종료 id)."""
+    created_review_ids: list[str] = Field(default_factory=list)
+    closed_review_ids: list[str] = Field(default_factory=list)
+
+
 class LevelView(BaseModel):
     name: str
     elevation: float | None = None

@@ -34,4 +34,5 @@ class DailyReportResponse(DailyReportView):
     """저장된 작업일보 + 상태기계 적용 결과(3중 검증 포함)."""
     transitions: list[StateTransition] = Field(default_factory=list)
     review_requests: list[ReviewRequest] = Field(default_factory=list)
+    inspection_review_ids: list[str] = Field(default_factory=list)   # 자동 생성된 검측 검토요청 id
     skipped: list[dict[str, Any]] = Field(default_factory=list)

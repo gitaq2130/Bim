@@ -15,6 +15,7 @@ class ModelSummary(BaseModel):
     obj_uri: str | None = None          # OBJ URL: /api/models/{id}/mesh.obj
     levels: list[dict[str, Any]] = Field(default_factory=list)
     coordinate_system: CoordinateSystem
+    plan_section_default_offset: float | None = None   # config/sync.yaml plan_section_default_offset
     version: int = 1
     file_id: str | None = None
     stats: dict[str, Any] = Field(default_factory=dict)
@@ -72,15 +73,18 @@ class ConfirmMappingRequest(BaseModel):
 
 
 class PlanSectionPolyline(BaseModel):
-    globalId: str
+    global_id: str
     ifc_type: str | None = None
     points: list[tuple[float, float]]
+    closed: bool = True
 
 
 class PlanSectionView(BaseModel):
-    """viewer 타입(PlanSection) 과 맞추기 위해 camelCase 키를 쓴다."""
+    """층별 평면 단면(snake_case, CLAUDE.md §3 규칙 12). offset = cut_elevation - elevation."""
     level: str | None
     elevation: float
+    offset: float
     cut_elevation: float
-    coordinateSystem: CoordinateSystem
+    coordinate_system: CoordinateSystem
+    svg: str | None = None
     polylines: list[PlanSectionPolyline]

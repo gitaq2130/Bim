@@ -5,13 +5,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from packages.core.models.orm import BimObjectRow
-from packages.core.models.state import ObjectState, StateTransition
+from packages.core.models.state import ObjectState
 from services.progress import persistence as db
 
 from .. import usecases
 from ..deps import CurrentUser, get_current_user, get_session, require_role
 from ..errors import Forbidden
-from ..schemas.objects import ObjectDetail, ObjectList, TransitionRequest
+from ..schemas.objects import ObjectDetail, ObjectList, TransitionRequest, TransitionResponse
 from .projects import get_project_or_404
 
 router = APIRouter(tags=["objects"])
@@ -46,10 +46,11 @@ def get_object(global_id: str, session: Session = Depends(get_session), user: Cu
     return usecases.object_detail(session, global_id, user.role)
 
 
-@router.post("/objects/{global_id}/transitions", response_model=StateTransition, status_code=201)
+@router.post("/objects/{global_id}/transitions", response_model=TransitionResponse, status_code=201)
 def request_transition(global_id: str, body: TransitionRequest, session: Session = Depends(get_session),
-                       user: CurrentUser = Depends(require_role("contractor", "cm", "admin"))) -> StateTransition:
-    """상태 전이 요청. CONFIRMED 는 라우터(역할 cm/admin)와 상태기계(actor=cm) 이중 검사."""
-    if body.to_state == ObjectState.CONFIRMED and user.role not in usecases.CM_ROLES:
+                       user: CurrentUser = Depends(require_role("contractor", "cm"))) -> TransitionResponse:
+    """상태 전이 요청(ADR 0001 §4-1: contractor/cm 만, admin·client 403). CONFIRMED 는 라우터(역할 cm)와
+    상태기계(actor=cm) 이중 검사. 응답에 생성/종료된 검측 ReviewRequest id 포함."""
+    if body.to_state == ObjectState.CONFIRMED and user.role != usecases.CONFIRM_ROLE:
         raise Forbidden("CONFIRMED transition requires role cm")
     return usecases.transition_object(session, global_id, body, user)

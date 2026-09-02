@@ -70,10 +70,13 @@ def list_levels(project_id: str, session: Session = Depends(get_session), _: Cur
 
 
 def model_summary(session: Session, m) -> ModelSummary:
+    from services.sync.config import load_sync_config
+
     f = session.get(FileRow, m.file_id)
     return ModelSummary(model_id=m.model_id, project_id=m.project_id, name=f.filename if f else m.model_id,
                         model_uri=f"/api/models/{m.model_id}/mesh", obj_uri=f"/api/models/{m.model_id}/mesh.obj",
                         levels=list(m.levels or []), coordinate_system=CoordinateSystem.model_validate(m.coordinate_system),
+                        plan_section_default_offset=load_sync_config().plan_section_default_offset,
                         version=m.version, file_id=m.file_id, stats=dict(m.stats or {}))
 
 

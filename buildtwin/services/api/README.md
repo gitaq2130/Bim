@@ -35,14 +35,15 @@ startup 시 `settings.database_url` 이 `sqlite` 이고 `users` 테이블이 비
 
 ## 역할 규칙
 
-- `CONFIRMED` 전이: 라우터(cm/admin) + 상태기계(actor=cm) 이중 검사. contractor/client 는 403.
-- admin 은 상태 전이에서 cm 으로 행동한다. client 는 읽기 전용(전이 403).
-- 업로드: contractor/cm/admin. 스캔 정합 입력·검토요청 처리·매핑 확정: cm/admin. 작업일보: contractor/admin. 프로젝트 생성: admin.
+- 역할→actor 는 `contractor→contractor`, `cm→cm` 뿐(ADR 0001 §4-1, `state_machine.actor_for_role`). admin 은 프로젝트·사용자 관리 전용,
+  client 는 조회 전용 — 둘 다 상태 전이·검토요청 처리·매핑 확정 요청 시 403.
+- `CONFIRMED` 전이: 라우터(역할 cm) + 상태기계(actor=cm) 이중 검사.
+- 업로드: contractor/cm/admin. 스캔 정합 입력(판단이 아닌 입력): cm/admin. 검토요청 처리·매핑 확정: cm. 작업일보: contractor. 프로젝트 생성·사용자 등록: admin.
 
 ## 작업(Job) 흐름
 
 `POST /api/projects/{pid}/files` → `{job_id, file_id, kind}` → `GET /api/jobs/{job_id}` `{status, progress, result, warnings, error}`.
 - IFC: `result.model_id`, 재업로드 시 같은 GlobalId 는 상태 유지·기하 갱신·`model_version` 증가, 사라진 객체 `is_orphaned`.
 - DXF/DWG: `result.drawing_id`, 최신 모델과 자동 매핑(`level` 폼/쿼리 파라미터 또는 파일명 `1F` 휴리스틱), 저신뢰 매핑은 ReviewRequest(kind=mapping).
-- E57/LAS/PLY: `result.scan_id`, 정합 대기 → `POST /api/scans/{sid}/alignment` → verdict 작업.
+- E57/LAS/PLY (job kind `scan_upload`): `result.scan_id`, 정합 대기 → `POST /api/scans/{sid}/alignment` → verdict 작업.
 - CSV/XML/XER: `result.schedule_id`, Activity↔객체 매핑.

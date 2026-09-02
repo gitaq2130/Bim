@@ -1,10 +1,9 @@
-"""엔드포인트별 오케스트레이션: 서비스 함수 호출 + ORM 저장. 판정·전이 규칙은 모두 services/* 에 있다.
+"""엔드포인트별 오케스트레이션: 서비스 함수 호출 + 응답 조립. 판정·전이·매핑 생명주기·검토요청 생성/종료는 모두 services/* 소유.
 
-여기 있는 "얇은 접착" 로직(어댑터):
-- ensure_inspection_review / close_inspection_reviews: INSPECTION_REQUESTED 진입 시 ReviewRequest(kind=inspection) 생성,
-  CM 처리 시 종료. (progress 상태기계는 검측 검토요청을 만들지 않는다 — readiness 가 이를 읽으므로 API 가 채운다.)
-- confirm_entity_mapping: 매핑이 없던 엔티티의 수동 지정(사용자 근거, confidence 1.0).
-- weekly_summary / evaluate_rules / plan_section: 서비스 결과를 화면 계약(WeeklySummary/PlanSection) 으로 변환.
+- 역할→actor: services.progress.state_machine.actor_for_role (client/admin → RoleNotAllowedError → 403)
+- 전이 부수효과(검측 ReviewRequest 생성/종료): ObjectStateMachine.transition_with_effects
+- 매핑 확정·검토요청 해소: services.sync.review_queue.confirm_mapping_row / resolve_mapping_reviews
+- 전문가 검토 로그(record_expert_review)는 사람의 판단이 들어가는 엔드포인트에서 API 가 기록한다.
 """
 from __future__ import annotations
 
@@ -22,26 +21,23 @@ from packages.core.models.evidence import Evidence
 from packages.core.models.identity import IFC_TYPE_GROUP, BimObjectDraft
 from packages.core.models.knowledge import Rule
 from packages.core.models.mapping import EntityObjectMapping
-from packages.core.models.orm import (
-    BimObjectRow,
-    DailyReportRow,
-    DrawingRow,
-    JobRow,
-    ModelRow,
-    ReviewRequestRow,
-)
-from packages.core.models.progress import DailyReport, DailyReportItem
-from packages.core.models.review import ReviewRequest
-from packages.core.models.state import Actor, InvalidTransitionError, ObjectState, StateTransition
+from packages.core.models.orm import BimObjectRow, DailyReportRow, DrawingRow, JobRow, ModelRow, ReviewRequestRow
+from packages.core.models.progress import DailyReport
+from packages.core.models.state import Actor, InvalidTransitionError, ObjectState
 from services.knowledge import RuleEngine, load_rules, persist_verdicts, record_expert_review
 from services.progress import persistence as db
 from services.progress.readiness import compute_readiness
 from services.progress.scheduler import compute_startable
-from services.progress.state_machine import ROLE_TO_ACTOR, ObjectStateMachine, TransitionBlockedByReviewError
+from services.progress.state_machine import (
+    ObjectStateMachine,
+    RoleNotAllowedError,
+    TransitionBlockedByReviewError,
+    actor_for_role,
+)
 from services.progress.verification import build_logic_context
-from services.sync.persistence import row_to_mapping, save_mappings
+from services.sync.persistence import row_to_mapping
 from services.sync.plan_section import plan_section_from_objects
-from services.sync.review_queue import confirm_mapping
+from services.sync.review_queue import confirm_mapping_row, resolve_mapping_reviews
 
 from . import jobs, queries
 from .deps import CurrentUser
@@ -56,19 +52,21 @@ from .schemas.objects import (
     ObjectDetail,
     ObjectStateView,
     TransitionRequest,
+    TransitionResponse,
 )
 from .schemas.reports import DailyReportCreate, DailyReportResponse
 from .schemas.rules import RuleEvaluateResponse
 
 log = logging.getLogger(__name__)
 
+# 화면 라벨(한국어). kind 값은 state_machine.next_actions 가 준 것을 그대로 쓴다(glossary 집합).
 NEXT_ACTION_LABELS: dict[str, str] = {
     "confirm": "확정(CM 승인)", "request_inspection": "검측 요청", "report_progress": "진행 신고",
     "reject_inspection": "검측 반려(재작업)", "accept_rework": "재작업 인정", "order_rework": "재시공 지시",
     "revoke_confirmation": "확정 취소", "flag_mismatch": "불일치 판정", "inspect": "검측",
     "resolve_review": "검토요청 처리", "align_scan": "스캔 정합 입력",
 }
-CM_ROLES: tuple[str, ...] = ("cm", "admin")
+CONFIRM_ROLE = "cm"   # ADR 0001 §4-1: 확정·검측 승인·검토요청 처리는 cm 만
 
 
 # ------------------------------------------------------------------ objects
@@ -100,17 +98,10 @@ def object_detail(session: Session, global_id: str, role: str) -> ObjectDetail:
                                   confidence=1.0, evidence=_initial_evidence(row))
     current.has_open_review = bool(open_reviews)
     current.open_review_ids = [r.review_request_id for r in open_reviews]
-
-    actions: list[NextAction] = []
-    for a in sm.next_actions(session, global_id, role):
-        actions.append(NextAction(kind=a["kind"], label=NEXT_ACTION_LABELS.get(a["kind"], a["kind"]),
-                                  allowed_roles=list(a["allowed_roles"]), to_state=a.get("to_state"), actor=a.get("actor"),
-                                  review_request_id=a.get("review_request_id"), review_kind=a.get("review_kind"),
-                                  rule_id=a.get("rule_id")))
-    if role in CM_ROLES and any((s.registration or {}).get("status") == "needs_alignment_input"
-                                for s in queries.project_scans(session, row.project_id)):
-        actions.append(NextAction(kind="align_scan", label=NEXT_ACTION_LABELS["align_scan"], allowed_roles=["cm", "admin"]))
-
+    actions = [NextAction(kind=a["kind"], label=NEXT_ACTION_LABELS.get(a["kind"], a["kind"]),
+                          allowed_roles=list(a["allowed_roles"]), to_state=a.get("to_state"), actor=a.get("actor"),
+                          review_request_id=a.get("review_request_id"), review_kind=a.get("review_kind"), rule_id=a.get("rule_id"))
+               for a in sm.next_actions(session, global_id, role)]
     mappings = queries.entity_mappings_for_object(session, global_id)
     linked = LinkedRefs(
         entity_handles=[m.entity_handle for m in mappings],
@@ -126,6 +117,7 @@ def object_detail(session: Session, global_id: str, role: str) -> ObjectDetail:
 
 
 def _evidence_from_request(req: TransitionRequest, user: CurrentUser, actor: Actor) -> Evidence:
+    """UI 전이 근거. source_type 은 user_input(기본) 또는 cm_action 을 받고, 없으면 역할로 채운다(ADR 0001 §5)."""
     data = req.evidence.model_dump() if req.evidence else {}
     data["source_type"] = data.get("source_type") or ("cm_action" if actor == Actor.CM else "user_input")
     data["source_id"] = data.get("source_id") or user.user_id
@@ -139,37 +131,12 @@ def _evidence_from_request(req: TransitionRequest, user: CurrentUser, actor: Act
     return Evidence.model_validate(data)
 
 
-def ensure_inspection_review(session: Session, project_id: str, t: StateTransition) -> ReviewRequest | None:
-    """INSPECTION_REQUESTED 진입 → 미결 검측 검토요청이 없으면 생성."""
-    if t.to_state != ObjectState.INSPECTION_REQUESTED:
-        return None
-    if db.open_reviews(session, [t.global_id], kind="inspection"):
-        return None
-    review = ReviewRequest(
-        project_id=project_id, kind="inspection", global_id=t.global_id, title=f"검측 요청: {t.global_id}",
-        conflicting_sources={"daily_report": {"claimed_state": "completed", "confidence": t.confidence,
-                                              "evidence": t.evidence.model_dump(mode="json"),
-                                              "summary": f"{t.actor.value} requested inspection ({t.from_state.value} → {t.to_state.value})"}},
-        confidence=t.confidence if t.confidence is not None else 1.0, evidence=t.evidence, assignee_role="cm",
-    )
-    db.save_review_request(session, review)
-    return review
-
-
-def close_inspection_reviews(session: Session, global_id: str, status: str, user_id: str, note: str | None) -> int:
-    n = 0
-    for r in db.open_reviews(session, [global_id], kind="inspection"):
-        r.status, r.resolved_by, r.resolved_at, r.resolution_note = status, user_id, datetime.now(UTC), note
-        n += 1
-    session.flush()
-    return n
-
-
-def transition_object(session: Session, global_id: str, req: TransitionRequest, user: CurrentUser) -> StateTransition:
-    actor = ROLE_TO_ACTOR.get(user.role)
-    if actor is None:
-        raise Forbidden(f"role '{user.role}' cannot request state transitions")
-    if req.to_state == ObjectState.CONFIRMED and user.role not in CM_ROLES:
+def transition_object(session: Session, global_id: str, req: TransitionRequest, user: CurrentUser) -> TransitionResponse:
+    try:
+        actor = actor_for_role(user.role)
+    except RoleNotAllowedError as exc:
+        raise Forbidden(str(exc))
+    if req.to_state == ObjectState.CONFIRMED and user.role != CONFIRM_ROLE:
         raise Forbidden("CONFIRMED requires role cm")
     row = session.get(BimObjectRow, global_id)
     if row is None:
@@ -178,50 +145,45 @@ def transition_object(session: Session, global_id: str, req: TransitionRequest, 
     evidence = _evidence_from_request(req, user, actor)
     sm = ObjectStateMachine()
     try:
-        t = sm.transition(session, global_id, req.to_state, actor, evidence, actor_id=user.user_id, confidence=req.confidence,
-                          review_request_id=req.review_request_id)
+        result = sm.transition_with_effects(session, global_id, req.to_state, actor, evidence, actor_id=user.user_id,
+                                            confidence=req.confidence, review_request_id=req.review_request_id)
     except (InvalidTransitionError, TransitionBlockedByReviewError) as exc:
         session.rollback()
         raise Conflict(str(exc))
-    ensure_inspection_review(session, row.project_id, t)
-    if from_state == ObjectState.INSPECTION_REQUESTED and actor == Actor.CM:
-        close_inspection_reviews(session, global_id, "approved" if t.to_state == ObjectState.CONFIRMED else "rejected",
-                                 user.user_id, req.note)
+    t = result.transition
     if t.to_state == ObjectState.CONFIRMED:
         last_system = next((h for h in reversed(sm.history(session, global_id)) if h.actor == Actor.SYSTEM), None)
+        scan_verdict = queries.latest_scan_verdict(session, global_id)
         record_expert_review(
             session, "object_state", global_id,
             proposal={"state": from_state.value, "system_state": last_system.to_state.value if last_system else None,
                       "system_confidence": last_system.confidence if last_system else None,
-                      "scan_verdict": (queries.latest_scan_verdict(session, global_id) or Evidence(source_type="ingest", source_id="none")).model_dump(mode="json")},
+                      "scan_verdict": scan_verdict.model_dump(mode="json") if scan_verdict else None},
             final={"state": t.to_state.value, "transition_id": str(t.transition_id), "evidence": evidence.model_dump(mode="json")},
             reviewer=user.user_id,
         )
     session.commit()
-    return t
+    return TransitionResponse(**t.model_dump(), created_review_ids=list(result.created_review_ids),
+                              closed_review_ids=list(result.closed_review_ids))
 
 
 # ------------------------------------------------------------------ daily reports
 def submit_daily_report(session: Session, project_id: str, payload: DailyReportCreate, user: CurrentUser,
                         photo_uris: list[str] | None = None) -> DailyReportResponse:
-    items: list[DailyReportItem] = []
-    for it in payload.items:
-        if photo_uris:
-            it = it.model_copy(update={"photo_uris": list(it.photo_uris) + list(photo_uris)})
-        items.append(it)
+    items = [it.model_copy(update={"photo_uris": list(it.photo_uris) + list(photo_uris)}) if photo_uris else it
+             for it in payload.items]
     report = DailyReport(report_id=f"dr-{uuid.uuid4().hex[:12]}", project_id=project_id, report_date=payload.report_date,
                          reporter_id=user.user_id, crew_count=payload.crew_count, equipment=dict(payload.equipment),
                          items=items, note=payload.note)
     outcome = ObjectStateMachine().apply_daily_report(session, report)
-    for t in outcome.transitions:
-        ensure_inspection_review(session, project_id, t)
     session.commit()
     row = session.get(DailyReportRow, report.report_id)
     assert row is not None
     return DailyReportResponse(report_id=row.report_id, project_id=row.project_id, report_date=row.report_date,
                                reporter_id=row.reporter_id, crew_count=row.crew_count, equipment=row.equipment or {},
                                items=list(row.items or []), note=row.note, submitted_at=row.submitted_at,
-                               transitions=outcome.transitions, review_requests=outcome.review_requests, skipped=outcome.skipped)
+                               transitions=outcome.transitions, review_requests=outcome.review_requests,
+                               inspection_review_ids=list(outcome.inspection_review_ids), skipped=outcome.skipped)
 
 
 # ------------------------------------------------------------------ mappings / drawings
@@ -231,24 +193,10 @@ def confirm_entity_mapping(session: Session, drawing_id: str, handle: str, globa
         raise NotFound(f"drawing not found: {drawing_id}")
     if session.get(BimObjectRow, global_id) is None:
         raise NotFound(f"object not found: {global_id}")
-    row = queries.entity_mapping(session, drawing_id, handle)
-    if row is not None:
-        prev = row_to_mapping(row)
-        new = confirm_mapping(prev, user.user_id, global_id)
-        proposal: dict[str, Any] = prev.model_dump(mode="json")
-    else:
-        new = EntityObjectMapping(drawing_id=drawing_id, entity_handle=handle, global_id=global_id, confidence=1.0,
-                                  evidence=Evidence(source_type="user_input", source_id=user.user_id, method="manual_mapping",
-                                                    note=note, extra={"role": user.role}),
-                                  needs_review=False, reviewed_by=user.user_id)
-        proposal = {"drawing_id": drawing_id, "entity_handle": handle, "global_id": None, "confidence": None}
-    if note and row is not None:
-        new = new.model_copy(update={"evidence": new.evidence.model_copy(update={"note": note})})
-    save_mappings(session, [new], replace=True)
-    for r in db.open_reviews(session, kind="mapping"):
-        cs = r.conflicting_sources or {}
-        if cs.get("drawing_id") == drawing_id and cs.get("entity_handle") == handle:
-            r.status, r.resolved_by, r.resolved_at, r.resolution_note = "approved", user.user_id, datetime.now(UTC), note
+    prev_row = queries.entity_mapping(session, drawing_id, handle)
+    proposal: dict[str, Any] = (row_to_mapping(prev_row).model_dump(mode="json") if prev_row is not None
+                                else {"drawing_id": drawing_id, "entity_handle": handle, "global_id": None, "confidence": None})
+    new = confirm_mapping_row(session, drawing_id, handle, global_id, user.user_id, note)
     record_expert_review(session, "entity_object_mapping", f"{drawing_id}:{handle}", proposal, new.model_dump(mode="json"),
                          user.user_id)
     session.commit()
@@ -260,14 +208,14 @@ def realign_drawing(session: Session, drawing: DrawingRow, req: AlignmentRequest
                  progress=0.1, file_id=drawing.file_id, result_ref=drawing.drawing_id)
     session.add(job)
     session.flush()
+    previous_alignment = (drawing.alignment or {}).get("alignment")
     entities = jobs.drawing_entities(session, drawing.drawing_id)
     res = jobs.build_and_persist_mappings(session, job.job_id, drawing, entities, req.model_dump(mode="json"))
     job.status = "done" if res["status"] == "done" else "failed"
     job.progress, job.result, job.error = 1.0, res, (None if res["status"] == "done" else str(res.get("reason")))
     job.warnings = [{"code": "MAPPING_WARNING", "message": str(w), "context": {}} for w in res.get("warnings") or []]
     job.updated_at = datetime.now(UTC)
-    record_expert_review(session, "drawing_alignment", drawing.drawing_id,
-                         proposal={"alignment": (drawing.alignment or {}).get("alignment")},
+    record_expert_review(session, "drawing_alignment", drawing.drawing_id, proposal={"alignment": previous_alignment},
                          final={"alignment": req.model_dump(mode="json")}, reviewer=user.user_id)
     session.commit()
     return {"job_id": job.job_id, "drawing_id": drawing.drawing_id, **res}
@@ -278,47 +226,52 @@ def plan_section(session: Session, model: ModelRow, level: str | None, offset: f
     res = plan_section_from_objects(objects, level, offset)
     if res["elevation"] is None:
         raise NotFound(f"no objects with geometry for level {level!r} in model {model.model_id}")
-    return PlanSectionView(level=res["level"], elevation=res["elevation"], cut_elevation=res["cut_elevation"],
-                           coordinateSystem=CoordinateSystem.model_validate(model.coordinate_system),
-                           polylines=[PlanSectionPolyline(globalId=p["global_id"], ifc_type=p.get("ifc_type"), points=p["points"])
-                                      for p in res["polylines"]])
+    return PlanSectionView(level=res["level"], elevation=res["elevation"], offset=res["cut_elevation"] - res["elevation"],
+                           cut_elevation=res["cut_elevation"], coordinate_system=CoordinateSystem.model_validate(model.coordinate_system),
+                           polylines=[PlanSectionPolyline(global_id=p["global_id"], ifc_type=p.get("ifc_type"), points=p["points"],
+                                                          closed=True) for p in res["polylines"]])
 
 
 # ------------------------------------------------------------------ review requests
 def resolve_review(session: Session, review_request_id: str, decision: str, note: str | None, user: CurrentUser) -> ReviewRequestRow:
+    """cm 의 검토요청 처리. inspection → 상태기계 전이가 요청을 닫고, mapping → sync 가 닫는다. 그 외(verification/on_hold)는 상태만 갱신."""
+    if user.role != CONFIRM_ROLE:
+        raise Forbidden("review request resolution requires role cm")
     row = session.get(ReviewRequestRow, review_request_id)
     if row is None:
         raise NotFound(f"review request not found: {review_request_id}")
     if row.status != "open":
         raise Conflict(f"review request already {row.status}")
     before = db.review_row_to_model(row).model_dump(mode="json")
-    row.status, row.resolution_note, row.resolved_by, row.resolved_at = decision, note, user.user_id, datetime.now(UTC)
-    session.flush()
-    after = db.review_row_to_model(row).model_dump(mode="json")
-    record_expert_review(session, "review_request", review_request_id, before, after, user.user_id)
-    sm = ObjectStateMachine()
     evidence = Evidence(source_type="cm_action", source_id=user.user_id, method="review_resolution", note=note,
                         extra={"review_request_id": review_request_id, "review_kind": row.kind, "decision": decision,
                                "rule_id": row.rule_id})
-    if decision == "approved":
-        if row.kind == "inspection" and row.global_id:
-            try:
-                sm.transition(session, row.global_id, ObjectState.CONFIRMED, Actor.CM, evidence, actor_id=user.user_id,
-                              review_request_id=review_request_id)
-            except InvalidTransitionError as exc:
+    sm = ObjectStateMachine()
+    if row.kind == "inspection" and row.global_id and decision in ("approved", "rejected"):
+        target = ObjectState.CONFIRMED if decision == "approved" else ObjectState.IN_PROGRESS
+        try:
+            sm.transition_with_effects(session, row.global_id, target, Actor.CM, evidence, actor_id=user.user_id,
+                                       review_request_id=review_request_id)   # 상태기계가 inspection 요청을 닫는다
+        except InvalidTransitionError as exc:
+            if decision == "approved":
                 session.rollback()
                 raise Conflict(f"cannot confirm object on approval: {exc}")
-        elif row.kind == "mapping":
-            cs = row.conflicting_sources or {}
-            if cs.get("drawing_id") and cs.get("entity_handle") and cs.get("candidate_global_id"):
-                confirm_entity_mapping(session, str(cs["drawing_id"]), str(cs["entity_handle"]), str(cs["candidate_global_id"]), user, note)
-        # verification: 상태는 그대로, 미결 해제만으로 system 전이 차단이 풀린다(ADR 0001 불변식 4)
-    elif decision == "rejected" and row.kind == "inspection" and row.global_id:
-        try:
-            sm.transition(session, row.global_id, ObjectState.IN_PROGRESS, Actor.CM, evidence, actor_id=user.user_id,
-                          review_request_id=review_request_id)
-        except InvalidTransitionError as exc:
             log.info("inspection rejected but no rework transition: %s", exc)
+    elif row.kind == "mapping" and decision in ("approved", "rejected"):
+        cs = row.conflicting_sources or {}
+        drawing_id, handle, candidate = cs.get("drawing_id"), cs.get("entity_handle"), cs.get("candidate_global_id")
+        if drawing_id and handle:
+            resolve_mapping_reviews(session, str(drawing_id), str(handle), decision, user.user_id, note)  # type: ignore[arg-type]
+            if decision == "approved" and candidate:
+                confirm_mapping_row(session, str(drawing_id), str(handle), str(candidate), user.user_id, note)
+    session.refresh(row)
+    if row.status == "open":   # verification / on_hold / 위에서 닫히지 않은 경우: 사람의 결정을 그대로 기록
+        row.status, row.resolution_note, row.resolved_by, row.resolved_at = decision, note, user.user_id, datetime.now(UTC)
+    elif note and not row.resolution_note:
+        row.resolution_note = note
+    session.flush()
+    after = db.review_row_to_model(row).model_dump(mode="json")
+    record_expert_review(session, "review_request", review_request_id, before, after, user.user_id)
     session.commit()
     session.refresh(row)
     return row
@@ -348,7 +301,7 @@ def weekly_summary(session: Session, project_id: str) -> WeeklySummary:
                                                confidence=score.confidence, evidence=score.evidence, blockers=score.blockers))
     return WeeklySummary(
         project_id=project_id, week_start=since.date().isoformat(), week_end=now.date().isoformat(),
-        state_distribution=[StateDistributionRow(level=lv, discipline=g, counts={ObjectState(s): n for s, n in c.items()},
+        state_distribution=[StateDistributionRow(level=lv, group=g, counts={ObjectState(s): n for s, n in c.items()},
                                                  total=sum(c.values())) for (lv, g), c in sorted(dist.items())],
         confirmed_this_week=confirmed, open_reviews=len(open_reviews), open_reviews_by_kind=dict(by_kind), startable=startable,
         state_counts_by_level={lv: dict(c) for lv, c in by_level.items()},

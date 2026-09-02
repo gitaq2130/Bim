@@ -61,7 +61,7 @@ async def _parse_body(request: Request, project_id: str, session: Session, user:
 @router.post("/projects/{project_id}/daily-reports", response_model=DailyReportResponse, status_code=status.HTTP_201_CREATED,
              openapi_extra=_BODY_DOC)
 async def create_daily_report(project_id: str, request: Request, session: Session = Depends(get_session),
-                              user: CurrentUser = Depends(require_role("contractor", "admin"))) -> DailyReportResponse:
+                              user: CurrentUser = Depends(require_role("contractor"))) -> DailyReportResponse:
     """작업일보 입력(JSON 또는 multipart report+photos). 상태기계 apply_daily_report → 3중 검증 불일치 시 검토요청·전이 보류."""
     get_project_or_404(session, project_id)
     payload, photo_uris = await _parse_body(request, project_id, session, user)
