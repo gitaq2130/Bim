@@ -33,7 +33,7 @@ services:
     depends_on: [db, redis, minio]
   worker:
     build: { context: ., dockerfile: Dockerfile }
-    command: celery -A services.common.celery_app.app worker --loglevel=info
+    command: celery -A services.api.celery_app worker --loglevel=info
     env_file: [.env]
     environment:
       DATABASE_URL: postgresql+psycopg://buildtwin:buildtwin@db:5432/buildtwin

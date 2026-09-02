@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from .coordinate import BBox3D, CoordinateTransform
+from .coordinate import CoordinateTransform
 from .evidence import Evidence
 
 
@@ -83,7 +83,7 @@ class ScanVerdict(BaseModel):
     diff_from_previous: ObjectDiff | None = None
 
     @model_validator(mode="after")
-    def _no_confirmed(self) -> "ScanVerdict":
+    def _no_confirmed(self) -> ScanVerdict:
         if str(self.state.value).upper() == "CONFIRMED":   # 방어: enum 조작 방지
             raise ValueError("scan verdict cannot be CONFIRMED")
         return self

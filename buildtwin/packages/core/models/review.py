@@ -1,7 +1,7 @@
 """검토요청 — 자동 확정을 막고 CM 확인을 요구한다."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
@@ -29,4 +29,4 @@ class ReviewRequest(BaseModel):
     resolution_note: str | None = None
     resolved_by: str | None = None
     resolved_at: datetime | None = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

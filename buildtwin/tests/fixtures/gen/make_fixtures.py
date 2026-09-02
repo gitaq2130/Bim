@@ -5,20 +5,39 @@
 - alignment.json : 기준점 3점(스캔↔모델)
 - schedule.csv / schedule.xml / schedule.xer : 1F 기둥→보→슬래브 작업
 - *.expected.json : 기대값
+
+재현성(바이트 동일): 기하·점군·판정은 numpy seed 42. 그 외 라이브러리가 매 실행 바꾸는 값도 고정한다 —
+IFC GlobalId(uuid4 → seed 고정 생성기), IFC FILE_NAME 타임스탬프, IfcRel* 집합 순서(express id 정렬),
+DXF $TDCREATE/$TDUPDATE/$VERSIONGUID/$FINGERPRINTGUID(ezdxf 고정 메타데이터 옵션).
 """
 from __future__ import annotations
 
 import json
 import sys
+import uuid
 from pathlib import Path
 
 import ezdxf
 import ifcopenshell
 import ifcopenshell.api
+import ifcopenshell.guid
 import numpy as np
 
 OUT = Path(__file__).resolve().parents[1]
 rng = np.random.default_rng(42)
+
+# GlobalId 를 결정적으로: ifcopenshell.api root.create_entity 는 ifcopenshell.guid.new()(uuid4)를 호출한다.
+GUID_SEED = 4242
+FIXED_TIMESTAMP = "2026-01-01T00:00:00+00:00"
+_guid_rng = np.random.default_rng(GUID_SEED)
+
+
+def _seeded_guid() -> str:
+    return ifcopenshell.guid.compress(uuid.UUID(bytes=_guid_rng.bytes(16), version=4).hex)
+
+
+ifcopenshell.guid.new = _seeded_guid
+ezdxf.options.write_fixed_meta_data_for_testing = True   # $TDCREATE/$TDUPDATE/$VERSIONGUID/$FINGERPRINTGUID 고정
 
 GRID_X = [0.0, 6.0, 12.0]        # m
 GRID_Y = [0.0, 8.0]
@@ -132,6 +151,12 @@ def build_ifc() -> dict:
         for di, gy in enumerate((2.0, 6.0)):
             add("IfcDuctSegment", f"D{li+1}-{di+1}", storey, (0.5, gy - 0.2, z0 + STOREY_H - SLAB_T - 1.2), (GRID_X[-1] - 1.0, 0.4, 0.4), "ducts", {"level": lname})
 
+    # 집합(set) 순서로 쓰이는 관계 속성은 express id 로 정렬해 파일 바이트를 고정한다(의미 불변)
+    for rel in f.by_type("IfcRelContainedInSpatialStructure"):
+        rel.RelatedElements = sorted(rel.RelatedElements, key=lambda e: e.id())
+    for rel in f.by_type("IfcRelAggregates"):
+        rel.RelatedObjects = sorted(rel.RelatedObjects, key=lambda e: e.id())
+    f.header.file_name.time_stamp = FIXED_TIMESTAMP
     f.write(str(OUT / "sample.ifc"))
     (OUT / "sample.ifc.expected.json").write_text(json.dumps({
         "counts": expected, "levels": [{"name": n, "elevation": e} for n, e in LEVELS],

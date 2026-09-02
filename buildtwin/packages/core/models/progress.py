@@ -1,7 +1,7 @@
 """공정·Readiness·작업일보 모델."""
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -58,7 +58,7 @@ class ReadinessScore(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     evidence: Evidence
     estimated_completion: float | None = None   # ESTIMATED_DONE 포함 선행 완료율(참고용)
-    computed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    computed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class StartableSet(BaseModel):
@@ -91,7 +91,7 @@ class DailyReport(BaseModel):
     equipment: dict[str, int] = Field(default_factory=dict)
     items: list[DailyReportItem]
     note: str | None = None
-    submitted_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    submitted_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class MaterialMovement(BaseModel):

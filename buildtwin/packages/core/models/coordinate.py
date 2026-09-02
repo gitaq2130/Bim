@@ -24,10 +24,10 @@ class BBox3D(BaseModel):
     def size(self) -> tuple[float, float, float]:
         return tuple(b - a for a, b in zip(self.min, self.max))  # type: ignore[return-value]
 
-    def expanded(self, margin: float) -> "BBox3D":
+    def expanded(self, margin: float) -> BBox3D:
         return BBox3D(min=tuple(v - margin for v in self.min), max=tuple(v + margin for v in self.max))  # type: ignore[arg-type]
 
-    def to_2d(self) -> "BBox2D":
+    def to_2d(self) -> BBox2D:
         return BBox2D(min=(self.min[0], self.min[1]), max=(self.max[0], self.max[1]))
 
 
@@ -38,14 +38,14 @@ class BBox2D(BaseModel):
     def area(self) -> float:
         return max(0.0, self.max[0] - self.min[0]) * max(0.0, self.max[1] - self.min[1])
 
-    def iou(self, other: "BBox2D") -> float:
+    def iou(self, other: BBox2D) -> float:
         ix0, iy0 = max(self.min[0], other.min[0]), max(self.min[1], other.min[1])
         ix1, iy1 = min(self.max[0], other.max[0]), min(self.max[1], other.max[1])
         inter = max(0.0, ix1 - ix0) * max(0.0, iy1 - iy0)
         union = self.area() + other.area() - inter
         return inter / union if union > 0 else 0.0
 
-    def intersects(self, other: "BBox2D") -> bool:
+    def intersects(self, other: BBox2D) -> bool:
         return not (self.max[0] < other.min[0] or other.max[0] < self.min[0]
                     or self.max[1] < other.min[1] or other.max[1] < self.min[1])
 
@@ -71,11 +71,11 @@ class CoordinateTransform(BaseModel):
     method: str | None = None
 
     @classmethod
-    def identity(cls, from_source: CoordinateSource) -> "CoordinateTransform":
+    def identity(cls, from_source: CoordinateSource) -> CoordinateTransform:
         return cls(from_source=from_source)
 
     @classmethod
-    def from_system(cls, cs: CoordinateSystem) -> "CoordinateTransform":
+    def from_system(cls, cs: CoordinateSystem) -> CoordinateTransform:
         """CoordinateSystem(origin/rotation/scale) → 모델 좌표계 변환행렬."""
         t = np.radians(cs.rotation_deg)
         c, s = np.cos(t), np.sin(t)
@@ -96,7 +96,7 @@ class CoordinateTransform(BaseModel):
         h = np.hstack([pts, np.ones((len(pts), 1))])
         return (self.as_array() @ h.T).T[:, :3]
 
-    def inverse(self) -> "CoordinateTransform":
+    def inverse(self) -> CoordinateTransform:
         return CoordinateTransform(matrix=np.linalg.inv(self.as_array()).tolist(),
                                    from_source=self.to_source, to_source=self.from_source,
                                    rmse=self.rmse, method=self.method)

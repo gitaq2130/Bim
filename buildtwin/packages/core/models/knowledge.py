@@ -1,7 +1,7 @@
 """판단 규칙·사례·전문가 검토 로그."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Literal
 
@@ -66,7 +66,7 @@ class CaseRecord(BaseModel):
     source_ref: str | None = None
     reliability: float = Field(default=0.5, ge=0.0, le=1.0)
     created_by: str | None = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class ExpertReviewLog(BaseModel):
@@ -77,4 +77,4 @@ class ExpertReviewLog(BaseModel):
     final: dict[str, Any]
     diff: list[dict[str, Any]]
     reviewer: str
-    reviewed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    reviewed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

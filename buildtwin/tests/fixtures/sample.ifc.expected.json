@@ -19,7 +19,7 @@
   "objects": {
     "columns": [
       {
-        "global_id": "2$SKhX1lD8je$zAym8$_rd",
+        "global_id": "26CIxtz9n8NOSFIe$xFsuG",
         "name": "C1-11",
         "origin": [
           -0.3,
@@ -48,7 +48,7 @@
         "grid": "00"
       },
       {
-        "global_id": "2pZA6KojLEChWykOo6vGJp",
+        "global_id": "2ZdviskYH85eMaIjnVKsfY",
         "name": "C1-12",
         "origin": [
           -0.3,
@@ -77,7 +77,7 @@
         "grid": "01"
       },
       {
-        "global_id": "0jLh9XeMX0mA7ApXolntjJ",
+        "global_id": "03evxliAnD$QIB63kJMpAO",
         "name": "C1-21",
         "origin": [
           5.7,
@@ -106,7 +106,7 @@
         "grid": "10"
       },
       {
-        "global_id": "3aKWUwFujExuRvDo8Y9gSo",
+        "global_id": "0jWz0Esez1vAuZkbK4BgyW",
         "name": "C1-22",
         "origin": [
           5.7,
@@ -135,7 +135,7 @@
         "grid": "11"
       },
       {
-        "global_id": "3uXflRydjEBu_Hu_2fQ5CS",
+        "global_id": "0S$7sGJDf1JvH5FpmRNDho",
         "name": "C1-31",
         "origin": [
           11.7,
@@ -164,7 +164,7 @@
         "grid": "20"
       },
       {
-        "global_id": "1wZcYVXkPFAvFVtqh7jpZd",
+        "global_id": "0TeuEN_cr2s8rbiXj6O6IX",
         "name": "C1-32",
         "origin": [
           11.7,
@@ -193,7 +193,7 @@
         "grid": "21"
       },
       {
-        "global_id": "3WjTMbrqn5weJ$CSr235KB",
+        "global_id": "2k914Xn5vFHALN2HRdqGlI",
         "name": "C2-11",
         "origin": [
           -0.3,
@@ -222,7 +222,7 @@
         "grid": "00"
       },
       {
-        "global_id": "2qLGGc$oH1MfS7HYY29CY1",
+        "global_id": "3P4fOKNPPA0eiNHNFrw0Sc",
         "name": "C2-12",
         "origin": [
           -0.3,
@@ -251,7 +251,7 @@
         "grid": "01"
       },
       {
-        "global_id": "0evH3CkYz9gwLC64iNWSJX",
+        "global_id": "2Jahwx0oXFUR6theYD4J3v",
         "name": "C2-21",
         "origin": [
           5.7,
@@ -280,7 +280,7 @@
         "grid": "10"
       },
       {
-        "global_id": "0l2SwgM4z1vhgdCAzhWDaa",
+        "global_id": "3hZjlJ7mn0ehdsyzv4ZlD6",
         "name": "C2-22",
         "origin": [
           5.7,
@@ -309,7 +309,7 @@
         "grid": "11"
       },
       {
-        "global_id": "0YJWvbhO14hutpJmAy454B",
+        "global_id": "34V5CQaHH5_BJfDtznHnQk",
         "name": "C2-31",
         "origin": [
           11.7,
@@ -338,7 +338,7 @@
         "grid": "20"
       },
       {
-        "global_id": "2PuHbyozD8GgvCnZgAGECg",
+        "global_id": "1V3oAFsF59Evl$vdRQEXWT",
         "name": "C2-32",
         "origin": [
           11.7,
@@ -369,7 +369,7 @@
     ],
     "beams": [
       {
-        "global_id": "1qLxSE88bDSeD4OYaSPIDt",
+        "global_id": "2GQnYcWqbA2RR5hPZftXZ1",
         "name": "BX1-11",
         "origin": [
           0.3,
@@ -397,7 +397,7 @@
         "level": "1F"
       },
       {
-        "global_id": "356sqHFTbFcBviuPP9Bamd",
+        "global_id": "0Y74Iekcf5ngr3AA1$YX1$",
         "name": "BX1-21",
         "origin": [
           6.3,
@@ -425,7 +425,7 @@
         "level": "1F"
       },
       {
-        "global_id": "17vd5PEyT9j9ACh3FF1PpW",
+        "global_id": "050rCdZwrABRzysSqE0sTO",
         "name": "BX1-12",
         "origin": [
           0.3,
@@ -453,7 +453,7 @@
         "level": "1F"
       },
       {
-        "global_id": "3DrBMFx3P0jf6OsuA4Iklu",
+        "global_id": "1cBUSiMiH1Kf1DzzjMLDWY",
         "name": "BX1-22",
         "origin": [
           6.3,
@@ -481,7 +481,7 @@
         "level": "1F"
       },
       {
-        "global_id": "2HpfNtRuT1p9W6usRAOj3u",
+        "global_id": "2ouJuyOn9EQuHQ$SS8lQbJ",
         "name": "BY1-1",
         "origin": [
           0.15,
@@ -509,7 +509,7 @@
         "level": "1F"
       },
       {
-        "global_id": "1oAw6LbWTDVOG7177XEFvb",
+        "global_id": "0v6UDj8_TBzgF8cqMg_zG3",
         "name": "BY1-2",
         "origin": [
           6.15,
@@ -537,7 +537,7 @@
         "level": "1F"
       },
       {
-        "global_id": "3nrjPLKUbB1uXyKl$849YM",
+        "global_id": "1xXtmVvFbAG9CASOFH3j2u",
         "name": "BY1-3",
         "origin": [
           12.15,
@@ -565,7 +565,7 @@
         "level": "1F"
       },
       {
-        "global_id": "2Qe$L2kXD1f8gBawx$GcwK",
+        "global_id": "0gxbWZKPbEZ8KTRJJJ6P5v",
         "name": "BC1",
         "origin": [
           12.3,
@@ -594,7 +594,7 @@
         "cantilever": true
       },
       {
-        "global_id": "2TUMdvm2HDLAER$7FNYNvD",
+        "global_id": "3TVh2tM2v0NR$mcXzYpOhp",
         "name": "BX2-11",
         "origin": [
           0.3,
@@ -622,7 +622,7 @@
         "level": "2F"
       },
       {
-        "global_id": "07OwI$Dj9BM9WQCexox3eH",
+        "global_id": "1VTGOucM18XBUO9F1nxOZe",
         "name": "BX2-21",
         "origin": [
           6.3,
@@ -650,7 +650,7 @@
         "level": "2F"
       },
       {
-        "global_id": "2YfSCEP1v8d8OBjOf5o7ST",
+        "global_id": "2TmDI8TtbDb94X0J_9Xrfv",
         "name": "BX2-12",
         "origin": [
           0.3,
@@ -678,7 +678,7 @@
         "level": "2F"
       },
       {
-        "global_id": "1hgIv_awn0NftFHsBnjML9",
+        "global_id": "2VwV_IV2vDVQl$g41Ieb4m",
         "name": "BX2-22",
         "origin": [
           6.3,
@@ -706,7 +706,7 @@
         "level": "2F"
       },
       {
-        "global_id": "3cbLoZD71D9B0RBDxyKuHN",
+        "global_id": "1LghKkD1PBphUKCAXbQPJI",
         "name": "BY2-1",
         "origin": [
           0.15,
@@ -734,7 +734,7 @@
         "level": "2F"
       },
       {
-        "global_id": "2q5c_weLH0JQOnWAuY2xMh",
+        "global_id": "0JQAU9FUL37wanwU0mMqD6",
         "name": "BY2-2",
         "origin": [
           6.15,
@@ -762,7 +762,7 @@
         "level": "2F"
       },
       {
-        "global_id": "1x7qt1yof4DuM6KJT5yWxT",
+        "global_id": "3WbY_ZoD14Tfgb7M_eBiKt",
         "name": "BY2-3",
         "origin": [
           12.15,
@@ -790,7 +790,7 @@
         "level": "2F"
       },
       {
-        "global_id": "0VLAXlq9X13QPKRtqAsOzh",
+        "global_id": "3WNZdARRT0CRXRNNe73hH6",
         "name": "BC2",
         "origin": [
           12.3,
@@ -821,7 +821,7 @@
     ],
     "slabs": [
       {
-        "global_id": "1LMbWK_l93zQx4mj1SF5XF",
+        "global_id": "3cU5D6e6L7GvASGcOLN5tP",
         "name": "S1",
         "origin": [
           -0.5,
@@ -849,7 +849,7 @@
         "level": "1F"
       },
       {
-        "global_id": "0buTW83pr1JuLBkiAQZBnr",
+        "global_id": "3jVyVg4$j8g9R21uZF3GxL",
         "name": "S2",
         "origin": [
           -0.5,
@@ -879,7 +879,7 @@
     ],
     "walls": [
       {
-        "global_id": "36P1Q6$Cn0FvYLLrTQMQJ2",
+        "global_id": "3AcsyVLqv5HRzQp1inV8Oe",
         "name": "W1-S",
         "origin": [
           0.0,
@@ -907,7 +907,7 @@
         "level": "1F"
       },
       {
-        "global_id": "2x1I6QaXLBEgPy2BeCnV0x",
+        "global_id": "3jBh4NW2L61AA6ZkmK_PWP",
         "name": "W1-N",
         "origin": [
           0.0,
@@ -935,7 +935,7 @@
         "level": "1F"
       },
       {
-        "global_id": "3l9o9QkP13IPLAO08nquJR",
+        "global_id": "0Y1LySFePFAApeP2vjkUw$",
         "name": "W1-W",
         "origin": [
           -0.2,
@@ -963,7 +963,7 @@
         "level": "1F"
       },
       {
-        "global_id": "2rJW13AdP5cBKvyt3oyBBH",
+        "global_id": "0okH7num99BfivWg7TMlrE",
         "name": "W1-E",
         "origin": [
           12.399999999999999,
@@ -991,7 +991,7 @@
         "level": "1F"
       },
       {
-        "global_id": "0D4E_yl0z84AiBGzY0QE7j",
+        "global_id": "1Nrr8yGgPEvOpJNf_gZlf5",
         "name": "W2-S",
         "origin": [
           0.0,
@@ -1019,7 +1019,7 @@
         "level": "2F"
       },
       {
-        "global_id": "2IIfoToGjFxucvZxEtUuq9",
+        "global_id": "2B7F2aAzrFDOhI5A79Toki",
         "name": "W2-N",
         "origin": [
           0.0,
@@ -1047,7 +1047,7 @@
         "level": "2F"
       },
       {
-        "global_id": "1VwbdRGZvDPPtZXXEEWh51",
+        "global_id": "0mCKlkxNjFtQX$ouCXClkg",
         "name": "W2-W",
         "origin": [
           -0.2,
@@ -1075,7 +1075,7 @@
         "level": "2F"
       },
       {
-        "global_id": "2o4xgetBn7PO2z7gxYntRC",
+        "global_id": "1T_kmLVPD6Jv4wrqCPwXRp",
         "name": "W2-E",
         "origin": [
           12.399999999999999,
@@ -1105,7 +1105,7 @@
     ],
     "ducts": [
       {
-        "global_id": "0wdWKGj$H0hxYVWCCpEPF9",
+        "global_id": "01m2R5tg595w1FXl8_YfJl",
         "name": "D1-1",
         "origin": [
           0.5,
@@ -1133,7 +1133,7 @@
         "level": "1F"
       },
       {
-        "global_id": "19_HrMmYbD$RClKd4bEp2O",
+        "global_id": "2n0QHK1B16IwpvPwkYmvIR",
         "name": "D1-2",
         "origin": [
           0.5,
@@ -1161,7 +1161,7 @@
         "level": "1F"
       },
       {
-        "global_id": "3mWslrZEnBp94mR08NDfx2",
+        "global_id": "3zixsI_pfETubEEvT1DaOS",
         "name": "D2-1",
         "origin": [
           0.5,
@@ -1189,7 +1189,7 @@
         "level": "2F"
       },
       {
-        "global_id": "1DigsYpbbB9gJwkgf9zzbg",
+        "global_id": "20moFO4Hz6JwkJkKYoXrgd",
         "name": "D2-2",
         "origin": [
           0.5,

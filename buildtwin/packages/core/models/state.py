@@ -1,7 +1,7 @@
 """객체 상태기계 — ADR 0001 §3~5. 허용 전이 표 밖의 전이는 InvalidTransitionError."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Literal
 from uuid import UUID, uuid4
@@ -97,10 +97,10 @@ class StateTransition(BaseModel):
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     evidence: Evidence
     review_request_id: UUID | None = None
-    occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    occurred_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @model_validator(mode="after")
-    def _check(self) -> "StateTransition":
+    def _check(self) -> StateTransition:
         validate_transition(self.from_state, self.to_state, self.actor)
         if self.actor == A.SYSTEM and self.confidence is None:
             raise ValueError("system transitions require confidence")

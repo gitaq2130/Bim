@@ -20,7 +20,8 @@ def test_resolve_verification_review_records_log(client, auth, project, ifc_job)
     open_reviews = client.get(f"/api/projects/{project}/review-requests", headers=auth("cm"),
                               params={"kind": "verification", "status": "open"}).json()
     assert open_reviews, "test_06 should have created a verification review"
-    rv = open_reviews[0]
+    rv = next((x for x in open_reviews if x["rule_id"] == "VER-001"), open_reviews[0])   # test_06 의 완료신고 vs NOT_BUILT
+    state_before = client.get(f"/api/objects/{rv['global_id']}", headers=auth("cm")).json()["current_state"]["state"]
     assert client.post(f"/api/review-requests/{rv['review_request_id']}/resolve", headers=auth("cm"), json={"note": "x"}).status_code == 422
     r = client.post(f"/api/review-requests/{rv['review_request_id']}/resolve", headers=auth("cm"),
                     json={"decision": "approved", "note": "현장 확인 결과 신고 인정"})
@@ -32,7 +33,8 @@ def test_resolve_verification_review_records_log(client, auth, project, ifc_job)
     assert any(d["path"] == "status" for d in logs[0].diff)
     # 상태는 그대로(verification 은 차단 해제만)
     d = client.get(f"/api/objects/{rv['global_id']}", headers=auth("cm")).json()
-    assert d["current_state"]["state"] == "PLANNED"
+    assert d["current_state"]["state"] == state_before
+    assert rv["review_request_id"] not in d["current_state"]["open_review_ids"]
     # 두 번 처리 불가
     assert client.post(f"/api/review-requests/{rv['review_request_id']}/resolve", headers=auth("cm"), json={"decision": "rejected"}).status_code == 409
     assert client.get(f"/api/review-requests/{rv['review_request_id']}", headers=auth("cm")).json()["status"] == "approved"

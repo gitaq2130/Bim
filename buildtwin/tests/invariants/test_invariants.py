@@ -157,6 +157,7 @@ SKIP_DIR_NAMES = {"__pycache__", "node_modules", "tests", "__tests__", "dist", "
 SKIP_FILE_PATTERNS = (re.compile(r".*\.test\.tsx?$"), re.compile(r"^test_.*\.py$"), re.compile(r".*_test\.py$"),
                       re.compile(r"^vitest\.config\.ts$"), re.compile(r"^conftest\.py$"))
 COMMENT_PREFIXES = ("#", "//", "/*", "*")
+STRING_LITERAL = re.compile(r"""(["'`])(?:\\.|(?!\1).)*\1""")   # "…" '…' `…` (이스케이프 허용). 메시지 텍스트는 코드 상수가 아니다
 
 
 def _scan_targets() -> list[Path]:
@@ -177,11 +178,12 @@ def _scan_targets() -> list[Path]:
     return sorted(out)
 
 
-def _strip_trailing_comment(line: str, suffix: str) -> str:
+def _code_only(line: str, suffix: str) -> str:
+    """문자열 리터럴을 비우고(사용자 메시지·로그 문구 제외) 꼬리 주석을 자른다. 문자열을 먼저 비우므로 문자열 속 #/// 는 안전하다."""
+    code = STRING_LITERAL.sub('""', line)
     marker = "#" if suffix == ".py" else "//"
-    # 문자열 안의 #/// 를 정확히 구분하진 않는다 — 좌표 상수 lint 목적상 보수적(오탐 쪽)으로 충분하다
-    idx = line.find(marker)
-    return line if idx < 0 else line[:idx]
+    idx = code.find(marker)
+    return code if idx < 0 else code[:idx]
 
 
 def _is_identity_exempt(lines: list[str], i: int, key: str, value: float) -> bool:
@@ -202,13 +204,13 @@ def _coordinate_constant_violations() -> list[str]:
             stripped = raw.strip()
             if not stripped or stripped.startswith(COMMENT_PREFIXES):
                 continue
-            code = _strip_trailing_comment(raw, path.suffix)
+            code = _code_only(raw, path.suffix)
             for m in COORD_ASSIGN.finditer(code):
                 key, value = m.group(1), float(m.group(2))
                 if _is_identity_exempt(lines, i, key, value):
                     continue
                 violations.append(f"{path.relative_to(ROOT)}:{i + 1}: {stripped}")
-            if EPSG_LITERAL.search(code):
+            if EPSG_LITERAL.search(raw):   # 문자열 리터럴 검사이므로 원본 줄에서
                 violations.append(f"{path.relative_to(ROOT)}:{i + 1}: EPSG literal: {stripped}")
     return violations
 
@@ -228,6 +230,8 @@ def test_lint_regex_catches_hardcoded_coordinates(tmp_path: Path):
     assert COORD_ASSIGN.search("epsg = 5186") is not None
     assert COORD_ASSIGN.search("unit_scale = 1.0") is None            # \b 경계: unit_scale 은 대상이 아님
     assert EPSG_LITERAL.search('crs = "EPSG:5186"') is not None
+    assert COORD_ASSIGN.search(_code_only('msg = f"scale=1.0으로 두었으니 확인"  # scale=2', ".py")) is None   # 문자열·주석 제외
+    assert COORD_ASSIGN.search(_code_only("scale = 0.001  // mm", ".ts")) is not None
     lines = ["/** identity: 변환 없음 */", "const CS = {", "  rotation_deg: 0,", "  scale: 1,", "  epsg: 0,"]
     assert _is_identity_exempt(lines, 2, "rotation_deg", 0.0)
     assert _is_identity_exempt(lines, 3, "scale", 1.0)

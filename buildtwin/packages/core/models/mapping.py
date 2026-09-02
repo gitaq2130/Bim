@@ -18,7 +18,7 @@ class EntityObjectMapping(BaseModel):
     reviewed_by: str | None = None
 
     @model_validator(mode="after")
-    def _flag(self) -> "EntityObjectMapping":
+    def _flag(self) -> EntityObjectMapping:
         if self.confidence < MAPPING_REVIEW_THRESHOLD and self.reviewed_by is None:
             self.needs_review = True
         return self
@@ -32,7 +32,7 @@ class ActivityObjectMapping(BaseModel):
     needs_review: bool = False
 
     @model_validator(mode="after")
-    def _flag(self) -> "ActivityObjectMapping":
+    def _flag(self) -> ActivityObjectMapping:
         if self.confidence < MAPPING_REVIEW_THRESHOLD:
             self.needs_review = True
         return self

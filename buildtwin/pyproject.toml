@@ -32,7 +32,12 @@ exclude = [".venv", "apps", "storage"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
-ignore = ["E501", "B008", "B904", "UP007", "UP035", "UP006", "UP045"]
+ignore = ["E501", "B008", "B904", "UP007", "UP035", "UP006", "UP045", "UP042", "B905"]
+
+[tool.ruff.lint.per-file-ignores]
+"packages/core/models/__init__.py" = ["F401"]
+"services/*/__init__.py" = ["F401"]
+"tests/**/conftest.py" = ["F401"]
 
 [tool.mypy]
 python_version = "3.11"
