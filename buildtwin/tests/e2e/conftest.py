@@ -28,6 +28,7 @@ FIXTURES = ROOT / "tests" / "fixtures"
 WEB = ROOT / "apps" / "web"
 METRICS = json.loads((ROOT / "tests" / "metrics.json").read_text(encoding="utf-8"))
 DEV_PASSWORD = "buildtwin"                      # services/api/auth/seed.py 의 개발 시드(문서화된 값)
+E2E_JWT_SECRET = "e2e-only-not-a-real-secret"   # settings.jwt_secret 은 운영 필수(.env JWT_SECRET) — E2E 는 명시적으로 준다
 ROLES = ("contractor", "cm", "client", "admin")
 JOB_TIMEOUT_S = 120
 
@@ -59,10 +60,11 @@ def api() -> Iterator:
     from packages.core.settings import settings
     from services.common.celery_app import celery_app
 
-    prev = (settings.database_url, settings.storage_root, settings.celery_always_eager)
+    prev = (settings.database_url, settings.storage_root, settings.celery_always_eager, settings.jwt_secret)
     settings.database_url = f"sqlite:///{(tmp / 'e2e.db').as_posix()}"
     settings.storage_root = str(tmp / "storage")
     settings.celery_always_eager = True
+    settings.jwt_secret = E2E_JWT_SECRET
     celery_app.conf.task_always_eager = True
     celery_app.conf.task_eager_propagates = True
     reset_engine()
@@ -74,7 +76,7 @@ def api() -> Iterator:
     with TestClient(create_app()) as client:
         yield client
     reset_engine()
-    settings.database_url, settings.storage_root, settings.celery_always_eager = prev
+    settings.database_url, settings.storage_root, settings.celery_always_eager, settings.jwt_secret = prev
     shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -149,7 +151,7 @@ def api_server() -> Iterator[dict]:
     tmp = Path(tempfile.mkdtemp(prefix="buildtwin-e2e-srv-"))
     port = _free_port()
     env = {**os.environ, "DATABASE_URL": f"sqlite:///{(tmp / 'srv.db').as_posix()}", "STORAGE_ROOT": str(tmp / "storage"),
-           "CELERY_ALWAYS_EAGER": "1", "PYTHONPATH": str(ROOT)}
+           "CELERY_ALWAYS_EAGER": "1", "JWT_SECRET": E2E_JWT_SECRET, "PYTHONPATH": str(ROOT)}
     log = (tmp / "uvicorn.log").open("w")
     proc = subprocess.Popen([sys.executable, "-m", "uvicorn", "services.api.main:app", "--host", "127.0.0.1", "--port", str(port)],
                             cwd=str(ROOT), env=env, stdout=log, stderr=subprocess.STDOUT)

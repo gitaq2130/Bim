@@ -24,8 +24,6 @@ import type {
   Viewer3DProps,
 } from "./types";
 
-/** 단면 오프셋 기본값(모델 단위). props.sectionOffset 이 없을 때만 쓰인다. 알고리즘(section.ts)은 이 값을 모른다. */
-export const DEFAULT_SECTION_OFFSET = 1.2;
 export const DEFAULT_BACKGROUND = "#F5F5F5";
 export const DEFAULT_HOVER_THROTTLE_MS = 50;
 const CLICK_MAX_MOVE_PX = 5;
@@ -284,12 +282,12 @@ export const Viewer3D = forwardRef<Viewer3DHandle, Viewer3DProps & ExtraProps>(f
         if (!lv) throw new Error(`Viewer3D.getPlanSection: unknown level "${level}"`);
         const model = modelRef.current;
         if (!model) throw new Error("Viewer3D.getPlanSection: model not loaded");
-        const z = lv.elevation + (offset ?? p.sectionOffset ?? DEFAULT_SECTION_OFFSET);
+        const z = lv.elevation + (offset ?? p.sectionOffset);
         const polylines = slicePlan(collectSliceable(model), z);
         return {
           level,
           elevation: z,
-          coordinateSystem: p.coordinateSystem ?? IDENTITY_MODEL_CS,
+          coordinate_system: p.coordinateSystem ?? IDENTITY_MODEL_CS,
           polylines,
           svg: polylinesToSvg(polylines),
         };

@@ -158,8 +158,8 @@ describe("Viewer2D imperative handle", () => {
     const { svg, ref } = setup();
     const section: PlanSection = {
       level: "1F", elevation: 1.2,
-      coordinateSystem: { source: "ifc_local", origin: [0, 0, 0], rotation_deg: 0, scale: 1, unit: "m" },
-      polylines: [{ globalId: "G1", points: [[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]] }],
+      coordinate_system: { source: "ifc_local", origin: [0, 0, 0], rotation_deg: 0, scale: 1, unit: "m" },
+      polylines: [{ global_id: "G1", points: [[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]] }],
     };
     // 모델(m) → 도면(mm): 1000배 + 이동 (5, 5)
     const t = [[1000, 0, 0, 5], [0, 1000, 0, 5], [0, 0, 1000, 0], [0, 0, 0, 1]];

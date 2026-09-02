@@ -3,7 +3,7 @@
 패턴은 fnmatch, 대소문자 무시. 점수 규약:
   - 매치하는 규칙의 ifc_types에 대상 타입이 있으면 그 weight(여러 개면 최대)
   - 매치하는 규칙이 하나도 없으면 0.0
-  - 매치는 하지만 전부 다른 타입을 가리키면 감점(mismatch_penalty, 기본 -0.5)
+  - 매치는 하지만 전부 다른 타입을 가리키면 감점(mismatch_penalty — config/sync.yaml 의 rule_mismatch_penalty)
 """
 from __future__ import annotations
 
@@ -16,8 +16,9 @@ from pydantic import BaseModel, Field
 
 from packages.core.settings import ROOT, settings
 
+from .config import load_sync_config
+
 RULES_FILENAME = "layer_mapping.yaml"
-DEFAULT_MISMATCH_PENALTY = -0.5   # config/sync.yaml의 rule_mismatch_penalty가 우선한다
 
 
 class LayerRule(BaseModel):
@@ -81,7 +82,9 @@ def matching_rules(layer: str | None, block_name: str | None,
 
 def layer_rule_match(layer: str | None, block_name: str | None, ifc_type: str,
                      rules: LayerMappingRules | None = None,
-                     mismatch_penalty: float = DEFAULT_MISMATCH_PENALTY) -> RuleMatch:
+                     mismatch_penalty: float | None = None) -> RuleMatch:
+    if mismatch_penalty is None:
+        mismatch_penalty = load_sync_config().rule_mismatch_penalty
     matched = matching_rules(layer, block_name, rules)
     if not matched:
         return RuleMatch(score=0.0)
@@ -99,5 +102,5 @@ def layer_rule_match(layer: str | None, block_name: str | None, ifc_type: str,
 
 def layer_rule_score(layer: str | None, block_name: str | None, ifc_type: str,
                      rules: LayerMappingRules | None = None,
-                     mismatch_penalty: float = DEFAULT_MISMATCH_PENALTY) -> float:
+                     mismatch_penalty: float | None = None) -> float:
     return layer_rule_match(layer, block_name, ifc_type, rules, mismatch_penalty).score

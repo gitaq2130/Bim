@@ -20,7 +20,7 @@ export function renderWithProviders(ui: ReactElement, opts: RenderOptions & { ro
   return { qc, ...render(ui, { wrapper: Wrapper, ...rest }) };
 }
 
-export function loginAs(role: UserRole, userId = `user-${role}`) {
+export function loginAs(role: UserRole, userId: string = `user-${role}`) {
   useStore.getState().auth.login({ token: `tok-${role}`, role, userId });
 }
 

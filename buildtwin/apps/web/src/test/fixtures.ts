@@ -67,8 +67,9 @@ export const objectDetailFixture: ObjectDetail = {
   ],
   next_actions: [
     { kind: "confirm", label: "확정", allowed_roles: ["cm"], to_state: "CONFIRMED" },
-    { kind: "reject", label: "반려(재작업)", allowed_roles: ["cm"], to_state: "IN_PROGRESS" },
-    { kind: "inspect", label: "검측 재요청", allowed_roles: ["contractor"], to_state: "INSPECTION_REQUESTED" },
+    { kind: "reject_inspection", label: "반려(재작업)", allowed_roles: ["cm"], to_state: "IN_PROGRESS" },
+    { kind: "request_inspection", label: "검측 재요청", allowed_roles: ["contractor"], to_state: "INSPECTION_REQUESTED" },
+    { kind: "resolve_review", label: "검토요청 처리", allowed_roles: ["cm"], to_state: null, review_request_id: "rr-1" },
   ],
   linked: {
     entity_handles: ["1A3F", "1A40"],

@@ -33,19 +33,22 @@ def _as_dict(payload: Any) -> dict | None:
     return dict(payload)
 
 
-def _persist(job_id: str, drawing_id: str, alignment: DrawingAlignment, mappings: list, result: dict) -> None:
-    """DB 저장(선택). DrawingRow/JobRow 가 없으면 건너뛰고 경고만 남긴다."""
+def _persist(job_id: str, drawing_id: str, alignment: DrawingAlignment, mappings: list, result: dict,
+             project_id: str | None) -> None:
+    """DB 저장(선택): 정합 + 매핑 생명주기(rebuild_mappings). DrawingRow/JobRow 가 없으면 건너뛰고 경고만 남긴다."""
     from packages.core.db import session_scope
-    from packages.core.models.orm import JobRow
+    from packages.core.models.orm import DrawingRow, JobRow
 
-    from .persistence import save_alignment, save_mappings
+    from .persistence import rebuild_mappings, save_alignment
 
     with session_scope() as s:
-        try:
-            save_alignment(s, drawing_id, alignment)
-        except LookupError as exc:
-            result["warnings"].append(str(exc))
-        save_mappings(s, mappings)
+        drawing = s.get(DrawingRow, drawing_id)
+        if drawing is None:
+            result["warnings"].append(f"drawing not found: {drawing_id}; nothing persisted")
+            return
+        save_alignment(s, drawing_id, alignment)
+        rb = rebuild_mappings(s, drawing_id, project_id or drawing.project_id, mappings, keep_confirmed=True)
+        result["persisted"] = rb.model_dump()
         job = s.get(JobRow, job_id)
         if job is not None:
             job.status, job.progress = "done", 1.0
@@ -89,7 +92,7 @@ def run_build_mapping(job_id: str, drawing_id: str, entities_json: Any, objects_
         mappings=[m.model_dump(mode="json") for m in mappings],
     )
     if persist:
-        _persist(job_id, drawing_id, alignment, mappings, result)
+        _persist(job_id, drawing_id, alignment, mappings, result, grid_data.get("project_id"))
     return result
 
 

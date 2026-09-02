@@ -60,7 +60,7 @@ describe("slicePlan", () => {
     const result = slicePlan(meshes, 0.5);
     expect(result).toHaveLength(1);
     const pl = result[0];
-    expect(pl.globalId).toBe("CUBE");
+    expect(pl.global_id).toBe("CUBE");
     expect(pl.closed).toBe(true);
     expect(pl.points).toHaveLength(4);
     expect(sortPts(pl.points)).toEqual([
@@ -78,12 +78,12 @@ describe("slicePlan", () => {
     ]);
     const result = slicePlan(meshes, 1.2);
     expect(result).toHaveLength(2);
-    expect(result.map((r) => r.globalId).sort()).toEqual(["COL_A", "COL_B"]);
+    expect(result.map((r) => r.global_id).sort()).toEqual(["COL_A", "COL_B"]);
     for (const pl of result) {
       expect(pl.closed).toBe(true);
       expect(pl.points).toHaveLength(4);
     }
-    const b = result.find((r) => r.globalId === "COL_B")!;
+    const b = result.find((r) => r.global_id === "COL_B")!;
     expect(sortPts(b.points)).toEqual([
       [5, 5],
       [5, 5.6],
@@ -98,7 +98,7 @@ describe("slicePlan", () => {
       ["HIGH", box([0, 0, 4], [1, 1, 5])],
     ]);
     const result = slicePlan(meshes, 4.5);
-    expect(result.map((r) => r.globalId)).toEqual(["HIGH"]);
+    expect(result.map((r) => r.global_id)).toEqual(["HIGH"]);
   });
 
   it("a box straddling floors is sliced in both floors at different elevations", () => {

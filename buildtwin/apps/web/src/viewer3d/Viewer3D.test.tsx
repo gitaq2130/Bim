@@ -46,7 +46,7 @@ describe("Viewer3D (headless)", () => {
     const ref = createRef<Viewer3DHandle>();
     const onLoad = vi.fn();
     const { getByTestId, unmount } = render(
-      <Viewer3D ref={ref} modelUrl="/model.json" onLoad={onLoad} disableRenderer />,
+      <Viewer3D ref={ref} modelUrl="/model.json" onLoad={onLoad} sectionOffset={1.0} disableRenderer />,
     );
     await waitFor(() => expect(onLoad).toHaveBeenCalledTimes(1));
     expect(onLoad.mock.calls[0][0].objectCount).toBe(5);
@@ -77,18 +77,18 @@ describe("Viewer3D (headless)", () => {
     const s1 = await ref.current!.getPlanSection("1F");
     expect(s1.level).toBe("1F");
     expect(s1.elevation).toBe(1.0);
-    expect(s1.polylines.map((p) => p.globalId).sort()).toEqual(["COL_1", "COL_2", "COL_3"]);
+    expect(s1.polylines.map((p) => p.global_id).sort()).toEqual(["COL_1", "COL_2", "COL_3"]);
     expect(s1.polylines.every((p) => p.closed && p.points.length === 4)).toBe(true);
-    expect(s1.coordinateSystem.origin).toEqual([100, 200, 0]);
+    expect(s1.coordinate_system.origin).toEqual([100, 200, 0]);
     expect(s1.svg).toContain('data-global-id="COL_1"');
 
     const s2 = await ref.current!.getPlanSection("2F");
     expect(s2.elevation).toBe(4.7);
-    expect(s2.polylines.map((p) => p.globalId)).toEqual(["COL_2F"]);
+    expect(s2.polylines.map((p) => p.global_id)).toEqual(["COL_2F"]);
 
     // explicit offset overrides prop
     const slab = await ref.current!.getPlanSection("1F", 3.6);
-    expect(slab.polylines.map((p) => p.globalId)).toEqual(["SLAB_2F"]);
+    expect(slab.polylines.map((p) => p.global_id)).toEqual(["SLAB_2F"]);
 
     await expect(ref.current!.getPlanSection("B1")).rejects.toThrow(/unknown level/);
   });
@@ -96,7 +96,7 @@ describe("Viewer3D (headless)", () => {
   it("handle methods are safe before and after load", async () => {
     const ref = createRef<Viewer3DHandle>();
     const onLoad = vi.fn();
-    render(<Viewer3D ref={ref} modelUrl="/model.json" onLoad={onLoad} disableRenderer />);
+    render(<Viewer3D ref={ref} modelUrl="/model.json" onLoad={onLoad} sectionOffset={1.0} disableRenderer />);
     // before load
     expect(ref.current!.getObjectIds()).toEqual([]);
     act(() => {

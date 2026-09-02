@@ -108,7 +108,7 @@ export interface LevelInfo {
 }
 
 export interface SectionPolyline {
-  globalId: string;
+  global_id: string;
   /** 모델 좌표계 XY (변환 없음) */
   points: Vec2[];
   /** 마지막 점이 첫 점과 이어지면 true (중복 점은 포함하지 않는다) */
@@ -120,7 +120,7 @@ export interface PlanSection {
   /** 실제로 자른 높이 = 층 elevation + offset (모델 단위) */
   elevation: number;
   /** 모델 좌표계(packages/core 와 동일 구조). 변환은 sync-2d3d 가 담당. */
-  coordinateSystem: CoordinateSystem;
+  coordinate_system: CoordinateSystem;
   /** 옵션: 단순 SVG 문자열 */
   svg?: string;
   polylines: SectionPolyline[];
@@ -143,7 +143,7 @@ export interface Viewer3DHandle {
   setState(globalId: string, state: ObjectState): void;
   setStates(map: Record<string, ObjectState>): void;
   /**
-   * 층별 평면 단면. `offset` 을 생략하면 props.sectionOffset 을 쓴다.
+   * 층별 평면 단면. `offset` 을 생략하면 props.sectionOffset(필수, 서버 값) 을 쓴다.
    * levels 는 props.levels 에서 찾는다. 없는 층이면 reject.
    */
   getPlanSection(level: string, offset?: number): Promise<PlanSection>;
@@ -167,8 +167,8 @@ export interface Viewer3DProps {
   stateMap?: Record<string, ObjectState>;
   /** 층 목록. getPlanSection 이 참조한다. */
   levels?: LevelInfo[];
-  /** 단면 오프셋(모델 단위). 기본 1.2 */
-  sectionOffset?: number;
+  /** 단면 오프셋(모델 단위). 필수 — 서버(models.plan_section_default_offset 또는 plan-section.offset)에서 온다. 뷰어에 숫자 기본값 없음. */
+  sectionOffset: number;
   /** 모델 좌표계. 생략 시 ifc_local 항등 좌표계로 보고한다. */
   coordinateSystem?: CoordinateSystem;
   /** 마운트 시 자동 로드할 포인트클라우드 (transform 과 함께 주어야 한다) */

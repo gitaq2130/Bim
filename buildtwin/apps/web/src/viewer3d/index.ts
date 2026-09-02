@@ -1,4 +1,4 @@
-export { Viewer3D, DEFAULT_SECTION_OFFSET, DEFAULT_BACKGROUND, DEFAULT_HOVER_THROTTLE_MS } from "./Viewer3D";
+export { Viewer3D, DEFAULT_BACKGROUND, DEFAULT_HOVER_THROTTLE_MS } from "./Viewer3D";
 export { default } from "./Viewer3D";
 export { STATE_COLORS, STATE_LABELS_KO, DEFAULT_STATE, HIGHLIGHT_EMISSIVE, EDGE_COLOR, colorForState } from "./colors";
 export { MeshBundleLoader, buildGeometry, disposeModel, box3ToBBox, isValidEntry } from "./loader";

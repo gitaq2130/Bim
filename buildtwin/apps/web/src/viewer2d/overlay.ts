@@ -49,7 +49,7 @@ export function applyTransform2D(m: CoordinateTransform, p: readonly [number, nu
 }
 
 export interface ProjectedPolyline {
-  globalId: string;
+  global_id: string;
   points: [number, number][];
 }
 
@@ -73,7 +73,7 @@ export function projectSection(section: PlanSection, opts: ProjectOptions = {}):
   }
   const mat = m;
   return section.polylines.map((pl) => ({
-    globalId: pl.globalId,
+    global_id: pl.global_id,
     points: pl.points.map((p) => applyTransform2D(mat, p)),
   }));
 }
@@ -103,7 +103,7 @@ export function overlayToSvg(section: PlanSection, opts: OverlaySvgOptions = {})
       const pts = closed ? pl.points.slice(0, -1) : pl.points;
       return {
         tag: closed ? "polygon" : "polyline",
-        attrs: { points: pointsAttr(pts), fill: "none", "data-global-id": pl.globalId },
+        attrs: { points: pointsAttr(pts), fill: "none", "data-global-id": pl.global_id },
         handle: "",
         layer: "",
       };

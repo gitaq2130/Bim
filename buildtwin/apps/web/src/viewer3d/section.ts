@@ -190,7 +190,7 @@ export function slicePlan(
     if (segs.length === 0) continue;
     for (const { points, closed } of chainSegments(segs, opts)) {
       if (points.length < 2) continue;
-      out.push({ globalId, points, closed });
+      out.push({ global_id: globalId, points, closed });
     }
   }
   return out;
@@ -233,7 +233,7 @@ export function polylinesToSvg(
     const d = pl.points
       .map(([x, y], i) => `${i === 0 ? "M" : "L"}${f(x)} ${f(-y)}`)
       .join(" ") + (pl.closed ? " Z" : "");
-    return `<path data-global-id="${escapeAttr(pl.globalId)}" d="${d}"/>`;
+    return `<path data-global-id="${escapeAttr(pl.global_id)}" d="${d}"/>`;
   });
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${f(minX)} ${f(-maxY)} ${f(w)} ${f(h)}" ` +

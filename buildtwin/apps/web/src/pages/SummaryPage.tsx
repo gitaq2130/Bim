@@ -52,13 +52,13 @@ export function SummaryPage() {
         </div>
       </div>
 
-      <h2>층·공종별 상태 분포</h2>
+      <h2>층·부재그룹별 상태 분포</h2>
       <div className="table-wrap">
         <table className="table">
           <thead>
             <tr>
               <th>층</th>
-              <th>공종</th>
+              <th>부재 그룹</th>
               {OBJECT_STATES.map((st) => (
                 <th key={st}>
                   <span className="swatch" style={{ background: STATE_COLORS[st] }} /> {STATE_LABELS_KO[st]}
@@ -73,7 +73,7 @@ export function SummaryPage() {
               return (
                 <tr key={i}>
                   <td>{row.level}</td>
-                  <td>{row.discipline}</td>
+                  <td>{row.group}</td>
                   {OBJECT_STATES.map((st) => (
                     <td key={st} className="num">
                       {row.counts[st] ?? 0}

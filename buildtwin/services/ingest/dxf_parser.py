@@ -16,6 +16,8 @@ from ezdxf.math import Vec3
 from packages.core.models import BBox2D, BBox3D, CoordinateSystem, DrawingEntityDraft, IngestResult, IngestWarning
 from packages.core.models.ingest import IngestStatus
 
+from .config import dxf_flatten_distance_m
+
 # $INSUNITS 코드 → (단위명, 1단위당 미터). DXF 사양(DXF Reference, HEADER $INSUNITS) 기준 정의값.
 INSUNITS_TO_METERS: dict[int, tuple[str, float]] = {
     1: ("in", 0.0254),
@@ -37,7 +39,6 @@ INSUNITS_TO_METERS: dict[int, tuple[str, float]] = {
     17: ("Gm", 1e9),
 }
 SUPPORTED_DXFTYPES = ("LINE", "LWPOLYLINE", "POLYLINE", "CIRCLE", "ARC", "INSERT", "TEXT", "MTEXT", "HATCH", "SPLINE")
-_FLATTEN_DISTANCE = 0.5      # 곡선 평탄화 허용 오차(도면 단위). 형상 근사용이며 좌표계 값이 아니다.
 _EXT_SENTINEL = 1e19         # ezdxf가 미설정 $EXTMIN/$EXTMAX에 두는 ±1e20 감지용
 
 
@@ -86,7 +87,20 @@ def _hatch_points(entity: Any) -> tuple[list[tuple[float, float]], dict[str, Any
     return points, attrs
 
 
-def _extract(entity: Any) -> DrawingEntityDraft | None:
+def resolve_insunits(insunits: int) -> tuple[str, float] | None:
+    """$INSUNITS 코드 → (단위명, 1단위당 m). 모르면 None."""
+    return INSUNITS_TO_METERS.get(insunits)
+
+
+def flatten_distance_in_drawing_units(unit_scale: float, flatten_distance_m: float | None = None) -> float:
+    """config/ingest.yaml 의 flatten_distance_m(m) 을 도면 단위로 환산. mm 도면(0.001)과 m 도면(1.0)이 같은 정밀도로 평탄화된다."""
+    tol_m = dxf_flatten_distance_m() if flatten_distance_m is None else float(flatten_distance_m)
+    if unit_scale <= 0:
+        raise ValueError(f"unit_scale must be positive, got {unit_scale}")
+    return tol_m / unit_scale
+
+
+def _extract(entity: Any, flatten_distance: float) -> DrawingEntityDraft | None:
     dxftype = entity.dxftype()
     if dxftype not in SUPPORTED_DXFTYPES:
         return None
@@ -116,7 +130,7 @@ def _extract(entity: Any) -> DrawingEntityDraft | None:
         draft.bbox = BBox2D(min=(c[0] - r, c[1] - r), max=(c[0] + r, c[1] + r))
     elif dxftype == "ARC":
         c = _xy(d.center)
-        draft.points = [c] + [_xy(p) for p in entity.flattening(_FLATTEN_DISTANCE)]
+        draft.points = [c] + [_xy(p) for p in entity.flattening(flatten_distance)]
         draft.radius = float(d.radius)
         attrs["start_angle"] = float(d.start_angle)
         attrs["end_angle"] = float(d.end_angle)
@@ -151,7 +165,7 @@ def _extract(entity: Any) -> DrawingEntityDraft | None:
         draft.points, hatch_attrs = _hatch_points(entity)
         attrs.update(hatch_attrs)
     elif dxftype == "SPLINE":
-        draft.points = [_xy(p) for p in entity.flattening(_FLATTEN_DISTANCE)]
+        draft.points = [_xy(p) for p in entity.flattening(flatten_distance)]
         attrs["degree"] = int(getattr(d, "degree", 0) or 0)
         attrs["closed"] = bool(entity.closed)
 
@@ -172,8 +186,8 @@ def _header_extent(doc: ezdxf.document.Drawing) -> BBox3D | None:
     return BBox3D(min=(float(lo.x), float(lo.y), float(lo.z)), max=(float(hi.x), float(hi.y), float(hi.z)))
 
 
-def parse_dxf(path: str | Path) -> IngestResult:
-    """DXF 파일 → IngestResult(entities=[DrawingEntityDraft...])."""
+def parse_dxf(path: str | Path, flatten_distance_m: float | None = None) -> IngestResult:
+    """DXF 파일 → IngestResult(entities=[DrawingEntityDraft...]). flatten_distance_m 미지정 시 config/ingest.yaml."""
     path = Path(path)
     warnings: list[IngestWarning] = []
     try:
@@ -185,6 +199,20 @@ def parse_dxf(path: str | Path) -> IngestResult:
             coordinate_system=CoordinateSystem(source="dxf_local", notes="file open failed"),
         )
 
+    # 단위: $INSUNITS. 알 수 없으면 경고 + scale 1.0(항등) 유지 — 실제 값은 사용자 입력으로 보정한다.
+    insunits = int(doc.header.get("$INSUNITS", 0) or 0)
+    unit_info = resolve_insunits(insunits)
+    if unit_info is None:
+        unit_name, scale = "unknown", 1.0
+        warnings.append(IngestWarning(
+            code="DXF_UNIT_UNKNOWN",
+            message=f"$INSUNITS={insunits}은(는) 해석할 수 없는 단위입니다. scale=1.0으로 두었으니 사용자 확인이 필요합니다.",
+            context={"insunits": insunits},
+        ))
+    else:
+        unit_name, scale = unit_info
+    flatten_distance = flatten_distance_in_drawing_units(scale, flatten_distance_m)
+
     msp = doc.modelspace()
     entities: list[DrawingEntityDraft] = []
     by_layer: Counter[str] = Counter()
@@ -192,7 +220,7 @@ def parse_dxf(path: str | Path) -> IngestResult:
     skipped: Counter[str] = Counter()
     for entity in msp:
         try:
-            draft = _extract(entity)
+            draft = _extract(entity, flatten_distance)
         except Exception as exc:  # noqa: BLE001 — 개별 엔티티 오류는 건너뛰고 기록
             warnings.append(IngestWarning(code="DXF_ENTITY_FAILED", message=str(exc), context={"handle": entity.dxf.handle, "dxftype": entity.dxftype()}))
             continue
@@ -214,19 +242,6 @@ def parse_dxf(path: str | Path) -> IngestResult:
             context=dict(skipped),
         ))
 
-    # 단위: $INSUNITS. 알 수 없으면 경고 + scale 1.0(항등) 유지 — 실제 값은 사용자 입력으로 보정한다.
-    insunits = int(doc.header.get("$INSUNITS", 0) or 0)
-    unit_info = INSUNITS_TO_METERS.get(insunits)
-    if unit_info is None:
-        unit_name, scale = "unknown", 1.0
-        warnings.append(IngestWarning(
-            code="DXF_UNIT_UNKNOWN",
-            message=f"$INSUNITS={insunits}은(는) 해석할 수 없는 단위입니다. scale=1.0으로 두었으니 사용자 확인이 필요합니다.",
-            context={"insunits": insunits},
-        ))
-    else:
-        unit_name, scale = unit_info
-
     extent = _header_extent(doc)
     extent_note = "extent_source=header($EXTMIN/$EXTMAX)"
     if extent is None:
@@ -241,7 +256,7 @@ def parse_dxf(path: str | Path) -> IngestResult:
 
     coordinate_system = CoordinateSystem(
         source="dxf_local", scale=scale, unit=unit_name, extent=extent,
-        notes=f"dxfversion={doc.dxfversion}; insunits={insunits}; {extent_note}; origin/rotation to model frame must come from user input or grid alignment",
+        notes=f"dxfversion={doc.dxfversion}; insunits={insunits}; flatten_distance_units={flatten_distance:g}; {extent_note}; origin/rotation to model frame must come from user input or grid alignment",
     )
     status: IngestStatus = "ok" if entities else "failed"
     if entities and any(w.code == "DXF_ENTITY_FAILED" for w in warnings):

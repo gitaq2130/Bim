@@ -82,3 +82,8 @@ HATCH→polygon(fill-opacity). 모르는 타입은 점이 있으면 polyline(`da
 ```
 npx vitest run src/viewer2d
 ```
+
+
+## PlanSection 필드 표기
+
+`setOverlay` 가 받는 `PlanSection` 은 snake_case: `{ level, elevation, coordinate_system, polylines: [{ global_id, points, closed? }] }` (viewer3d·API 와 동일).

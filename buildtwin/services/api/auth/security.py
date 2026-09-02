@@ -56,9 +56,9 @@ def create_access_token(user_id: str, role: str, email: str, expires_minutes: in
     now = datetime.now(UTC)
     exp = now + timedelta(minutes=expires_minutes if expires_minutes is not None else settings.jwt_expire_minutes)
     payload: dict[str, Any] = {"sub": user_id, "role": role, "email": email, "iat": int(now.timestamp()), "exp": exp}
-    return str(jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm))
+    return str(jwt.encode(payload, settings.resolve_jwt_secret(), algorithm=settings.jwt_algorithm))
 
 
 def decode_token(token: str) -> dict[str, Any]:
     """유효하지 않으면 jose.JWTError."""
-    return dict(jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm]))
+    return dict(jwt.decode(token, settings.resolve_jwt_secret(), algorithms=[settings.jwt_algorithm]))

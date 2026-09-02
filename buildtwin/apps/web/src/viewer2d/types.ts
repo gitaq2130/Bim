@@ -64,9 +64,9 @@ export interface DrawingEntityView {
 export interface PlanSection {
   level: string;
   elevation: number;
-  coordinateSystem: CoordinateSystem;
+  coordinate_system: CoordinateSystem;
   svg?: string;
-  polylines: Array<{ globalId: string; points: [number, number][] }>;
+  polylines: Array<{ global_id: string; points: [number, number][]; closed?: boolean }>;
 }
 
 /** SVG viewBox (SVG 좌표계, y-down). */

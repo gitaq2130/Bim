@@ -13,10 +13,10 @@ const rot90: CoordinateTransform = [
 const section: PlanSection = {
   level: "1F",
   elevation: 1.2,
-  coordinateSystem: { source: "ifc_local", origin: [0, 0, 0], rotation_deg: 0, scale: 1, unit: "m" },
+  coordinate_system: { source: "ifc_local", origin: [0, 0, 0], rotation_deg: 0, scale: 1, unit: "m" },
   polylines: [
-    { globalId: "G1", points: [[10, 0], [0, 10], [0, 0], [10, 0]] },
-    { globalId: "G2", points: [[1, 1], [2, 2]] },
+    { global_id: "G1", points: [[10, 0], [0, 10], [0, 0], [10, 0]] },
+    { global_id: "G2", points: [[1, 1], [2, 2]] },
   ],
 };
 
@@ -38,7 +38,7 @@ describe("applyTransform2D", () => {
 describe("projectSection", () => {
   it("projects polylines through the transform", () => {
     const out = projectSection(section, { transform: rot90 });
-    expect(out[0]!.globalId).toBe("G1");
+    expect(out[0]!.global_id).toBe("G1");
     expect(out[0]!.points).toEqual([[100, 60], [90, 50], [100, 50], [100, 60]]);
   });
 

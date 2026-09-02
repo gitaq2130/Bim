@@ -6,9 +6,9 @@ import { loginAs, mockFetch, renderWithProviders, resetStore } from "../test/uti
 
 const GID = objectDetailFixture.basic.global_id;
 
-function setup(role: "cm" | "contractor", transitionStatus = 200) {
+function setup(role: "cm" | "contractor" | "admin", transitionStatus = 200, userId?: string) {
   resetStore();
-  loginAs(role);
+  loginAs(role, userId);
   const m = mockFetch((url, init) => {
     if (url.includes(`/api/objects/${encodeURIComponent(GID)}/transitions`) && init?.method === "POST")
       return transitionStatus === 200
@@ -75,6 +75,25 @@ describe("ObjectDetailPanel", () => {
     expect(screen.getByRole("button", { name: "검측 재요청" })).toBeInTheDocument();
   });
 
+  it("admin 역할: 확정·CM 전용 행동이 렌더되지 않는다 (cm 만 허용)", async () => {
+    setup("admin");
+    const user = userEvent.setup();
+    await screen.findByText("C-12", { selector: "strong" });
+    await user.click(screen.getByRole("tab", { name: "다음행동" }));
+    expect(screen.queryByRole("button", { name: "확정" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "반려(재작업)" })).not.toBeInTheDocument();
+  });
+
+  it("userId 가 없으면 행동 버튼이 비활성화되고 'unknown' 으로 전송하지 않는다", async () => {
+    const { calls } = setup("cm", 200, "");
+    const user = userEvent.setup();
+    await screen.findByText("C-12", { selector: "strong" });
+    await user.click(screen.getByRole("tab", { name: "다음행동" }));
+    const btn = screen.getByRole("button", { name: "확정" });
+    expect(btn).toBeDisabled();
+    expect(calls.some((c) => c.init?.method === "POST")).toBe(false);
+  });
+
   it("cm 역할: 확정 버튼 → 확인 다이얼로그 → POST /objects/{gid}/transitions (to_state=CONFIRMED, evidence 포함)", async () => {
     const { calls } = setup("cm");
     const user = userEvent.setup();
@@ -93,6 +112,7 @@ describe("ObjectDetailPanel", () => {
     const body = JSON.parse(String(post?.init?.body));
     expect(body.to_state).toBe("CONFIRMED");
     expect(body.evidence).toMatchObject({ source_type: "cm_action", source_id: "user-cm", note: "현장 검측 완료" });
+    expect(body.evidence.source_type).not.toBe("daily_report");
     expect((post?.init?.headers as Record<string, string>).Authorization).toBe("Bearer tok-cm");
   });
 

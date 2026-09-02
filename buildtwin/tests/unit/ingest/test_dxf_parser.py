@@ -117,3 +117,33 @@ def test_missing_file_returns_failed(tmp_path: Path) -> None:
     res = parse_dxf(tmp_path / "nope.dxf")
     assert res.status == "failed" and res.warnings[0].code == "DXF_OPEN_FAILED"
     assert res.coordinate_system.source == "dxf_local"
+
+
+def test_flatten_tolerance_is_metre_based(tmp_path: Path) -> None:
+    """config/ingest.yaml 의 flatten_distance_m 가 단위 스케일로 환산되어 mm 도면과 m 도면이 같은 점 수로 평탄화된다."""
+    from services.ingest.config import dxf_flatten_distance_m
+    from services.ingest.dxf_parser import flatten_distance_in_drawing_units
+
+    tol_m = dxf_flatten_distance_m()
+    assert tol_m > 0
+    assert flatten_distance_in_drawing_units(0.001) == pytest.approx(tol_m / 0.001)
+    assert flatten_distance_in_drawing_units(1.0) == pytest.approx(tol_m)
+    assert flatten_distance_in_drawing_units(1.0, flatten_distance_m=0.01) == pytest.approx(0.01)
+
+    def arc_points(insunits: int, radius: float) -> int:
+        doc = ezdxf.new("R2010")
+        doc.header["$INSUNITS"] = insunits
+        doc.modelspace().add_arc((0, 0), radius, 0, 90)
+        p = tmp_path / f"arc_{insunits}.dxf"
+        doc.saveas(str(p))
+        return len(parse_dxf(p).entities[0].points)
+
+    n_mm, n_m = arc_points(4, 1000.0), arc_points(6, 1.0)
+    assert n_mm == n_m > 4
+    # 더 거친 허용치를 명시하면 점이 줄어든다
+    doc = ezdxf.new("R2010")
+    doc.header["$INSUNITS"] = 6
+    doc.modelspace().add_arc((0, 0), 1.0, 0, 90)
+    p = tmp_path / "arc_coarse.dxf"
+    doc.saveas(str(p))
+    assert len(parse_dxf(p, flatten_distance_m=0.1).entities[0].points) < n_m

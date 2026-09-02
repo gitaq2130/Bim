@@ -44,7 +44,10 @@ export function ViewerPage() {
   const entities = useDrawingEntities(drawing?.drawing_id);
   const mappings = useDrawingMappings(drawing?.drawing_id);
   const objects = useObjects(projectId, { page_size: 10000 });
-  const section = usePlanSection(ui.overlayVisible ? model?.model_id : null, level);
+  // 단면 오프셋은 서버 값만 쓴다: models.plan_section_default_offset → plan-section.offset. 없으면 3D 뷰어를 띄우지 않는다.
+  const needsOffsetFallback = !!model && model.plan_section_default_offset == null;
+  const section = usePlanSection(ui.overlayVisible || needsOffsetFallback ? model?.model_id : null, level);
+  const sectionOffset = model?.plan_section_default_offset ?? section.data?.offset ?? null;
   const scan = useMemo(() => scans.data?.find((s) => s.scan_id === ui.currentScanId) ?? scans.data?.find((s) => s.pointcloud_uri) ?? null, [scans.data, ui.currentScanId]);
 
   const stateMap = useMemo(() => {
@@ -225,18 +228,27 @@ export function ViewerPage() {
             )
           }
           right={
-            model ? (
+            model && sectionOffset != null ? (
               <LazyViewer3D
                 ref={attach3d}
                 modelUrl={model.model_uri}
                 levels={model.levels}
+                sectionOffset={sectionOffset}
                 coordinateSystem={normalizeCoordinateSystem(model.coordinate_system)}
                 stateMap={stateMap}
                 onSelect={(gid) => broker.select3d(gid)}
                 style={{ width: "100%", height: "100%" }}
               />
             ) : (
-              <div className="viewer-empty">{models.isPending ? "모델 목록 로딩…" : "3D 모델이 없습니다. IFC 를 업로드하세요."}</div>
+              <div className="viewer-empty">
+                {models.isPending
+                  ? "모델 목록 로딩…"
+                  : !model
+                    ? "3D 모델이 없습니다. IFC 를 업로드하세요."
+                    : section.isPending
+                      ? "단면 오프셋 조회 중…"
+                      : "단면 오프셋(plan_section_default_offset / plan-section.offset)이 없어 3D 뷰어를 열 수 없습니다."}
+              </div>
             )
           }
         />

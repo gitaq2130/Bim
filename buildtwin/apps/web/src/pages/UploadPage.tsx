@@ -10,6 +10,7 @@ import type { FileKind, Job } from "../api/types";
 import { ErrorBox } from "../components/ErrorBox";
 import { FILE_KIND_LABELS, IFC_EXPORT_GUIDANCE, detectFileKind, preUploadNotice } from "../lib/fileKind";
 import { pct } from "../lib/format";
+import { JOB_KIND_LABELS } from "../domain/labels";
 
 interface UploadEntry {
   localId: number;
@@ -139,7 +140,7 @@ function JobProgress({ jobId, kind, projectId }: { jobId: string; kind: FileKind
   return (
     <div className="col gap" data-testid="job-progress" data-status={j.status}>
       <div className="row gap">
-        <span className="badge neutral">{statusLabel(j)}</span>
+        <span className="badge neutral">{j.kind ? `${JOB_KIND_LABELS[j.kind]} · ` : ""}{statusLabel(j)}</span>
         <progress value={progress} max={1} />
         <span className="small">{pct(progress)}</span>
         <span className="muted small">job {jobId}</span>

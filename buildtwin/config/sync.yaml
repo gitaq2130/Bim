@@ -1,7 +1,8 @@
 # 2D↔3D 매핑·그리드 정합 임계값. 담당: sync-2d3d. 코드에 숫자 리터럴로 두지 않고 여기서 읽는다.
 # ---- 매핑(matcher) ----
 min_geo_score: 0.05            # 기하 점수(IoU/겹침비) 이 값 미만인 후보는 버린다
-review_threshold: 0.7          # confidence 미만이면 needs_review (core 계약값 MAPPING_REVIEW_THRESHOLD와 동일)
+# review_threshold 는 여기 두지 않는다 — 계약값(0.7)은 packages/core/models/mapping.py 의 MAPPING_REVIEW_THRESHOLD 가 단일 소스이며,
+# 이 키가 있으면 로더가 같은 값인지 검증하고 다르면 실패한다.
 line_buffer_ratio: 0.5         # 선형 엔티티(LINE 등) 버퍼 = 이 비율 × 후보 객체들의 대표 부재 폭(bbox에서 유도)
 geo_weight: 0.6                # confidence = geo_weight·geo + rule_weight·rule_norm
 rule_weight: 0.4

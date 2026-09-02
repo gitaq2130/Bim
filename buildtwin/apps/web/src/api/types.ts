@@ -338,8 +338,11 @@ export interface UploadResponse {
 }
 
 export type JobStatus = "queued" | "running" | "done" | "failed";
+/** glossary 개정 1: scan_upload = 스캔 파일 등록(정합 입력 대기), verdict = 정합+판정 */
+export type JobKind = "ingest" | "scan_upload" | "schedule" | "mapping" | "verdict";
 export interface Job {
   job_id: string;
+  kind?: JobKind;
   status: JobStatus;
   /** 0~1 */
   progress: number;
@@ -374,12 +377,25 @@ export interface ObjectsQuery {
   page_size?: number;
 }
 
-export type NextActionKind = "confirm" | "inspect" | "reject" | "resolve_review" | "align_scan" | "report" | string;
+/** glossary 개정 1 — 백엔드 state_machine.next_actions 가 정의하는 집합. 프론트는 이 집합만 사용 */
+export type NextActionKind =
+  | "confirm"
+  | "request_inspection"
+  | "reject_inspection"
+  | "report_progress"
+  | "accept_rework"
+  | "order_rework"
+  | "revoke_confirmation"
+  | "flag_mismatch"
+  | "resolve_review"
+  | "align_scan"
+  | "inspect";
 export interface NextAction {
   kind: NextActionKind;
   label: string;
   allowed_roles: UserRole[];
-  to_state?: ObjectState | null;
+  /** 전이 행동이면 백엔드가 항상 채운다. resolve_review / align_scan 은 null */
+  to_state: ObjectState | null;
   review_request_id?: string | null;
 }
 export interface ObjectStateView {
@@ -420,6 +436,8 @@ export interface ModelSummary {
   model_uri: string;
   levels: { name: string; elevation: number }[];
   coordinate_system: CoordinateSystem;
+  /** 층별 단면 오프셋(모델 단위). Viewer3D.sectionOffset 으로 전달 */
+  plan_section_default_offset?: number;
   version?: number;
 }
 export interface DrawingSummary {
@@ -444,17 +462,21 @@ export interface ScanSummary {
   registration?: Registration | null;
 }
 
+/** GET /models/{id}/plan-section 응답. viewer3d/viewer2d 의 PlanSection 과 동일 구조(snake_case, CLAUDE.md §3 규칙 12). */
 export interface PlanSection {
   level: string;
   elevation: number;
-  coordinateSystem: CoordinateSystem;
+  /** 층 elevation 에 더한 오프셋(모델 단위). models.plan_section_default_offset 이 없을 때 sectionOffset 폴백 */
+  offset?: number;
+  coordinate_system: CoordinateSystem;
   svg?: string;
-  polylines: Array<{ globalId: string; points: [number, number][] }>;
+  polylines: Array<{ global_id: string; points: [number, number][]; closed?: boolean }>;
 }
 
 export interface StateDistributionRow {
   level: string;
-  discipline: string;
+  /** 부재 그룹(IFC_TYPE_GROUP: column/beam/slab/…). 공종(discipline)과 다른 개념 */
+  group: string;
   counts: Partial<Record<ObjectState, number>>;
   total?: number;
 }

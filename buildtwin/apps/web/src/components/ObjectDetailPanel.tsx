@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useObjectDetail, useTransition } from "../api/hooks";
-import type { Evidence, NextAction, ObjectDetail, ObjectState, StateTransition, UserRole } from "../api/types";
+import type { Evidence, NextAction, NextActionKind, ObjectDetail, StateTransition, UserRole } from "../api/types";
 import { ACTOR_LABELS, STATE_LABELS_KO } from "../domain/labels";
 import { fmtDate, fmtNum } from "../lib/format";
 import { useStore } from "../store";
@@ -269,17 +269,25 @@ function HistoryTab({ history }: { history: StateTransition[] }) {
   );
 }
 
-const TRANSITION_KINDS: Record<string, ObjectState> = {
-  confirm: "CONFIRMED",
-  inspect: "INSPECTION_REQUESTED",
-  reject: "IN_PROGRESS",
-  report: "REPORTED",
-};
+/** 링크로만 처리하는 행동(전이 아님) */
+const LINK_KINDS: ReadonlySet<NextActionKind> = new Set(["resolve_review", "align_scan"]);
+/** CM 전용 행동 — admin 포함 다른 역할에는 렌더하지 않는다 (백엔드 allowed_roles 와 별개의 클라이언트 이중 가드) */
+const CM_ONLY_KINDS: ReadonlySet<NextActionKind> = new Set([
+  "confirm",
+  "inspect",
+  "reject_inspection",
+  "accept_rework",
+  "order_rework",
+  "revoke_confirmation",
+  "flag_mismatch",
+]);
+const isConfirmAction = (a: NextAction) => a.kind === "confirm" || a.to_state === "CONFIRMED";
 
-function evidenceFor(role: UserRole | null, userId: string | null, note: string): Evidence {
+/** 화면에서 직접 누른 전이의 근거. 확정(cm)은 cm_action, 그 외 수동 입력은 user_input. userId 없으면 호출하지 않는다. */
+function evidenceFor(role: UserRole, userId: string, action: NextAction, note: string): Evidence {
   return {
-    source_type: role === "cm" ? "cm_action" : role === "contractor" ? "daily_report" : "user_input",
-    source_id: userId ?? "unknown",
+    source_type: role === "cm" && isConfirmAction(action) ? "cm_action" : "user_input",
+    source_id: userId,
     note: note || null,
   };
 }
@@ -291,18 +299,21 @@ function ActionsTab({ d, projectId }: { d: ObjectDetail; projectId?: string }) {
   const [pending, setPending] = useState<NextAction | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
+  const canAct = !!role && !!userId;
   const visible = d.next_actions.filter((a) => {
-    if (role && a.allowed_roles.length > 0 && !a.allowed_roles.includes(role)) return false;
-    if (a.kind === "confirm" || a.to_state === "CONFIRMED") return role === "cm"; // 확정은 CM 전용 (이중 가드)
+    if (!role) return false;
+    if (a.allowed_roles.length > 0 && !a.allowed_roles.includes(role)) return false;
+    if ((CM_ONLY_KINDS.has(a.kind) || isConfirmAction(a)) && role !== "cm") return false; // admin 포함 불허
+    if (!LINK_KINDS.has(a.kind) && !a.to_state) return false; // 전이 행동인데 to_state 가 없으면 표시하지 않음
     return true;
   });
 
   const run = (a: NextAction, note: string) => {
-    const to = a.to_state ?? TRANSITION_KINDS[a.kind];
-    if (!to) return;
+    const to = a.to_state;
+    if (!to || !role || !userId) return;
     setMessage(null);
     transition.mutate(
-      { to_state: to, evidence: evidenceFor(role, userId, note), review_request_id: a.review_request_id ?? null },
+      { to_state: to, evidence: evidenceFor(role, userId, a, note), review_request_id: a.review_request_id ?? null },
       {
         onSuccess: () => {
           setPending(null);
@@ -326,9 +337,10 @@ function ActionsTab({ d, projectId }: { d: ObjectDetail; projectId?: string }) {
 
   return (
     <div>
+      {!userId && <p className="warn small">사용자 정보(userId)가 없어 행동을 수행할 수 없습니다. 다시 로그인하세요.</p>}
       <div className="col gap">
         {visible.map((a, i) => {
-          const isConfirm = a.kind === "confirm" || a.to_state === "CONFIRMED";
+          const isConfirm = isConfirmAction(a);
           if (a.kind === "resolve_review" && projectId)
             return (
               <Link key={i} className="btn" to={`/projects/${projectId}/reviews`}>
@@ -347,7 +359,7 @@ function ActionsTab({ d, projectId }: { d: ObjectDetail; projectId?: string }) {
               type="button"
               className={isConfirm ? "primary" : ""}
               data-action={a.kind}
-              disabled={transition.isPending}
+              disabled={transition.isPending || !canAct}
               onClick={() => setPending(a)}
             >
               {a.label}
@@ -364,10 +376,10 @@ function ActionsTab({ d, projectId }: { d: ObjectDetail; projectId?: string }) {
         open={pending !== null}
         title={pending?.label ?? ""}
         message={
-          pending && (pending.kind === "confirm" || pending.to_state === "CONFIRMED")
+          pending && isConfirmAction(pending)
             ? "이 객체를 '확정(CONFIRMED)' 상태로 전이합니다. CM 승인 행위로 기록되며 되돌리려면 사유가 필요합니다."
-            : pending
-              ? `'${STATE_LABELS_KO[pending.to_state ?? TRANSITION_KINDS[pending.kind]] ?? pending.kind}' 상태로 전이를 요청합니다.`
+            : pending?.to_state
+              ? `'${STATE_LABELS_KO[pending.to_state]}' 상태로 전이를 요청합니다.`
               : undefined
         }
         confirmLabel={pending?.label ?? "확인"}
