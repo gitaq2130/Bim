@@ -199,6 +199,14 @@ export function ViewerPage() {
           선택 해제
         </button>
         <div className="spacer" />
+        {objects.isPending && <span className="muted small">객체 목록 로딩 중…</span>}
+        {!objects.isPending && objects.isFetching && <span className="muted small">객체 목록 갱신 중…</span>}
+        {objects.data && (
+          <span className="muted small" data-testid="objects-count">
+            객체 {objects.data.items.length}
+            {objects.data.total > objects.data.items.length ? `/${objects.data.total}` : ""}건
+          </span>
+        )}
         {mappings.data && (
           <span className="muted small">
             매핑 {mappings.data.length}건{lowConfidence > 0 ? ` · 확인 필요 ${lowConfidence}건` : ""}
@@ -206,7 +214,12 @@ export function ViewerPage() {
         )}
         <StateLegend />
       </div>
-      <ErrorBox error={models.error ?? drawings.error ?? entities.error ?? mappings.error ?? section.error ?? pcError} />
+      <ErrorBox error={models.error ?? drawings.error ?? objects.error ?? entities.error ?? mappings.error ?? section.error ?? pcError} />
+      {objects.data?.truncated && (
+        <p className="error" role="alert" data-testid="objects-truncated-warning">
+          객체 수가 많아 일부만 불러왔습니다 ({objects.data.items.length.toLocaleString()} / {objects.data.total.toLocaleString()}건). 필터를 좁혀서 다시 시도하세요.
+        </p>
+      )}
       {ui.overlayVisible && section.isPending && model && <p className="muted small">단면 생성 중…</p>}
       <div className="viewer-body">
         <SplitPane

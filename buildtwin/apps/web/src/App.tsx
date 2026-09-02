@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AppLayout } from "./components/AppLayout";
 import { RequireAuth } from "./components/RequireAuth";
+import { RequireRole } from "./components/RequireRole";
 import { DailyReportPage } from "./pages/DailyReportPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
@@ -20,8 +21,12 @@ export function App() {
           <Route path="/projects/:id" element={<Navigate to="viewer" replace />} />
           <Route path="/projects/:id/upload" element={<UploadPage />} />
           <Route path="/projects/:id/viewer" element={<ViewerPage />} />
-          <Route path="/projects/:id/daily-report" element={<DailyReportPage />} />
-          <Route path="/projects/:id/reviews" element={<ReviewsPage />} />
+          <Route path="/projects/:id/daily-report" element={<RequireRole roles={["contractor"]} />}>
+            <Route index element={<DailyReportPage />} />
+          </Route>
+          <Route path="/projects/:id/reviews" element={<RequireRole roles={["cm"]} />}>
+            <Route index element={<ReviewsPage />} />
+          </Route>
           <Route path="/projects/:id/summary" element={<SummaryPage />} />
         </Route>
       </Route>
