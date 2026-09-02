@@ -147,7 +147,8 @@ class StateTransition(BaseModel):
 ## Consequences
 
 - 장점: 모든 서비스가 `global_id` 하나로 조인된다. "확정"이 사람 액션임이 타입·전이 표·테스트 세 겹으로 보장된다. 판정과 승인이 분리돼 AI 오판이 곧바로 공식 진도에 반영되지 않는다.
-- 비용: IFC 없는 프로젝트 불가(MVP 한계). **MVP에서는 `bim_objects.global_id`가 시스템 전역 PK**다. 같은 IFC 파일을 두 프로젝트에 올리면 `GlobalIdConflictError`로 거부한다(다른 프로젝트 행을 덮어쓰지 않기 위함). 프로젝트 범위 유일성으로의 전환(복합 키 `(project_id, global_id)`)은 ADR 0005 Deferred. GlobalId 재발급(Revit에서 요소 복사 등)이 일어나면 이력이 끊긴다 — 재업로드 시 `is_orphaned` 목록을 사용자에게 보여주고 수동 재연결 기능은 Deferred.
+- 비용: IFC 없는 프로젝트 불가(MVP 한계). GlobalId 재발급(Revit에서 요소 복사 등)이 일어나면 이력이 끊긴다 — 재업로드 시 `is_orphaned` 목록을 사용자에게 보여주고 수동 재연결 기능은 Deferred(0004).
+- **키의 범위는 프로젝트다(ADR 0005, 구현 완료).** `bim_objects`의 PK는 `(project_id, global_id)`이며 같은 IFC를 여러 프로젝트에 올릴 수 있다. 조기 구현에 있던 전역 PK와 `GlobalIdConflictError`는 제거됐다. 모든 객체 조회는 두 키를 함께 건다.
 - 상태 8개는 UI 색상 7개(`viewer-3d/colors.ts`)와 1:1로 맞춘다. `REPORTED`와 `IN_PROGRESS`는 같은 노랑 계열로 표시한다.
 
 ## Alternatives considered
@@ -161,5 +162,5 @@ class StateTransition(BaseModel):
 - 0002: RVT 처리 경로 — Revit 애드인(pyRevit/C#) 기반 IFC+메타데이터 내보내기 (MVP는 IFC 내보내기 안내 + APS)
 - 0003: 만회 시나리오(CP-SAT 목적함수 확장)
 - 0004: GlobalId 변경 객체의 수동 재연결
-- 0005: 객체 키를 프로젝트 범위로 (Accepted — `docs/adr/0005-project-scoped-object-key.md`)
-- 0005: `bim_objects` 복합 키 `(project_id, global_id)` 전환(같은 IFC를 여러 프로젝트에 올리는 경우)
+
+(0005 객체 키를 프로젝트 범위로 — Deferred 아님. Accepted·구현 완료: `docs/adr/0005-project-scoped-object-key.md`)

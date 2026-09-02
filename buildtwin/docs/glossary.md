@@ -40,7 +40,7 @@
 
 | 한국어 | 영어 | 정의 |
 |---|---|---|
-| BIM 객체 | `BimObject` | IFC에서 추출한 단위 부재. PK = `global_id`(IFC GlobalId) |
+| BIM 객체 | `BimObject` | IFC에서 추출한 단위 부재. PK = `(project_id, global_id)` 복합 키(ADR 0005). `global_id`는 IFC GlobalId |
 | 도면 엔티티 | `DrawingEntity` | DXF에서 추출한 단위 도형. 키 = `(drawing_id, handle)` |
 | 엔티티-객체 매핑 | `EntityObjectMapping` | 2D 엔티티 ↔ BIM 객체 연결. confidence·evidence 필수 |
 | 공정 작업 | `Activity` | 공정표의 단위 작업 |
@@ -115,3 +115,12 @@
 | 부재 그룹 | `group` (`IFC_TYPE_GROUP`) = `column` / `beam` / `slab` / `wall` / `duct` / `pipe` / `cable_tray` / `facade_panel` / `other` | IfcType을 화면·집계용으로 묶은 것. **공종(discipline)과 다른 개념** |
 | 공종 | `discipline` = `structure` / `architecture` / `mechanical` / `electrical` / `civil` / `finishing` | 규칙·공정표·사례에서 공통 사용. `mep`는 쓰지 않는다 |
 | 근거 방법 | `Evidence.method` | 자유 문자열이되 서비스별 규약값: sync `user_align|grid_align|bbox_iou|layer_rule`, scan `control_points+icp`, progress `wbs_rule|keyword_rule|level_zone|readiness_weighted_sum|triple_verification|daily_report_item`, knowledge `rule_engine`, scan `preregistered`, api/sync `manual_mapping|review_resolution|model_ingest` |
+
+## ADR 0005 추가 항목 (architect, 2026-09-02)
+
+| 한국어 | 영어 | 정의 |
+|---|---|---|
+| 프로젝트 범위 객체 키 | `project-scoped object key` = `(project_id, global_id)` | 객체의 1차 키. 같은 IFC를 여러 프로젝트에 올릴 수 있으며, 모든 객체 조회는 두 키를 함께 건다(ADR 0005 규칙 2) |
+| GlobalId 모호성 | `ambiguous global_id` | 한 GlobalId가 둘 이상의 프로젝트에 존재하는 상태. `/api/objects/{global_id}`는 이때 **409**를 돌려주고 `?project_id=`로 해소를 요구한다(ADR 0005 §3) |
+| 프로젝트 한정 질의 파라미터 | `project_id` (query) | 객체별 API의 선택 질의 파라미터. 모호성을 직접 해소한다 |
+| 고아 객체 | `is_orphaned` | 재업로드에서 사라진 GlobalId. 삭제하지 않고 표시만 하며, 판단은 **같은 프로젝트 안에서만** 한다 |

@@ -47,11 +47,12 @@ IFC GlobalId는 IfcOpenShell이 UUID 기반으로 발급하므로 서로 다른 
 
 - 장점: 같은 모델을 여러 프로젝트에서 쓸 수 있다. 테스트가 DB를 분리하는 우회를 버릴 수 있다. 프로젝트 간 데이터 격리가 스키마로 보장되어, 조회에서 `project_id` 필터를 빠뜨려도 FK가 잡아준다.
 - 비용: 객체를 참조하는 모든 서비스의 영속화·조회 코드가 바뀐다(ingest·sync·progress·scan·api). 한 번에 바꾸지 않으면 반쪽 상태에서 FK 오류가 난다 — 아래 순서대로 한 사이클에 끝낸다.
-- API 응답 스키마는 바뀌지 않는다(`global_id`는 그대로 노출). 프론트엔드 영향 없음.
+- API 응답 스키마는 바뀌지 않는다(`global_id`는 그대로 노출). 다만 **클라이언트는 객체별 요청에 `project_id`를 실어야 한다** — 같은 GlobalId가 두 프로젝트에 있으면 서버가 409를 돌려주기 때문이다.
+- **인가 전제**: §3의 "요청자의 접근 가능 프로젝트로 범위를 좁혀 해석한다"는 현재 프로젝트 멤버십이 없어 "모든 프로젝트"로 동작한다. 멤버십이 도입되는 시점에 `resolve_object`의 후보 조회와 명시 `project_id` 경로 **양쪽**에 인가 필터를 넣어야 한다.
 
 ## 구현 순서 (한 사이클)
 
-1. `architect`: `packages/core/models/orm.py` 복합 키·FK, `identity.py`/`mapping.py`/`scan.py`의 계약에 `project_id` 반영
+1. `architect`: `packages/core/models/orm.py` 복합 키·FK. **Pydantic 계약(`identity.py`/`mapping.py`/`scan.py`)은 바꾸지 않기로 했다** — 규칙 1(부모에서 유도)이 이를 대체하므로 파급을 줄이는 쪽을 택했다. 또한 `services/ingest/persistence.py`의 `GlobalIdConflictError` 제거는 복합 PK 도입과 분리하면 그 사이 커밋이 반드시 깨지므로 이 단계에서 architect가 함께 수행한다(담당 디렉터리 예외를 여기 명시해 둔다).
 2. `bim-ingest`: `persist_ingest_result`/`persist_drawing`가 `project_id`를 자식 행에 기록
 3. `sync-2d3d`·`progress-engine`·`reality-capture`: 각 `persistence`·조회 함수에 `project_id` 전달
 4. `api`: `queries.py`·`usecases.py`의 객체 조회를 `(project_id, global_id)`로, 모호성 409 처리
