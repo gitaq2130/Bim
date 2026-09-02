@@ -47,8 +47,10 @@ CLAUDE.md §0의 MVP 5기능을 실제 동작 코드로 구현한다. 벤치마�
 - [x] [frontend] 객체 목록 전체 페이지네이션 `useAllObjects` — `total`까지 페이지 순회, 25페이지(5만 객체) 방어 상한 + 초과 시 경고 배너
 - [x] [architect] ADR 0005 작성 (Accepted)
 
+### 완료 (2026-09-02, 이어서)
+- [x] **ADR 0005 구현 사이클** — `bim_objects` PK가 `(project_id, global_id)`로, 자식 4개 테이블에 `project_id` + 복합 FK. 같은 IFC를 여러 프로젝트에 업로드 가능. `GlobalIdConflictError` 경로 제거. `GET /api/objects/{global_id}`는 프로젝트가 모호하면 409 + `?project_id=`로 해소. 서비스 4개(progress·api·ingest·sync)가 각각 프로젝트 격리 회귀 테스트 보유
+
 ### 진행 예정
-- [ ] **ADR 0005 구현 사이클** — `bim_objects` PK를 `(project_id, global_id)`로. 담당·지점은 ADR 0005 "구현 순서" 참고. 표면: 행 생성 5곳, `global_id` 조회 23곳(progress 13, api 9, ingest 1)
 - [ ] 실제 IFC(고창CDC)·실측 스캔으로 `tests/metrics.json` 기준 재산정 — **사용자 파일 필요**
 
 ### 관측된 개선 후보 (미착수)
