@@ -22,8 +22,8 @@ from pydantic import BaseModel, ValidationError
 
 from packages.core.models import (
     ALLOWED_TRANSITIONS,
-    Actor,
     ActivityObjectMapping,
+    Actor,
     EntityObjectMapping,
     Evidence,
     InvalidTransitionError,
@@ -242,6 +242,10 @@ def test_no_hardcoded_coordinate_constants_in_services_and_viewers():
 
 
 # ------------------------------------------------------------------ (e) services/scan 에 CONFIRMED 없음
+def _rel(path: Path) -> str:
+    return str(path.relative_to(ROOT)) if path.is_relative_to(ROOT) else path.name
+
+
 def _confirmed_references(path: Path) -> list[str]:
     """AST 기반: 주석은 AST 에 없고, docstring(Expr 첫 문장)과 assert 안의 참조는 제외한다."""
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -261,11 +265,11 @@ def _confirmed_references(path: Path) -> list[str]:
         if id(node) in inside_assert or id(node) in docstrings:
             continue
         if isinstance(node, ast.Constant) and isinstance(node.value, str) and "CONFIRMED" in node.value:
-            hits.append(f"{path.relative_to(ROOT)}:{node.lineno}: string {node.value!r}")
+            hits.append(f"{_rel(path)}:{node.lineno}: string {node.value!r}")
         elif isinstance(node, ast.Attribute) and node.attr == "CONFIRMED":
-            hits.append(f"{path.relative_to(ROOT)}:{node.lineno}: attribute .CONFIRMED")
+            hits.append(f"{_rel(path)}:{node.lineno}: attribute .CONFIRMED")
         elif isinstance(node, ast.Name) and node.id == "CONFIRMED":
-            hits.append(f"{path.relative_to(ROOT)}:{node.lineno}: name CONFIRMED")
+            hits.append(f"{_rel(path)}:{node.lineno}: name CONFIRMED")
     return hits
 
 
@@ -294,7 +298,7 @@ SERVICE_OWNERS = {   # CLAUDE.md §2 디렉터리 구조 / §4 에이전트 표
 def test_claude_md_agrees_with_service_owner_table():
     text = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
     for svc, agent in SERVICE_OWNERS.items():
-        assert re.search(rf"`{re.escape(agent)}`\s*\|\s*`services/{svc}/`", text), f"CLAUDE.md agent table: {agent} → services/{svc}/"
+        assert re.search(rf"`{re.escape(agent)}`\s*\|[^|\n]*\|\s*`services/{svc}/`", text), f"CLAUDE.md agent table: {agent} → services/{svc}/"
 
 
 @pytest.mark.parametrize("svc", sorted(SERVICE_OWNERS), ids=str)

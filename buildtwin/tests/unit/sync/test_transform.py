@@ -15,7 +15,6 @@ from services.sync.transform import (
     grid_from_ifc_objects,
     kabsch_2d,
 )
-
 from tests.helpers.sync_fixtures import load_dxf_entities, load_ifc_objects, load_json, true_alignment
 
 

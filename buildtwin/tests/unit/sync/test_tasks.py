@@ -4,8 +4,14 @@ import json
 
 from services.common.celery_app import celery_app
 from services.sync.tasks import TASK_NAME, build_mapping_task, run_build_mapping
-
-from tests.helpers.sync_fixtures import accuracy, expected_mappings, load_dxf_entities, load_ifc_objects, load_json, true_alignment
+from tests.helpers.sync_fixtures import (
+    accuracy,
+    expected_mappings,
+    load_dxf_entities,
+    load_ifc_objects,
+    load_json,
+    true_alignment,
+)
 
 
 def _payload():
