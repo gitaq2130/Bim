@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import itertools
+from datetime import date
 
 import pytest
 
 from packages.core.models.evidence import Evidence
 from packages.core.models.identity import BimObjectDraft
+from packages.core.models.mapping import ActivityObjectMapping
 from packages.core.models.orm import BimObjectRow, ReviewRequestRow, StateTransitionRow
+from packages.core.models.progress import Activity, DailyReport, DailyReportItem, Schedule
 from packages.core.models.review import ReviewRequest
 from packages.core.models.scan import ScanState, ScanVerdict
 from packages.core.models.state import ALLOWED_TRANSITIONS, Actor, InvalidTransitionError, ObjectState
@@ -221,3 +224,51 @@ def test_transition_is_scoped_to_project(session):
     sm.transition(session, project_b, GID, ObjectState.REPORTED, Actor.CONTRACTOR, EV, actor_id="c2")
     assert session.get(BimObjectRow, (project_a, GID)).state == ObjectState.INSPECTION_REQUESTED.value
     assert [t.to_state for t in sm.history(session, project_b, GID)] == [ObjectState.REPORTED]
+
+
+def test_daily_report_activity_from_other_project_is_skipped_not_transitioned(session):
+    """라운드3 리뷰 FAIL 회귀(ADR 0005 규칙 2): `daily_reports` 라우터는 항목의 `activity_id` 가 신고 대상 프로젝트
+    소속인지 검증하지 않는다. 예전 `mapped_global_ids(session, activity_id)` 는 project_id 없이 매핑을 조회했으므로,
+    다른 프로젝트 Activity 의 activity_id 를 신고서에 실으면 그 매핑이 가리키는 global_id 를 그대로 돌려주었고,
+    신고 프로젝트에 우연히 같은 global_id 를 쓰는 객체가 있으면 그 객체가 전이되어 버렸다(검측 요청까지 생성).
+    이 테스트는 그 경로가 이제 차단되고 skipped 로 남는지 검증한다.
+    """
+    project_a, project_b = "P-A", "P-B"
+    db.ensure_project(session, project_a)
+    db.ensure_project(session, project_b)
+    # 두 프로젝트 모두 우연히 같은 global_id 를 쓰는 객체를 갖는다(ADR 0005: 서로 다른 IFC 라도 GlobalId 재사용 가능).
+    db.save_objects(session, project_a, "M-A", [BimObjectDraft(global_id=GID, ifc_type="IfcColumn", level="1F")])
+    db.save_objects(session, project_b, "M-B", [BimObjectDraft(global_id=GID, ifc_type="IfcColumn", level="1F")])
+
+    # 프로젝트 B 에만 Activity 를 만들고 B 의 객체에 매핑한다.
+    schedule_b = Schedule(schedule_id="S-B", project_id=project_b, source_format="csv",
+                          activities=[Activity(activity_id="ACT-B", name="B 공정")], relations=[])
+    db.save_schedule(session, schedule_b)
+    db.save_mappings(session, [ActivityObjectMapping(
+        activity_id="ACT-B", global_id=GID, confidence=0.95,
+        evidence=Evidence(source_type="mapping", source_id="S-B"),
+    )])
+    session.commit()
+
+    # 공격 경로 재현: daily_reports 라우터가 activity_id 소속을 검증하지 않으므로, 프로젝트 A 앞으로 제출된
+    # 신고서에 프로젝트 B 의 activity_id 를 실을 수 있다.
+    report = DailyReport(report_id="DR-EXPLOIT", project_id=project_a, report_date=date(2026, 9, 2),
+                         reporter_id="contractor-1",
+                         items=[DailyReportItem(activity_id="ACT-B", claimed_state="completed")])
+
+    outcome = ObjectStateMachine().apply_daily_report(session, report)
+
+    # 프로젝트 A 의 객체는 전이되지 않는다 — 상태·전이 이력·검측 검토요청 모두 없다.
+    assert session.get(BimObjectRow, (project_a, GID)).state == ObjectState.PLANNED.value
+    assert outcome.transitions == []
+    assert session.query(StateTransitionRow).filter_by(project_id=project_a, global_id=GID).count() == 0
+    assert session.query(ReviewRequestRow).filter_by(project_id=project_a, global_id=GID, kind="inspection").count() == 0
+
+    # 왜 건너뛰었는지 skipped 사유에 남는다.
+    assert len(outcome.skipped) == 1
+    reason = outcome.skipped[0]["reason"]
+    assert "ACT-B" in reason and project_b in reason and project_a in reason
+
+    # 프로젝트 B 의 객체도(신고서 자체가 프로젝트 A 앞이므로) 전이되지 않는다.
+    assert session.get(BimObjectRow, (project_b, GID)).state == ObjectState.PLANNED.value
+    assert session.query(StateTransitionRow).filter_by(project_id=project_b, global_id=GID).count() == 0

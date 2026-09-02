@@ -125,4 +125,27 @@ describe("ObjectDetailPanel", () => {
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "확정" }));
     expect(await screen.findByRole("status")).toHaveTextContent("403");
   });
+
+  it("GET /objects/{gid} 요청에 project_id 쿼리 파라미터를 함께 보낸다 (ADR 0005)", async () => {
+    const { calls } = setup("cm");
+    await screen.findByText("C-12", { selector: "strong" });
+    const getCall = calls.find((c) => c.url.includes(`/api/objects/${encodeURIComponent(GID)}`) && (c.init?.method ?? "GET") === "GET");
+    const u = new URL(getCall!.url, "http://x");
+    expect(u.searchParams.get("project_id")).toBe("p1");
+  });
+
+  it("서버 409(같은 GlobalId 가 여러 프로젝트에 있음)를 바로 에러로 보여주지 않고 안내 문구로 표시한다", async () => {
+    resetStore();
+    loginAs("cm");
+    mockFetch((url) => {
+      if (url.includes(`/api/objects/${encodeURIComponent(GID)}`)) return { status: 409, body: { detail: "ambiguous" } };
+      return undefined;
+    });
+    renderWithProviders(<ObjectDetailPanel globalId={GID} projectId="p1" />);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("여러 프로젝트");
+    // 원본 서버 문구("ambiguous") 를 그대로 노출하지 않는다
+    expect(alert).not.toHaveTextContent("ambiguous");
+  });
 });

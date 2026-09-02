@@ -41,7 +41,8 @@ export const queryKeys = {
   project: (pid: string) => ["projects", pid] as const,
   job: (jobId: string) => ["jobs", jobId] as const,
   objects: (pid: string, q?: ObjectsQuery) => ["projects", pid, "objects", q ?? {}] as const,
-  objectDetail: (gid: string) => ["objects", gid] as const,
+  /** (project_id, global_id) 복합 키 (ADR 0005) — 같은 IFC가 여러 프로젝트에 있어도 캐시가 섞이지 않는다 */
+  objectDetail: (pid: string, gid: string) => ["objects", pid, gid] as const,
   models: (pid: string) => ["projects", pid, "models"] as const,
   drawings: (pid: string) => ["projects", pid, "drawings"] as const,
   scans: (pid: string) => ["projects", pid, "scans"] as const,
@@ -167,25 +168,34 @@ export function useAllObjects(
   });
 }
 
+/**
+ * 객체 상세 조회. `(project_id, global_id)`가 키(ADR 0005) — 같은 GlobalId가 여러 프로젝트에
+ * 존재할 수 있으므로 project_id 를 쿼리 파라미터로 함께 보낸다. 안 보내면 서버가 모호성 409 를 낸다.
+ * projectId 는 라우트 파라미터에서 가져온 값을 그대로 넘긴다(전역 상태로 옮기지 않음).
+ */
 export function useObjectDetail(
+  projectId: string | null | undefined,
   globalId: string | null | undefined,
   options?: Partial<UseQueryOptions<ObjectDetail>>,
 ) {
   return useQuery<ObjectDetail>({
-    queryKey: queryKeys.objectDetail(globalId ?? ""),
-    queryFn: () => api.get<ObjectDetail>(`/objects/${encodeURIComponent(globalId ?? "")}`),
-    enabled: !!globalId,
+    queryKey: queryKeys.objectDetail(projectId ?? "", globalId ?? ""),
+    queryFn: () =>
+      api.get<ObjectDetail>(`/objects/${encodeURIComponent(globalId ?? "")}`, { project_id: projectId ?? undefined }),
+    enabled: !!globalId && !!projectId,
     ...options,
   });
 }
 
-export function useTransition(globalId: string) {
+export function useTransition(projectId: string, globalId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: TransitionRequest) =>
-      api.post<StateTransition>(`/objects/${encodeURIComponent(globalId)}/transitions`, body),
+      api.post<StateTransition>(`/objects/${encodeURIComponent(globalId)}/transitions`, body, {
+        query: { project_id: projectId },
+      }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.objectDetail(globalId) });
+      qc.invalidateQueries({ queryKey: queryKeys.objectDetail(projectId, globalId) });
       qc.invalidateQueries({ queryKey: ["projects"] });
     },
   });

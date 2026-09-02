@@ -32,7 +32,7 @@ export function ObjectDetailPanel({
   onSelectHandle?: (handle: string) => void;
 }) {
   const [tab, setTab] = useState<Tab>("basic");
-  const q = useObjectDetail(globalId);
+  const q = useObjectDetail(projectId, globalId);
 
   if (!globalId) return <aside className="detail-panel muted">3D 또는 2D 뷰에서 객체를 선택하세요.</aside>;
   if (q.isPending) return <aside className="detail-panel">불러오는 중…</aside>;
@@ -295,7 +295,7 @@ function evidenceFor(role: UserRole, userId: string, action: NextAction, note: s
 function ActionsTab({ d, projectId }: { d: ObjectDetail; projectId?: string }) {
   const role = useStore((s) => s.auth.role);
   const userId = useStore((s) => s.auth.userId);
-  const transition = useTransition(d.basic.global_id);
+  const transition = useTransition(projectId ?? "", d.basic.global_id);
   const [pending, setPending] = useState<NextAction | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 

@@ -1,8 +1,10 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { MAX_OBJECTS_PAGES, OBJECTS_PAGE_SIZE, useAllObjects } from "./hooks";
+import { ApiError } from "./client";
+import { MAX_OBJECTS_PAGES, OBJECTS_PAGE_SIZE, queryKeys, useAllObjects, useObjectDetail } from "./hooks";
 import type { BimObjectView } from "./types";
+import { objectDetailFixture } from "../test/fixtures";
 import { makeQueryClient, mockFetch } from "../test/utils";
 
 /** QueryClient 를 한 번만 만들어 재사용하는 안정적인 wrapper (renderHook 리렌더마다 새 클라이언트가 생기지 않도록) */
@@ -69,5 +71,67 @@ describe("useAllObjects", () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data?.truncated).toBe(true);
     expect(result.current.data?.items).toHaveLength(OBJECTS_PAGE_SIZE * MAX_OBJECTS_PAGES);
+  });
+});
+
+/**
+ * ADR 0005: (project_id, global_id) 복합 키. 같은 IFC가 여러 프로젝트에 올라갈 수 있으므로
+ * project_id 를 쿼리로 함께 보내고, 프로젝트별로 캐시가 섞이지 않아야 한다.
+ */
+describe("useObjectDetail", () => {
+  const GID = objectDetailFixture.basic.global_id;
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("GET /objects/{global_id} 요청에 project_id 쿼리 파라미터를 함께 보낸다", async () => {
+    const { calls } = mockFetch((url) => {
+      if (!url.includes(`/api/objects/${encodeURIComponent(GID)}`)) return undefined;
+      return { body: objectDetailFixture };
+    });
+
+    const { result } = renderHook(() => useObjectDetail("p1", GID), { wrapper: makeHookWrapper() });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const call = calls.find((c) => c.url.includes("/api/objects/"));
+    const u = new URL(call!.url, "http://x");
+    expect(u.searchParams.get("project_id")).toBe("p1");
+  });
+
+  it("같은 global_id 라도 project_id 가 다르면 캐시 키가 분리되어 서로 값이 섞이지 않는다", async () => {
+    const qc = makeQueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+    mockFetch((url) => {
+      const u = new URL(url, "http://x");
+      if (!u.pathname.endsWith(`/objects/${encodeURIComponent(GID)}`)) return undefined;
+      const pid = u.searchParams.get("project_id");
+      return { body: { ...objectDetailFixture, basic: { ...objectDetailFixture.basic, name: `name-${pid}` } } };
+    });
+
+    // 서로 다른 프로젝트에서 같은 GlobalId 를 조회 — 캐시 키가 다르면 각자 자기 프로젝트 응답을 유지해야 한다.
+    const h1 = renderHook(() => useObjectDetail("p1", GID), { wrapper });
+    await waitFor(() => expect(h1.result.current.isSuccess).toBe(true));
+    const h2 = renderHook(() => useObjectDetail("p2", GID), { wrapper });
+    await waitFor(() => expect(h2.result.current.isSuccess).toBe(true));
+
+    expect(h1.result.current.data?.basic.name).toBe("name-p1");
+    expect(h2.result.current.data?.basic.name).toBe("name-p2");
+    expect(qc.getQueryData(queryKeys.objectDetail("p1", GID))).toMatchObject({ basic: { name: "name-p1" } });
+    expect(qc.getQueryData(queryKeys.objectDetail("p2", GID))).toMatchObject({ basic: { name: "name-p2" } });
+    // 서로 다른 쿼리 키 자체도 검증
+    expect(queryKeys.objectDetail("p1", GID)).not.toEqual(queryKeys.objectDetail("p2", GID));
+  });
+
+  it("서버가 409(같은 GlobalId 가 여러 프로젝트에 있어 모호함)를 주면 ApiError.status===409 로 전달된다", async () => {
+    mockFetch((url) => {
+      if (!url.includes(`/api/objects/${encodeURIComponent(GID)}`)) return undefined;
+      return { status: 409, body: { detail: "ambiguous global_id across projects" } };
+    });
+
+    const { result } = renderHook(() => useObjectDetail("p1", GID), { wrapper: makeHookWrapper() });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.error).toBeInstanceOf(ApiError);
+    expect((result.current.error as ApiError).status).toBe(409);
   });
 });
