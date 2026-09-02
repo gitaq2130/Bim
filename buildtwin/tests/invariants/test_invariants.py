@@ -4,7 +4,8 @@
 (b) StateTransition(to=CONFIRMED, actor!=cm) 은 모든 from-state × 모든 non-cm actor 에서 예외
 (c) 판정 모델(ScanVerdict, EntityObjectMapping, ActivityObjectMapping, RuleVerdict, ReadinessScore, ReviewRequest)에
     confidence(0~1 제약)·evidence(필수) 필드 존재 — 리플렉션 + 실제 검증
-(d) services/** · apps/web/src/viewer2d|viewer3d/** 에 좌표 상수 하드코딩 없음 (grep 기반 lint)
+(d) services/** · apps/web/src/** (전체 — viewer2d/viewer3d 뿐 아니라 lib/coordinate.ts, sync/*, pages/*.tsx,
+    components/*.tsx, domain/* 포함) 에 좌표 상수 하드코딩 없음 (grep 기반 lint)
 (e) services/scan/** 소스에 문자열 "CONFIRMED" 없음 (주석·docstring·assert 제외, AST 기반)
 (f) services/<svc>/README.md 가 CLAUDE.md 의 담당 에이전트를 명시
 (g) rules/**/*.yaml 전부가 해당 로더로 로드됨 (risk → knowledge.load_rules, verification → progress.load_patterns,
@@ -41,7 +42,7 @@ from packages.core.models import (
 ROOT = Path(__file__).resolve().parents[2]          # buildtwin/
 SERVICES = ROOT / "services"
 RULES = ROOT / "rules"
-VIEWER_DIRS = (ROOT / "apps/web/src/viewer2d", ROOT / "apps/web/src/viewer3d")
+WEB_SRC = ROOT / "apps/web/src"                     # 전체 트리(뷰어 포함)를 좌표 하드코딩 lint 대상으로 스캔한다
 
 EV = Evidence(source_type="cm_action", source_id="invariant-test", method="test")
 
@@ -153,7 +154,7 @@ EPSG_LITERAL = re.compile(r"""["']EPSG:\d+["']""")
 IDENTITY_MARKER = re.compile(r"identity|항등", re.IGNORECASE)
 IDENTITY_LOOKBACK = 6
 IDENTITY_VALUES = {"origin": {0.0}, "rotation": {0.0}, "rotation_deg": {0.0}, "scale": {1.0}}   # epsg 에는 항등값이 없다
-SKIP_DIR_NAMES = {"__pycache__", "node_modules", "tests", "__tests__", "dist", "storage"}
+SKIP_DIR_NAMES = {"__pycache__", "node_modules", "tests", "__tests__", "test", "dist", "storage"}
 SKIP_FILE_PATTERNS = (re.compile(r".*\.test\.tsx?$"), re.compile(r"^test_.*\.py$"), re.compile(r".*_test\.py$"),
                       re.compile(r"^vitest\.config\.ts$"), re.compile(r"^conftest\.py$"))
 COMMENT_PREFIXES = ("#", "//", "/*", "*")
@@ -161,12 +162,13 @@ STRING_LITERAL = re.compile(r"""(["'`])(?:\\.|(?!\1).)*\1""")   # "…" '…' `�
 
 
 def _scan_targets() -> list[Path]:
-    """검사 대상: services/**/*.py, viewer2d|viewer3d/**/*.ts|tsx.
-    제외(설계상 명시): 테스트 파일·디렉터리(tests/, __tests__/, *.test.ts(x), test_*.py, *_test.py, conftest.py),
-    vitest.config.ts, __pycache__/node_modules/dist/storage, 그리고 코드가 아닌 파일(yaml/json/md 는 애초에 대상이 아님).
-    services/api 는 API 라우터도 좌표를 하드코딩하면 안 되므로 포함한다."""
+    """검사 대상: services/**/*.py, apps/web/src/**/*.ts|tsx (viewer2d/viewer3d 뿐 아니라 lib/coordinate.ts,
+    sync/*, pages/*.tsx, components/*.tsx, domain/* 등 웹 소스 트리 전체).
+    제외(설계상 명시): 테스트 파일·디렉터리(tests/, __tests__/, apps/web/src/test/, *.test.ts(x), test_*.py, *_test.py,
+    conftest.py), vitest.config.ts, __pycache__/node_modules/dist/storage, 그리고 코드가 아닌 파일(yaml/json/md 는
+    애초에 대상이 아님). services/api 는 API 라우터도 좌표를 하드코딩하면 안 되므로 포함한다."""
     out: list[Path] = []
-    roots = [(SERVICES, ("*.py",))] + [(d, ("*.ts", "*.tsx")) for d in VIEWER_DIRS]
+    roots = [(SERVICES, ("*.py",)), (WEB_SRC, ("*.ts", "*.tsx"))]
     for root, globs in roots:
         for g in globs:
             for p in root.rglob(g):
@@ -219,6 +221,33 @@ def test_lint_targets_are_nonempty():
     targets = _scan_targets()
     assert any(p.suffix == ".py" for p in targets) and any(p.suffix in (".ts", ".tsx") for p in targets)
     assert not any("test" in p.name for p in targets)
+
+
+def test_lint_targets_cover_whole_web_src_tree_not_just_viewers():
+    """회귀 방지: (d) 의 스캔 범위가 다시 viewer2d/viewer3d 로 좁아지면 실패해야 한다."""
+    rels = {p.relative_to(ROOT).as_posix() for p in _scan_targets()}
+    must_include = {
+        "apps/web/src/lib/coordinate.ts",
+        "apps/web/src/sync/broker.ts",
+        "apps/web/src/sync/selectionSlice.ts",
+        "apps/web/src/pages/ViewerPage.tsx",
+        "apps/web/src/components/AppLayout.tsx",
+        "apps/web/src/domain/labels.ts",
+        "apps/web/src/viewer2d/overlay.ts",
+        "apps/web/src/viewer3d/Viewer3D.tsx",
+    }
+    missing = must_include - rels
+    assert not missing, f"coordinate lint no longer scans: {missing}"
+    must_exclude = {
+        "apps/web/src/lib/coordinate.test.ts",
+        "apps/web/src/sync/broker.test.ts",
+        "apps/web/src/test/fixtures.ts",
+        "apps/web/src/test/setup.ts",
+        "apps/web/src/test/utils.tsx",
+        "apps/web/src/viewer3d/vitest.config.ts",
+    }
+    leaked = must_exclude & rels
+    assert not leaked, f"coordinate lint must not scan test-only files: {leaked}"
 
 
 def test_lint_regex_catches_hardcoded_coordinates(tmp_path: Path):

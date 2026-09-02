@@ -2,7 +2,8 @@
 
 - 역할→actor: services.progress.state_machine.actor_for_role (client/admin → RoleNotAllowedError → 403)
 - 전이 부수효과(검측 ReviewRequest 생성/종료): ObjectStateMachine.transition_with_effects
-- 매핑 확정·검토요청 해소: services.sync.review_queue.confirm_mapping_row / resolve_mapping_reviews
+- 매핑 확정·검토요청 해소: services.sync.review_queue.confirm_mapping_row / resolve_mapping_review
+  (conflicting_sources 파싱은 sync 소유 — api 는 dict 키를 모른다)
 - 전문가 검토 로그(record_expert_review)는 사람의 판단이 들어가는 엔드포인트에서 API 가 기록한다.
 """
 from __future__ import annotations
@@ -37,7 +38,7 @@ from services.progress.state_machine import (
 from services.progress.verification import build_logic_context
 from services.sync.persistence import row_to_mapping
 from services.sync.plan_section import plan_section_from_objects
-from services.sync.review_queue import confirm_mapping_row, resolve_mapping_reviews
+from services.sync.review_queue import confirm_mapping_row, resolve_mapping_review
 
 from . import jobs, queries
 from .deps import CurrentUser
@@ -258,12 +259,7 @@ def resolve_review(session: Session, review_request_id: str, decision: str, note
                 raise Conflict(f"cannot confirm object on approval: {exc}")
             log.info("inspection rejected but no rework transition: %s", exc)
     elif row.kind == "mapping" and decision in ("approved", "rejected"):
-        cs = row.conflicting_sources or {}
-        drawing_id, handle, candidate = cs.get("drawing_id"), cs.get("entity_handle"), cs.get("candidate_global_id")
-        if drawing_id and handle:
-            resolve_mapping_reviews(session, str(drawing_id), str(handle), decision, user.user_id, note)  # type: ignore[arg-type]
-            if decision == "approved" and candidate:
-                confirm_mapping_row(session, str(drawing_id), str(handle), str(candidate), user.user_id, note)
+        resolve_mapping_review(session, row, decision, user.user_id, note)  # type: ignore[arg-type]
     session.refresh(row)
     if row.status == "open":   # verification / on_hold / 위에서 닫히지 않은 경우: 사람의 결정을 그대로 기록
         row.status, row.resolution_note, row.resolved_by, row.resolved_at = decision, note, user.user_id, datetime.now(UTC)

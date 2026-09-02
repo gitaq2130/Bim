@@ -118,6 +118,55 @@ export function useObjects(projectId: string | null | undefined, q: ObjectsQuery
   });
 }
 
+/** API 페이지네이션 상한(le=2000, docs/api.md). useAllObjects 는 이 크기로 페이지를 넘긴다 */
+export const OBJECTS_PAGE_SIZE = 2000;
+/** 방어적 루프 상한: page_size(2000) * 25 = 최대 50,000건까지 수집 후 truncated=true 로 중단 */
+export const MAX_OBJECTS_PAGES = 25;
+
+export interface AllObjectsResult {
+  items: BimObjectView[];
+  total: number;
+  /** MAX_OBJECTS_PAGES 에 도달해 total 만큼 다 가져오지 못한 경우 true */
+  truncated: boolean;
+}
+
+/**
+ * 객체 목록을 `{items,total,page,page_size}` 페이지네이션 응답을 따라 total 만큼 모두 모을 때까지 순차 조회한다.
+ * page/page_size 는 항상 이 훅이 관리하므로 q 에는 넣지 않는다. 결과는 TanStack Query 캐시에만 있고 Zustand 로 복제하지 않는다.
+ */
+export function useAllObjects(
+  projectId: string | null | undefined,
+  q: Omit<ObjectsQuery, "page" | "page_size"> = {},
+  enabled = true,
+) {
+  return useQuery<AllObjectsResult>({
+    queryKey: [...queryKeys.objects(projectId ?? "", q), "all"] as const,
+    queryFn: async () => {
+      let items: BimObjectView[] = [];
+      let total = 0;
+      let truncated = false;
+      for (let page = 1; ; page += 1) {
+        const res = toPaginated(
+          await api.get<BimObjectView[] | Paginated<BimObjectView>>(`/projects/${projectId}/objects`, {
+            ...q,
+            page,
+            page_size: OBJECTS_PAGE_SIZE,
+          }),
+        );
+        items = items.concat(res.items);
+        total = res.total;
+        if (res.items.length === 0 || items.length >= total) break;
+        if (page >= MAX_OBJECTS_PAGES) {
+          truncated = true;
+          break;
+        }
+      }
+      return { items, total, truncated };
+    },
+    enabled: !!projectId && enabled,
+  });
+}
+
 export function useObjectDetail(
   globalId: string | null | undefined,
   options?: Partial<UseQueryOptions<ObjectDetail>>,

@@ -3,7 +3,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import { useDrawingEntities, useDrawingMappings, useDrawings, useModels, useObjects, usePlanSection, useScans } from "../api/hooks";
+import { useAllObjects, useDrawingEntities, useDrawingMappings, useDrawings, useModels, usePlanSection, useScans } from "../api/hooks";
 import type { ObjectState } from "../api/types";
 import { ErrorBox } from "../components/ErrorBox";
 import { ObjectDetailPanel } from "../components/ObjectDetailPanel";
@@ -43,7 +43,8 @@ export function ViewerPage() {
 
   const entities = useDrawingEntities(drawing?.drawing_id);
   const mappings = useDrawingMappings(drawing?.drawing_id);
-  const objects = useObjects(projectId, { page_size: 2000 }) // API 상한(le=2000)과 일치. 초과 시 페이지네이션 필요(Deferred);
+  // total 만큼 모든 페이지를 모아온다(API page_size 상한 le=2000 초과 시에도 누락 없음). 서버 상태는 Query 캐시에만 유지.
+  const objects = useAllObjects(projectId);
   // 단면 오프셋은 서버 값만 쓴다: models.plan_section_default_offset → plan-section.offset. 없으면 3D 뷰어를 띄우지 않는다.
   const needsOffsetFallback = !!model && model.plan_section_default_offset == null;
   const section = usePlanSection(ui.overlayVisible || needsOffsetFallback ? model?.model_id : null, level);
