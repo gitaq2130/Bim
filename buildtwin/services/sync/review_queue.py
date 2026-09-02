@@ -15,7 +15,7 @@ from packages.core.models import EntityObjectMapping, Evidence, ReviewRequest
 from packages.core.models.orm import EntityObjectMappingRow, ReviewRequestRow
 
 from .config import SyncConfig, load_sync_config
-from .persistence import open_mapping_reviews, row_to_mapping, save_mappings
+from .persistence import _project_id_of_drawing, open_mapping_reviews, row_to_mapping, save_mappings
 
 ReviewDecision = Literal["approved", "rejected"]
 MANUAL_MAPPING_METHOD = "manual_mapping"
@@ -80,8 +80,11 @@ def resolve_mapping_reviews(session: Session, drawing_id: str, entity_handle: st
 def confirm_mapping_row(session: Session, drawing_id: str, entity_handle: str, global_id: str, user_id: str,
                         note: str | None = None) -> EntityObjectMapping:
     """사용자 확정(행 단위). 기존 매핑이 있으면 confirm_mapping(재지정 가능), 없으면 수동 매핑(confidence 1.0,
-    evidence source_type=user_input). 저장 후 그 엔티티의 open 검토요청을 approved 로 닫는다(사람 액션)."""
+    evidence source_type=user_input). 저장 후 그 엔티티의 open 검토요청을 approved 로 닫는다(사람 액션).
+
+    ADR 0005: project_id 는 매핑 계약에 없다 — 여기서 도면(drawing_id)에서 유도해 저장 행에 싣는다."""
     _require_user(user_id)
+    project_id = _project_id_of_drawing(session, drawing_id)
     row = session.scalars(select(EntityObjectMappingRow).where(
         EntityObjectMappingRow.drawing_id == drawing_id, EntityObjectMappingRow.entity_handle == entity_handle)).first()
     if row is not None:
@@ -94,7 +97,7 @@ def confirm_mapping_row(session: Session, drawing_id: str, entity_handle: str, g
             evidence=Evidence(source_type="user_input", source_id=user_id, method=MANUAL_MAPPING_METHOD, note=note,
                               extra={"iou": None, "rule_score": None, "transform_source": None}),
             needs_review=False, reviewed_by=user_id)
-    save_mappings(session, [new], replace=True)
+    save_mappings(session, [new], replace=True, project_id=project_id)
     resolve_mapping_reviews(session, drawing_id, entity_handle, "approved", user_id, note)
     return new
 

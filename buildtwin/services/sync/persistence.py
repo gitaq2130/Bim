@@ -28,9 +28,11 @@ class RebuildResult(BaseModel):
     superseded_ids: list[str] = []
 
 
-def mapping_to_row(m: EntityObjectMapping) -> EntityObjectMappingRow:
+def mapping_to_row(m: EntityObjectMapping, project_id: str) -> EntityObjectMappingRow:
+    """ADR 0005: project_id 는 매핑 계약(Pydantic)에 없다 — 호출자가 도면에서 유도해 넘긴다."""
     return EntityObjectMappingRow(drawing_id=m.drawing_id, entity_handle=m.entity_handle, global_id=m.global_id,
-                                  confidence=m.confidence, evidence=m.evidence.model_dump(mode="json"),
+                                  project_id=project_id, confidence=m.confidence,
+                                  evidence=m.evidence.model_dump(mode="json"),
                                   needs_review=m.needs_review, reviewed_by=m.reviewed_by)
 
 
@@ -40,23 +42,49 @@ def row_to_mapping(r: EntityObjectMappingRow) -> EntityObjectMapping:
                                needs_review=r.needs_review, reviewed_by=r.reviewed_by)
 
 
-def save_mappings(session: Session, mappings: list[EntityObjectMapping], replace: bool = True) -> int:
-    """매핑 저장. replace=True 면 같은 (drawing_id, handle)의 기존 행을 지우고 넣는다(사용자 확정 행 포함 — 호출자가 판단)."""
+def _project_id_of_drawing(session: Session, drawing_id: str) -> str:
+    row = session.get(DrawingRow, drawing_id)
+    if row is None:
+        raise LookupError(f"drawing not found: {drawing_id}")
+    return row.project_id
+
+
+def save_mappings(session: Session, mappings: list[EntityObjectMapping], replace: bool = True,
+                  project_id: str | None = None) -> int:
+    """매핑 저장. replace=True 면 같은 (drawing_id, handle)의 기존 행을 지우고 넣는다(사용자 확정 행 포함 — 호출자가 판단).
+
+    ADR 0005: project_id 는 매핑 계약에 없으므로 도면에서 유도한다. 호출자가 이미 알고 있으면(rebuild_mappings 등)
+    project_id 를 넘겨 DrawingRow 재조회를 피할 수 있다 — 그 값이 mappings 의 drawing_id 전부에 적용된다.
+    호출자가 넘기지 않으면 mapping.drawing_id 별로 DrawingRow 를 조회해 유도한다(여러 도면이 섞여도 안전)."""
+    if not mappings:
+        return 0
     if replace:
         for m in mappings:
             session.execute(delete(EntityObjectMappingRow).where(
                 EntityObjectMappingRow.drawing_id == m.drawing_id,
                 EntityObjectMappingRow.entity_handle == m.entity_handle))
-    rows = [mapping_to_row(m) for m in mappings]
+    if project_id is not None:
+        rows = [mapping_to_row(m, project_id) for m in mappings]
+    else:
+        cache: dict[str, str] = {}
+        rows = []
+        for m in mappings:
+            pid = cache.setdefault(m.drawing_id, _project_id_of_drawing(session, m.drawing_id))
+            rows.append(mapping_to_row(m, pid))
     session.add_all(rows)
     session.flush()
     return len(rows)
 
 
-def load_mappings(session: Session, drawing_id: str, needs_review: bool | None = None) -> list[EntityObjectMapping]:
+def load_mappings(session: Session, drawing_id: str, needs_review: bool | None = None,
+                  project_id: str | None = None) -> list[EntityObjectMapping]:
+    """project_id 는 방어적 필터(선택) — drawing_id 가 이미 하나의 프로젝트로 범위를 정하므로 보통 불필요하지만,
+    호출자가 알고 있으면 넘겨 다른 프로젝트로 잘못 조회하는 것을 조기에 막는다."""
     stmt = select(EntityObjectMappingRow).where(EntityObjectMappingRow.drawing_id == drawing_id)
     if needs_review is not None:
         stmt = stmt.where(EntityObjectMappingRow.needs_review == needs_review)
+    if project_id is not None:
+        stmt = stmt.where(EntityObjectMappingRow.project_id == project_id)
     return [row_to_mapping(r) for r in session.scalars(stmt).all()]
 
 
@@ -128,7 +156,7 @@ def rebuild_mappings(session: Session, drawing_id: str, project_id: str, mapping
     else:
         session.execute(delete(EntityObjectMappingRow).where(EntityObjectMappingRow.drawing_id == drawing_id))
     fresh = [m for m in mappings if m.entity_handle not in confirmed_handles]
-    save_mappings(session, fresh, replace=False)
+    save_mappings(session, fresh, replace=False, project_id=project_id)
 
     previous_open = open_mapping_reviews(session, drawing_id, project_id=project_id)
     reviews = mappings_needing_review(fresh, project_id=project_id)

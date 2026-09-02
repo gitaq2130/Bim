@@ -1,4 +1,4 @@
-"""persist_ingest_result / persist_drawing — ADR 0001 §1 재업로드 규칙(sqlite in-memory)."""
+"""persist_ingest_result / persist_drawing — ADR 0001 §1 재업로드 규칙, ADR 0005 프로젝트 범위 키(sqlite in-memory)."""
 from __future__ import annotations
 
 from collections.abc import Iterator
@@ -8,13 +8,14 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
+from packages.core.db import init_db, new_session, reset_engine
 from packages.core.models import BimObjectDraft, IngestResult
 from packages.core.models.orm import Base, BimObjectRow, DrawingEntityRow, DrawingRow, FileRow, ModelRow, ProjectRow
 from packages.core.models.state import ObjectState
 from services.ingest import persist_drawing, persist_ingest_result
 from services.ingest.dxf_parser import parse_dxf
 from services.ingest.ifc_parser import parse_ifc
-from services.ingest.persistence import GlobalIdConflictError, PersistedModel
+from services.ingest.persistence import PersistedModel
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
 PROJECT = "p-test"
@@ -113,13 +114,27 @@ def test_explicit_model_id_and_duplicate_global_ids(session: Session, ifc_result
     summary = persist_ingest_result(session, PROJECT, "f-ifc-1", res, model_id="m-explicit")
     assert summary.model_id == "m-explicit" and summary.object_count == 2 and summary.created == 2
     assert summary.duplicate_global_ids == [f"{dup.global_id}#1"]
-    assert session.get(BimObjectRow, f"{dup.global_id}#1") is not None
+    assert session.get(BimObjectRow, (PROJECT, f"{dup.global_id}#1")) is not None
 
 
-def test_global_id_owned_by_other_project_conflicts(session: Session, ifc_result: IngestResult) -> None:
-    persist_ingest_result(session, "p-other", "f-other", ifc_result)
-    with pytest.raises(GlobalIdConflictError):
-        persist_ingest_result(session, PROJECT, "f-ifc-1", ifc_result)
+def test_same_global_id_in_other_project_is_not_a_conflict(session: Session, ifc_result: IngestResult) -> None:
+    """ADR 0005 규칙 4·5: 같은 GlobalId 가 다른 프로젝트에 이미 있어도 충돌이 아니다. 재업로드 규칙도 프로젝트 범위 안에서만 적용된다."""
+    other_summary = persist_ingest_result(session, "p-other", "f-other", ifc_result)
+    assert other_summary.created == len(ifc_result.objects) and other_summary.orphaned == 0
+
+    summary = persist_ingest_result(session, PROJECT, "f-ifc-1", ifc_result)
+    assert summary.created == len(ifc_result.objects) and summary.orphaned == 0
+
+    # p-other 의 객체 상태를 바꿔도 PROJECT 쪽 같은 GlobalId 객체는 영향받지 않는다(격리)
+    other_rows = {r.global_id: r for r in session.scalars(select(BimObjectRow).where(BimObjectRow.project_id == "p-other"))}
+    gid = ifc_result.objects[0].global_id
+    other_rows[gid].state = ObjectState.CONFIRMED.value
+    other_rows[gid].is_orphaned = True
+    session.flush()
+
+    project_rows = _objects(session)
+    assert project_rows[gid].state == ObjectState.PLANNED.value
+    assert project_rows[gid].is_orphaned is False
 
 
 def test_persist_drawing_and_replace_on_reupload(session: Session, dxf_result: IngestResult) -> None:
@@ -151,3 +166,66 @@ def test_persist_drawing_and_replace_on_reupload(session: Session, dxf_result: I
     assert explicit == other
     with pytest.raises(ValueError):
         persist_drawing(session, "p-other", "f-other", dxf_result, level=None, drawing_id=other)
+
+
+def test_same_ifc_uploaded_to_two_projects_is_the_whole_point_of_adr_0005(ifc_result: IngestResult) -> None:
+    """ADR 0005 회귀 테스트: 같은 파싱 결과를 서로 다른 project_id 두 번 적재해도 둘 다 성공하고,
+    각 프로젝트가 자기만의 완전한 객체 집합을 가지며, 한쪽 상태 변경이 다른 쪽에 전혀 새지 않는다.
+    `packages.core.db`의 실제 엔진/세션 팩토리(reset_engine + init_db("sqlite://") + new_session)를 그대로 써서
+    (project_id, global_id) 복합 키가 실제 배포 경로에서도 프로젝트를 격리함을 검증한다.
+    """
+    reset_engine()
+    try:
+        init_db("sqlite://")
+        session = new_session()
+        try:
+            session.add(ProjectRow(project_id="p-alpha", name="alpha"))
+            session.add(ProjectRow(project_id="p-beta", name="beta"))
+            session.add(FileRow(file_id="f-alpha", project_id="p-alpha", kind="ifc", filename="a.ifc",
+                                uri="local://f-alpha", sha256="0" * 64, size=1))
+            session.add(FileRow(file_id="f-beta", project_id="p-beta", kind="ifc", filename="b.ifc",
+                                uri="local://f-beta", sha256="0" * 64, size=1))
+            session.flush()
+
+            alpha = persist_ingest_result(session, "p-alpha", "f-alpha", ifc_result)
+            beta = persist_ingest_result(session, "p-beta", "f-beta", ifc_result)
+
+            # 둘 다 성공하고, 신규 생성 개수는 동일(서로가 서로를 "기존 객체"로 착각하지 않는다)
+            assert alpha.created == len(ifc_result.objects) and alpha.orphaned == 0
+            assert beta.created == len(ifc_result.objects) and beta.orphaned == 0
+
+            def rows_of(project_id: str) -> dict[str, BimObjectRow]:
+                return {r.global_id: r for r in session.scalars(
+                    select(BimObjectRow).where(BimObjectRow.project_id == project_id))}
+
+            alpha_rows = rows_of("p-alpha")
+            beta_rows = rows_of("p-beta")
+            assert len(alpha_rows) == len(ifc_result.objects)
+            assert len(beta_rows) == len(ifc_result.objects)
+            assert set(alpha_rows) == set(beta_rows) == {o.global_id for o in ifc_result.objects}
+
+            # 한 프로젝트의 객체 상태·orphan 변경이 다른 프로젝트에 새지 않는다
+            gid = ifc_result.objects[0].global_id
+            alpha_rows[gid].state = ObjectState.CONFIRMED.value
+            alpha_rows[gid].is_orphaned = True
+            session.flush()
+
+            assert rows_of("p-alpha")[gid].state == ObjectState.CONFIRMED.value
+            assert rows_of("p-alpha")[gid].is_orphaned is True
+            assert rows_of("p-beta")[gid].state == ObjectState.PLANNED.value
+            assert rows_of("p-beta")[gid].is_orphaned is False
+
+            # 재업로드 규칙(상태 유지·버전 증가·orphan 표시)도 프로젝트 범위 안에서만 작동한다
+            dropped_gid = ifc_result.objects[1].global_id
+            trimmed = ifc_result.model_copy(update={"objects": [o for o in ifc_result.objects if o.global_id != dropped_gid]})
+            alpha2 = persist_ingest_result(session, "p-alpha", "f-alpha", trimmed)
+            assert alpha2.orphaned == 1 and alpha2.orphaned_global_ids == [dropped_gid]
+            assert rows_of("p-alpha")[dropped_gid].is_orphaned is True
+            # p-beta 는 재업로드하지 않았으므로 그대로 온전하고 orphan 도 없다
+            beta_rows_after = rows_of("p-beta")
+            assert len(beta_rows_after) == len(ifc_result.objects)
+            assert beta_rows_after[dropped_gid].is_orphaned is False
+        finally:
+            session.close()
+    finally:
+        reset_engine()

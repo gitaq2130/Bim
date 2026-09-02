@@ -51,11 +51,14 @@ def ensure_model(session: Session, project_id: str, model_id: str) -> ModelRow:
 
 
 def save_objects(session: Session, project_id: str, model_id: str, drafts: list[BimObjectDraft]) -> list[BimObjectRow]:
-    """ingest 초안을 bim_objects 에 저장(상태는 PLANNED 로 초기화, 기존 행은 속성만 갱신)."""
+    """ingest 초안을 bim_objects 에 저장(상태는 PLANNED 로 초기화, 기존 행은 속성만 갱신).
+
+    ADR 0005: 키는 (project_id, global_id) — 같은 global_id 라도 다른 프로젝트면 별개 행이다.
+    """
     ensure_model(session, project_id, model_id)
     rows: list[BimObjectRow] = []
     for d in drafts:
-        row = session.get(BimObjectRow, d.global_id)
+        row = session.get(BimObjectRow, (project_id, d.global_id))
         if row is None:
             row = BimObjectRow(global_id=d.global_id, project_id=project_id, model_id=model_id, ifc_type=d.ifc_type,
                                state=ObjectState.PLANNED.value)
