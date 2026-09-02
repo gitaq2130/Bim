@@ -4,15 +4,15 @@
     "activity_mapping_accuracy": 1.0,
     "mapping_column_accuracy": 1.0,
     "mapping_overall_accuracy": 1.0,
-    "registration_rmse_max": 0.0153,
-    "scan_verdict_accuracy": 1.0
+    "registration_rmse_max": 0.0152,
+    "scan_verdict_accuracy": 0.9524
   },
   "extra": {
     "activity_mapping_accuracy[csv]": 1.0,
     "activity_mapping_accuracy[xer]": 1.0,
     "activity_mapping_accuracy[xml]": 1.0,
     "mapping_column_accuracy_auto_align": 1.0,
-    "registration_fitness": 0.7022
+    "registration_fitness": 0.8135
   },
   "baseline": {
     "activity_mapping_accuracy": 0.9,
