@@ -1,10 +1,21 @@
 # Work Readiness Score 가중치 (합 1.0). 담당: progress-engine
 weights:
   predecessor_completion: 0.30   # 선행공정 완료율 (CONFIRMED만 완료로 인정)
-  inspection: 0.20               # 선행 객체 검측 통과율
-  material_delivery: 0.20        # 자재 반입율
-  drawing_approval: 0.15         # 도면 승인 여부
-  open_clashes: 0.10             # 미결 간섭 (없으면 1.0)
-  crew_assigned: 0.05            # 인력 배치
+  inspection: 0.20               # 선행 객체 검측 통과율 (검측 대기·미결 inspection 검토요청이 없는 비율)
+  material_delivery: 0.20        # 자재 반입율 (반입량 / 필요량; 자재 데이터 없으면 1.0 + confidence 감점)
+  drawing_approval: 0.15         # 도면 승인 여부 (resources.drawing_approved == 1 → 1.0, 없으면 component_defaults)
+  open_clashes: 0.10             # 미결 간섭·3중 검증 검토요청 (없으면 1.0)
+  crew_assigned: 0.05            # 인력 배치 (resources.crew > 0)
 start_threshold: 0.75            # 이 값 이상이면 착수 가능
 predecessor_lookback_days: 14
+
+# 데이터가 없을 때 쓰는 기본 구성값 (코드에 숫자 리터럴 금지)
+component_defaults:
+  drawing_approval_unknown: 0.5  # 도면 승인 플래그가 없을 때
+  material_unknown: 1.0          # 자재 데이터가 전혀 없을 때 (confidence 감점으로 표시)
+  material_required_unknown_delivered: 1.0  # 필요량 미지수인데 반입 기록이 있을 때
+
+# 차단 원인 심각도: 구성값이 high_below 미만이면 high, medium_below 미만이면 medium, 그 외 low
+blocker_severity:
+  high_below: 0.5
+  medium_below: 1.0
