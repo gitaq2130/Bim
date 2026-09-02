@@ -1,6 +1,6 @@
 # ADR 0001 — 객체 식별(Identity)과 상태 모델(State Model)
 
-- 상태: Accepted
+- 상태: Accepted (개정 1: 2026-09-02 — §2 좌표계 출처·§4-1 역할 매핑·§5 근거 출처 확장)
 - 작성: architect
 - 날짜: 2026-09-02
 - 관련: CLAUDE.md §0 핵심 원칙, `packages/core/models/`
@@ -39,7 +39,7 @@ BuildTwin의 핵심은 3D 뷰어가 아니라 "계획 / 신고 / 물리적 증�
 ### 2. 좌표계
 
 - 모든 기하는 **모델 좌표계(IFC 월드 좌표)**를 기준으로 저장한다. DXF·스캔은 각각 `CoordinateSystem{origin, rotation, scale, epsg?, source}`를 가지며 모델 좌표계로의 변환을 `CoordinateTransform(4x4)`로 저장한다.
-- `source ∈ {ifc_local, ifc_mapconversion, user_input, grid_auto_align, control_points, markers, icp_refined}`. 변환 값은 항상 DB 레코드에서 온다. 코드 상수 금지.
+- `source ∈ {ifc_local, ifc_mapconversion, dxf_local, scan_local, user_input, grid_auto_align, control_points, markers, icp_refined}`. `dxf_local`·`scan_local`은 각각 DXF 파일·스캔 파일의 원본 로컬 좌표계(모델 좌표계로의 변환이 아직 없음)를 뜻한다. 변환 값은 항상 DB 레코드에서 온다. 코드 상수 금지.
 
 ### 3. 객체 상태기계 — 8단계
 
@@ -100,6 +100,15 @@ class ObjectState(str, Enum):
 | CONFIRMED | MISMATCH | cm | 확정 취소(후속 발견). 반드시 사유 evidence |
 | CONFIRMED | IN_PROGRESS | cm | 재시공 지시 |
 
+#### 4-1. 사용자 역할 → actor 매핑
+
+| 역할(UserRole) | actor | 비고 |
+|---|---|---|
+| `contractor` | `contractor` | 작업일보·완료 신고 |
+| `cm` | `cm` | 검측·확정·검토요청 처리 |
+| `client` | — | 조회 전용. 전이 요청 403 |
+| `admin` | — | 프로젝트·사용자 관리 전용. **확정·검측 승인·검토요청 처리 불가**(403). 운영상 CM 권한이 필요하면 cm 계정을 별도로 발급한다 |
+
 불변식(코드·테스트로 강제):
 
 1. **`to == CONFIRMED` ⇒ `actor == cm`.** 다른 actor의 시도는 예외. `system`에게는 `CONFIRMED`가 도달 불가능한 상태다.
@@ -125,10 +134,14 @@ class StateTransition(BaseModel):
 
 `Evidence`는 공용 모델로 최소 `source_type`, `source_id`를 필수로 하고 나머지는 선택. 빈 evidence로 전이를 만들 수 없다.
 
+`source_type` 집합(개정 1): `scan`(스캔 판정) · `daily_report`(작업일보) · `cm_action`(CM 조치) · `rule`(규칙 엔진) · `ingest`(도면 인식 결과) · `mapping`(2D↔3D 매핑) · `schedule`(공정표) · `material`(자재 입출고) · `system_logic`(BIM 수량·선후행 계산) · `user_input`(사용자 직접 입력: 정합 파라미터·수동 매핑·화면 조작 전이). 화면에서 사람이 누르는 전이는 `user_input`(actor는 역할에 따름)이다.
+
 ### 6. 3중 검증과 상태의 관계
 
 - 축: ① 신고(`DailyReport`) ② 물리적 증거(`ScanVerdict`) ③ 시스템 논리(BIM 수량·선후행·자재 입출고).
 - `rules/verification.yaml`의 패턴에 걸리면 `ReviewRequest(kind="verification")`를 만들고 그 객체의 `system` 전이를 막는다. 상태 자체는 바꾸지 않는다(현 상태 유지 + `has_open_review=True` 파생 필드).
+- `ReviewRequest`의 해소(`approved/rejected`)는 사람(cm)만 한다. 시스템은 대체된 요청(예: 도면 재정합으로 무의미해진 mapping 검토요청)을 `on_hold`로 바꾸고 `resolution_note`에 `superseded_by=<new id>`를 남길 수만 있다.
+- `INSPECTION_REQUESTED` 진입 시 상태기계가 `ReviewRequest(kind="inspection")`를 생성하고, cm의 `CONFIRMED`/`IN_PROGRESS`/`MISMATCH` 전이 시 종료한다(소유: progress-engine).
 
 ## Consequences
 

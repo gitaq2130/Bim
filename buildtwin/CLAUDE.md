@@ -60,15 +60,20 @@ buildtwin/
 │   └── src/
 │       ├── viewer3d/              # (viewer-3d) IFC 3D 뷰어 모듈
 │       ├── viewer2d/              # (viewer-2d) DXF→SVG 2D 뷰어 모듈
-│       └── ...                    # (frontend) 화면·스토어·API 클라이언트
+│       ├── sync/                  # (sync-2d3d, 클라이언트 파트) 뷰어 이벤트 브로커·selection 슬라이스
+│       └── ...                    # (frontend) 화면·스토어·API 클라이언트 — 뷰어는 index 재수출만 import
 ├── services/
 │   ├── ingest/                    # (bim-ingest) IFC/DXF/RVT → 객체·엔티티 추출
 │   ├── sync/                      # (sync-2d3d) 2D↔3D 매핑, 뷰어 이벤트 브로커
 │   ├── scan/                      # (reality-capture) 포인트클라우드 정합·객체 판정
 │   ├── progress/                  # (progress-engine) 공정표·상태기계·Readiness·3중 검증
 │   ├── knowledge/                 # (knowledge) 규칙 엔진·사례 DB·전문가 검토 로그
-│   └── api/                       # (api) FastAPI 라우터·인증·업로드·작업 폴링
-├── packages/core/models/          # (architect) 공용 데이터 모델(SQLAlchemy/Pydantic)
+│   ├── api/                       # (api) FastAPI 라우터·인증·업로드·작업 폴링 — 도메인 로직 금지(서비스 호출만)
+│   └── common/                    # (architect) 공용 인프라: celery_app.py, safe_expr.py(knowledge가 구현·유지)
+├── packages/core/
+│   ├── models/                    # (architect) 공용 데이터 모델(SQLAlchemy/Pydantic)
+│   ├── db.py                      # (architect) 엔진·세션
+│   └── settings.py                # (architect) 환경 설정(.env)
 ├── rules/                         # (knowledge) 판단 규칙 YAML, verification.yaml
 ├── config/                        # (progress-engine) readiness.yaml 등 가중치·설정
 ├── docs/
@@ -96,7 +101,9 @@ buildtwin/
 5. **한국어 주석 허용, 식별자는 영어.** 변수·함수·클래스·테이블·컬럼·API 경로는 모두 영어. 주석·docstring·커밋 메시지·문서는 한국어 가능.
 6. **좌표계 변환은 하드코딩 금지.** 원점·회전·스케일·EPSG는 항상 `CoordinateSystem` 객체(`packages/core/models/`)로 전달하고, 값은 DB 또는 사용자 입력에서 온다.
 7. **상태 전이는 반드시 `actor`(system/contractor/cm)와 `evidence`를 기록**한다. ADR 0001의 상태기계 밖 전이는 코드로 존재해서는 안 된다.
-8. **"확정(CONFIRMED)" 상태는 `actor == cm`인 전이로만 도달**한다. `system` actor가 CONFIRMED로 전이하는 코드 경로가 있으면 `reviewer`가 즉시 반려한다.
+8. **"확정(CONFIRMED)" 상태는 `actor == cm`인 전이로만 도달**한다. `system` actor가 CONFIRMED로 전이하는 코드 경로가 있으면 `reviewer`가 즉시 반려한다. **역할→actor 매핑은 `contractor→contractor`, `cm→cm`뿐이다.** `admin`은 프로젝트·사용자 관리 역할이며 확정·검측 승인·검토요청 처리 권한이 없다(ADR 0001 §4-1). `client`는 조회 전용.
+11. **API 계층(`services/api`)에는 도메인 규칙을 두지 않는다.** 재업로드·orphan 규칙은 `services/ingest/persistence.py`, 매핑 생명주기·검토요청 해소는 `services/sync`, 검측 ReviewRequest 생성·종료는 `services/progress/state_machine.py`가 소유한다. API는 이를 호출만 한다.
+12. **API 필드명은 snake_case(glossary 영어 표기 그대로)**. 뷰어 TS 타입도 서버 계약 필드는 같은 표기를 쓴다(`global_id`, `coordinate_system`).
 9. **비동기 작업(파싱·정합·판정)은 Celery 태스크**로 발행하고, API는 `job_id`를 돌려준 뒤 상태 폴링 엔드포인트로 진행률을 제공한다.
 10. **MVP 범위 밖 기능은 구현하지 않는다.** 필요하면 `docs/adr/`에 "Deferred" ADR을 남기고 끝낸다.
 

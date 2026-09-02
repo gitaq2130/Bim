@@ -96,3 +96,22 @@
 | 사례 저장소 | `CaseStore` (`rules/cases/*.yaml`) | 사례 DB 파일 저장소. `to_rule_draft`로 `source: case` 규칙 초안 생성 |
 | 추론 제공자 | `ReasoningProvider` / `NullReasoningProvider` | LLM 추론 인터페이스(Protocol). MVP는 빈 결과를 돌려주는 Null 구현만 |
 | 검토 diff | `json_diff` (`{path, op: add\|remove\|change, before, after}`) | 전문가 검토 로그의 제안 vs 최종값 차이. 중첩 dict는 `a.b`, 리스트는 `a[0]` 경로 |
+
+## 개정 1 추가 항목 (architect, 2026-09-02)
+
+| 한국어 | 영어 | 정의 |
+|---|---|---|
+| 검토요청 상태 | `ReviewStatus` = `open` / `approved` / `rejected` / `on_hold` | 해소(approved/rejected)는 cm만. 시스템은 on_hold(대체)만 |
+| 신고 상태 | `claimed_state` = `started` / `in_progress` / `completed` | 작업일보 항목의 시공사 주장 |
+| 작업 종류 | Job `kind` = `ingest` / `scan_upload` / `schedule` / `mapping` / `verdict` | 비동기 작업 분류. `scan_upload`는 스캔 파일 등록(정합 입력 대기), `verdict`가 정합+판정 수행 |
+| 작업 상태 | Job `status` = `queued` / `running` / `done` / `failed` | |
+| 정합 상태 | `RegistrationStatus` = `ok` / `needs_alignment_input` / `registration_failed` | |
+| 도면 정합 | `DrawingAlignment` (`source`: `user_input` / `grid_auto_align`) | DXF 좌표계 → 모델 좌표계 파라미터(origin·rotation_deg·scale) |
+| 좌표계 출처 | `CoordinateSource` += `dxf_local`, `scan_local` | 원본 파일 로컬 좌표계 |
+| 근거 출처 | `Evidence.source_type` = scan / daily_report / cm_action / rule / ingest / mapping / schedule / material / system_logic / user_input | ADR 0001 §5 |
+| 다음 행동 종류 | NextAction `kind` = `confirm` / `request_inspection` / `reject_inspection` / `report_progress` / `accept_rework` / `order_rework` / `revoke_confirmation` / `flag_mismatch` / `resolve_review` / `align_scan` / `inspect` | 백엔드 `state_machine.next_actions`가 정의, 프론트는 이 집합만 사용 |
+| 준비도 구성요소 | `predecessor_completion` / `inspection` / `material_delivery` / `drawing_approval` / `open_clashes` / `crew_assigned` | `config/readiness.yaml` 가중치 키 |
+| 차단 구성요소 | `Blocker.component` = 위 6개 + `predecessor` / `readiness` / `resource` | scheduler가 추가로 쓰는 값 |
+| 부재 그룹 | `group` (`IFC_TYPE_GROUP`) = `column` / `beam` / `slab` / `wall` / `duct` / `pipe` / `cable_tray` / `facade_panel` / `other` | IfcType을 화면·집계용으로 묶은 것. **공종(discipline)과 다른 개념** |
+| 공종 | `discipline` = `structure` / `architecture` / `mechanical` / `electrical` / `civil` / `finishing` | 규칙·공정표·사례에서 공통 사용. `mep`는 쓰지 않는다 |
+| 근거 방법 | `Evidence.method` | 자유 문자열이되 서비스별 규약값: sync `user_align|grid_align|bbox_iou|layer_rule`, scan `control_points+icp`, progress `wbs_rule|keyword_rule|level_zone`, knowledge `rule_engine` |
