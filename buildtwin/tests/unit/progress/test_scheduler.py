@@ -15,7 +15,8 @@ def _assert_no_fs_violation(session, result) -> None:
     for act in result.startable:
         for rel in rels:
             if rel.successor_id == act and rel.type == "FS":
-                assert activity_progress(session, rel.predecessor_id).complete, f"{act} started before {rel.predecessor_id}"
+                assert activity_progress(session, result.project_id, rel.predecessor_id).complete, \
+                    f"{act} started before {rel.predecessor_id}"
 
 
 @pytest.mark.parametrize("use_solver", [True, False])
@@ -29,7 +30,7 @@ def test_startable_set_respects_fs_predecessors(session, seeded, use_solver):
     _assert_no_fs_violation(session, result)
 
     for gid in seeded["expected"]["A100"]:
-        session.get(BimObjectRow, gid).state = ObjectState.CONFIRMED.value
+        session.get(BimObjectRow, (seeded["project_id"], gid)).state = ObjectState.CONFIRMED.value
     session.flush()
     result = compute_startable(session, seeded["project_id"], use_solver=use_solver)
     assert result.startable == ["A110"]
@@ -39,7 +40,7 @@ def test_startable_set_respects_fs_predecessors(session, seeded, use_solver):
 
 def test_started_activities_are_not_candidates_and_ss_allows(session, seeded):
     for gid in seeded["expected"]["A100"]:
-        session.get(BimObjectRow, gid).state = ObjectState.IN_PROGRESS.value
+        session.get(BimObjectRow, (seeded["project_id"], gid)).state = ObjectState.IN_PROGRESS.value
     rel = session.query(ActivityRelationRow).filter_by(successor_id="A110").one()
     rel.type = "SS"
     session.flush()

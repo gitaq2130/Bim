@@ -28,10 +28,10 @@ def _ordering_key(row: ActivityRow) -> tuple[int, str, str]:
     return (0 if row.planned_start else 1, row.planned_start or "", row.activity_id)
 
 
-def _lag_elapsed(session: Session, pred: ActivityProgress, lag_days: float, now: datetime) -> bool:
+def _lag_elapsed(session: Session, project_id: str, pred: ActivityProgress, lag_days: float, now: datetime) -> bool:
     if lag_days <= 0:
         return True
-    confirmed_at = db.latest_transition_to(session, pred.global_ids, ObjectState.CONFIRMED)
+    confirmed_at = db.latest_transition_to(session, project_id, pred.global_ids, ObjectState.CONFIRMED)
     if confirmed_at is None:
         return True   # 확정 시각 기록이 없으면 lag 를 판정할 수 없어 통과시킨다(evidence 에 남김)
     if confirmed_at.tzinfo is None:
@@ -86,7 +86,7 @@ def compute_startable(session: Session, project_id: str, threshold: float | None
 
     activities = db.load_activities(session, project_id)
     relations = db.load_relations(session, project_id)
-    progress = {a.activity_id: activity_progress(session, a.activity_id, a) for a in activities}
+    progress = {a.activity_id: activity_progress(session, project_id, a.activity_id, a) for a in activities}
     blocked: dict[str, list[Blocker]] = {}
     readiness_scores: dict[str, float] = {}
     feasible: list[ActivityRow] = []
@@ -97,13 +97,13 @@ def compute_startable(session: Session, project_id: str, threshold: float | None
             continue
         blockers: list[Blocker] = []
         for rel in (r for r in relations if r.successor_id == a.activity_id):
-            pred = progress.get(rel.predecessor_id) or activity_progress(session, rel.predecessor_id)
+            pred = progress.get(rel.predecessor_id) or activity_progress(session, project_id, rel.predecessor_id)
             if rel.type == "FS":
                 if not pred.complete:
                     blockers.append(Blocker(component="predecessor", severity="high",
                                             reason=f"FS predecessor {rel.predecessor_id} not complete (objects not all CONFIRMED)",
                                             related_ids=[rel.predecessor_id]))
-                elif not _lag_elapsed(session, pred, rel.lag_days or 0.0, now):
+                elif not _lag_elapsed(session, project_id, pred, rel.lag_days or 0.0, now):
                     blockers.append(Blocker(component="predecessor", severity="medium", related_ids=[rel.predecessor_id],
                                             reason=f"FS lag of {rel.lag_days:g} day(s) after {rel.predecessor_id} not elapsed"))
             elif rel.type == "SS" and not pred.started:

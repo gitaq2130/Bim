@@ -14,9 +14,9 @@ from services.progress.config_loader import load_readiness_config
 from services.progress.readiness import compute_readiness
 
 
-def _set_states(session, gids: list[str], state: ObjectState) -> None:
+def _set_states(session, project_id: str, gids: list[str], state: ObjectState) -> None:
     for g in gids:
-        session.get(BimObjectRow, g).state = state.value
+        session.get(BimObjectRow, (project_id, g)).state = state.value
     session.flush()
 
 
@@ -42,16 +42,16 @@ def test_predecessor_blocker_until_objects_confirmed(session, seeded):
     assert score.estimated_completion == 0.0
 
     a100_objects = seeded["expected"]["A100"]
-    _set_states(session, a100_objects, ObjectState.ESTIMATED_DONE)
+    _set_states(session, seeded["project_id"], a100_objects, ObjectState.ESTIMATED_DONE)
     score = compute_readiness(session, "A110")
     assert score.components["predecessor_completion"] == 0.0        # ESTIMATED_DONE 은 완료가 아니다
     assert score.estimated_completion == 1.0
 
-    _set_states(session, a100_objects, ObjectState.INSPECTION_REQUESTED)
+    _set_states(session, seeded["project_id"], a100_objects, ObjectState.INSPECTION_REQUESTED)
     score = compute_readiness(session, "A110")
     assert score.components["inspection"] == 0.0
 
-    _set_states(session, a100_objects, ObjectState.CONFIRMED)
+    _set_states(session, seeded["project_id"], a100_objects, ObjectState.CONFIRMED)
     score = compute_readiness(session, "A110")
     assert score.components["predecessor_completion"] == 1.0
     assert score.components["inspection"] == 1.0

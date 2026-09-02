@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 from packages.core.models.evidence import Evidence
 from packages.core.models.identity import BimObject
 from packages.core.models.orm import (
-    ActivityObjectMappingRow,
     ActivityRelationRow,
     ActivityRow,
     BimObjectRow,
@@ -114,9 +113,7 @@ def material_ids_for_object(session: Session, project_id: str, global_id: str) -
 
 
 def activity_ids_for_object(session: Session, project_id: str, global_id: str) -> list[str]:
-    rows = session.scalars(select(ActivityObjectMappingRow.activity_id).where(
-        ActivityObjectMappingRow.project_id == project_id, ActivityObjectMappingRow.global_id == global_id))
-    return list(rows)
+    return db.activity_ids_for_object(session, project_id, global_id)
 
 
 def latest_report_item(session: Session, project_id: str, global_id: str) -> DailyReportItem | None:

@@ -26,7 +26,7 @@ def _insert_not_built_verdict(project: str, gid: str) -> str:
         if s.get(ScanRow, scan_id) is None:
             s.add(ScanRow(scan_id=scan_id, project_id=project, file_id=file_row.file_id,
                           registration={"scan_id": scan_id, "status": "ok", "rmse": 0.01}))
-        s.add(ScanVerdictRow(scan_id=scan_id, global_id=gid, state="NOT_BUILT", confidence=0.9,
+        s.add(ScanVerdictRow(scan_id=scan_id, global_id=gid, project_id=project, state="NOT_BUILT", confidence=0.9,
                              evidence={"source_type": "scan", "source_id": scan_id, "method": "test_fixture",
                                        "extra": {"rule_id": "SCAN-VERDICT-v1"}}, created_at=datetime.now(UTC)))
         s.commit()

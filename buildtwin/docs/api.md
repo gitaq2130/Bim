@@ -72,8 +72,8 @@
 
 | 메서드 | 경로 | 요약 | 파라미터 | 요청 본문 | 응답 |
 |---|---|---|---|---|---|
-| GET | `/api/objects/{global_id}` | Get Object | global_id*(path) | - | ObjectDetail |
-| POST | `/api/objects/{global_id}/transitions` | Request Transition | global_id*(path) | json: TransitionRequest | TransitionResponse |
+| GET | `/api/objects/{global_id}` | Get Object | global_id*(path), project_id(query) | - | ObjectDetail |
+| POST | `/api/objects/{global_id}/transitions` | Request Transition | global_id*(path), project_id(query) | json: TransitionRequest | TransitionResponse |
 | GET | `/api/projects/{project_id}/objects` | List Objects | project_id*(path), level(query), ifc_type(query), state(query), page(query), page_size(query), size(query), include_orphaned(query) | - | ObjectList |
 
 ### projects

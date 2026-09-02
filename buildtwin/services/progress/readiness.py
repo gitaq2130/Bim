@@ -92,9 +92,9 @@ def inspection_component(session: Session, project_id: str, predecessor_progress
     return ComponentResult(value, reason=reason, related_ids=sorted(awaiting))
 
 
-def material_component(session: Session, activity_ids: list[str], global_ids: list[str], required: float | None,
-                       defaults: dict[str, float]) -> ComponentResult:
-    total_in, total_out, count = db.material_totals(session, activity_ids, global_ids)
+def material_component(session: Session, project_id: str, activity_ids: list[str], global_ids: list[str],
+                       required: float | None, defaults: dict[str, float]) -> ComponentResult:
+    total_in, total_out, count = db.material_totals(session, project_id, activity_ids, global_ids)
     if count == 0 and required is None:
         return ComponentResult(float(defaults["material_unknown"]), missing=True, note="no material data")
     if required is not None and required > 0:
@@ -116,10 +116,10 @@ def drawing_component(resources: dict[str, float], defaults: dict[str, float]) -
     return ComponentResult(0.0, reason="drawing not approved")
 
 
-def clashes_component(session: Session, global_ids: list[str]) -> ComponentResult:
+def clashes_component(session: Session, project_id: str, global_ids: list[str]) -> ComponentResult:
     if not global_ids:
         return ComponentResult(1.0, note="no mapped objects")
-    reviews = db.open_reviews(session, global_ids, kind="verification")
+    reviews = db.open_reviews(session, global_ids, kind="verification", project_id=project_id)
     flagged = sorted({r.global_id for r in reviews if r.global_id})
     value = 1.0 - len(flagged) / len(global_ids)
     reason = f"{len(reviews)} open verification review(s)" if reviews else None
@@ -142,6 +142,7 @@ def _severity(value: float, cfg: dict[str, float]) -> str:
 
 
 def compute_readiness(session: Session, activity_id: str, weights: dict[str, float] | None = None) -> ReadinessScore:
+    """시그니처는 그대로. project_id 는 ActivityRow 에서 유도한다(ADR 0005 규칙 1)."""
     cfg = load_readiness_config()
     weights = dict(weights or cfg["weights"])
     defaults = cfg["component_defaults"]
@@ -149,16 +150,18 @@ def compute_readiness(session: Session, activity_id: str, weights: dict[str, flo
     row = db.load_activity(session, activity_id)
     if row is None:
         raise LookupError(f"activity not found: {activity_id}")
+    project_id = row.project_id
     resources = dict(row.resources or {})
-    own = activity_progress(session, activity_id, row)
+    own = activity_progress(session, project_id, activity_id, row)
 
-    pred, estimated, pred_progress = predecessor_completion(session, activity_id)
+    pred, estimated, pred_progress = predecessor_completion(session, project_id, activity_id)
     results: dict[str, ComponentResult] = {
         "predecessor_completion": pred,
-        "inspection": inspection_component(session, pred_progress),
-        "material_delivery": material_component(session, [activity_id], own.global_ids, resources.get("material_required"), defaults),
+        "inspection": inspection_component(session, project_id, pred_progress),
+        "material_delivery": material_component(session, project_id, [activity_id], own.global_ids,
+                                                 resources.get("material_required"), defaults),
         "drawing_approval": drawing_component(resources, defaults),
-        "open_clashes": clashes_component(session, own.global_ids),
+        "open_clashes": clashes_component(session, project_id, own.global_ids),
         "crew_assigned": crew_component(resources),
     }
     total_weight = sum(float(weights.get(c, 0.0)) for c in results)

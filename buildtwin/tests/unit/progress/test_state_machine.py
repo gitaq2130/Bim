@@ -21,6 +21,7 @@ from services.progress.state_machine import (
 )
 
 GID = "OBJ0000000000000000001"
+PID = "P"
 EV = Evidence(source_type="cm_action", source_id="user-cm-1", note="test")
 SCAN_EV = Evidence(source_type="scan", source_id="scan-1")
 ALL_COMBOS = [(f, t, a) for f, t, a in itertools.product(ObjectState, ObjectState, Actor) if f != t]
@@ -45,14 +46,14 @@ def test_every_combination_matches_adr_table(session, obj, from_state, to_state,
     sm = ObjectStateMachine()
     allowed = actor in ALLOWED_TRANSITIONS.get((from_state, to_state), frozenset())
     if allowed:
-        t = sm.transition(session, GID, to_state, actor, EV, actor_id="u", confidence=_confidence(actor))
+        t = sm.transition(session, PID, GID, to_state, actor, EV, actor_id="u", confidence=_confidence(actor))
         assert (t.from_state, t.to_state, t.actor) == (from_state, to_state, actor)
-        assert session.get(BimObjectRow, GID).state == to_state.value
+        assert session.get(BimObjectRow, (PID, GID)).state == to_state.value
         assert session.get(StateTransitionRow, str(t.transition_id)).evidence["source_id"] == "user-cm-1"
     else:
         with pytest.raises(InvalidTransitionError):
-            sm.transition(session, GID, to_state, actor, EV, confidence=_confidence(actor))
-        assert session.get(BimObjectRow, GID).state == from_state.value
+            sm.transition(session, PID, GID, to_state, actor, EV, confidence=_confidence(actor))
+        assert session.get(BimObjectRow, (PID, GID)).state == from_state.value
         assert session.query(StateTransitionRow).count() == 0
 
 
@@ -60,18 +61,18 @@ def test_every_combination_matches_adr_table(session, obj, from_state, to_state,
 def test_confirmed_requires_cm(session, obj, actor):
     obj.state = ObjectState.INSPECTION_REQUESTED.value
     with pytest.raises(InvalidTransitionError):
-        ObjectStateMachine().transition(session, GID, ObjectState.CONFIRMED, actor, EV, confidence=1.0)
+        ObjectStateMachine().transition(session, PID, GID, ObjectState.CONFIRMED, actor, EV, confidence=1.0)
     assert obj.state == ObjectState.INSPECTION_REQUESTED.value
 
 
 def test_system_transition_requires_confidence(session, obj):
     with pytest.raises(ValueError):
-        ObjectStateMachine().transition(session, GID, ObjectState.IN_PROGRESS, Actor.SYSTEM, SCAN_EV)
+        ObjectStateMachine().transition(session, PID, GID, ObjectState.IN_PROGRESS, Actor.SYSTEM, SCAN_EV)
 
 
 def test_unknown_object_raises(session):
     with pytest.raises(ObjectNotFoundError):
-        ObjectStateMachine().transition(session, "nope", ObjectState.REPORTED, Actor.CONTRACTOR, EV)
+        ObjectStateMachine().transition(session, PID, "nope", ObjectState.REPORTED, Actor.CONTRACTOR, EV)
 
 
 def test_open_verification_review_blocks_system_but_not_people(session, obj):
@@ -80,15 +81,15 @@ def test_open_verification_review_blocks_system_but_not_people(session, obj):
     db.save_review_request(session, review)
     sm = ObjectStateMachine()
     with pytest.raises(TransitionBlockedByReviewError) as exc:
-        sm.transition(session, GID, ObjectState.IN_PROGRESS, Actor.SYSTEM, SCAN_EV, confidence=0.8)
+        sm.transition(session, PID, GID, ObjectState.IN_PROGRESS, Actor.SYSTEM, SCAN_EV, confidence=0.8)
     assert str(review.review_request_id) in exc.value.review_ids
     assert obj.state == ObjectState.PLANNED.value
-    sm.transition(session, GID, ObjectState.REPORTED, Actor.CONTRACTOR, EV)
+    sm.transition(session, PID, GID, ObjectState.REPORTED, Actor.CONTRACTOR, EV)
     assert obj.state == ObjectState.REPORTED.value
     # CM 이 해소하면 system 전이 재개
     session.get(ReviewRequestRow, str(review.review_request_id)).status = "approved"
     session.flush()
-    sm.transition(session, GID, ObjectState.IN_PROGRESS, Actor.SYSTEM, SCAN_EV, confidence=0.8)
+    sm.transition(session, PID, GID, ObjectState.IN_PROGRESS, Actor.SYSTEM, SCAN_EV, confidence=0.8)
     assert obj.state == ObjectState.IN_PROGRESS.value
 
 
@@ -98,27 +99,27 @@ def _verdict(state: ScanState) -> ScanVerdict:
 
 def test_apply_scan_verdict_mapping(session, obj):
     sm = ObjectStateMachine()
-    assert sm.apply_scan_verdict(session, _verdict(ScanState.NOT_BUILT)) is None
+    assert sm.apply_scan_verdict(session, PID, _verdict(ScanState.NOT_BUILT)) is None
     assert obj.state == ObjectState.PLANNED.value
-    t = sm.apply_scan_verdict(session, _verdict(ScanState.ESTIMATED_DONE))
+    t = sm.apply_scan_verdict(session, PID, _verdict(ScanState.ESTIMATED_DONE))
     assert t is not None and t.actor == Actor.SYSTEM and t.confidence == 0.77 and t.actor_id == "scan-1"
     assert obj.state == ObjectState.ESTIMATED_DONE.value
-    assert sm.apply_scan_verdict(session, _verdict(ScanState.ESTIMATED_DONE)) is None   # 같은 상태 → 전이 없음
+    assert sm.apply_scan_verdict(session, PID, _verdict(ScanState.ESTIMATED_DONE)) is None   # 같은 상태 → 전이 없음
     obj.state = ObjectState.CONFIRMED.value
     session.flush()
     for s in (ScanState.IN_PROGRESS, ScanState.MISMATCH, ScanState.UNVERIFIABLE, ScanState.ESTIMATED_DONE):
-        assert sm.apply_scan_verdict(session, _verdict(s)) is None
+        assert sm.apply_scan_verdict(session, PID, _verdict(s)) is None
     assert obj.state == ObjectState.CONFIRMED.value
 
 
 def test_history_and_next_actions(session, obj):
     sm = ObjectStateMachine()
-    sm.transition(session, GID, ObjectState.REPORTED, Actor.CONTRACTOR, EV, actor_id="c1")
-    sm.transition(session, GID, ObjectState.INSPECTION_REQUESTED, Actor.CONTRACTOR, EV, actor_id="c1")
-    hist = sm.history(session, GID)
+    sm.transition(session, PID, GID, ObjectState.REPORTED, Actor.CONTRACTOR, EV, actor_id="c1")
+    sm.transition(session, PID, GID, ObjectState.INSPECTION_REQUESTED, Actor.CONTRACTOR, EV, actor_id="c1")
+    hist = sm.history(session, PID, GID)
     assert [(h.from_state, h.to_state) for h in hist] == [(ObjectState.PLANNED, ObjectState.REPORTED),
                                                           (ObjectState.REPORTED, ObjectState.INSPECTION_REQUESTED)]
-    cm_actions = sm.next_actions(session, GID, "cm")
+    cm_actions = sm.next_actions(session, PID, GID, "cm")
     cm_kinds = {a["kind"] for a in cm_actions}
     assert {"confirm", "reject_inspection", "flag_mismatch", "resolve_review"} <= cm_kinds
     assert cm_kinds <= NEXT_ACTION_KINDS
@@ -126,10 +127,10 @@ def test_history_and_next_actions(session, obj):
         assert a["allowed_roles"] == ["cm"]          # admin 은 확정·검측·검토요청 처리 불가
     resolve = [a for a in cm_actions if a["kind"] == "resolve_review"]
     assert resolve and resolve[0]["review_kind"] == "inspection"   # INSPECTION_REQUESTED 진입 시 자동 생성된 검측 요청
-    contractor_kinds = {a["kind"] for a in sm.next_actions(session, GID, "contractor")}
+    contractor_kinds = {a["kind"] for a in sm.next_actions(session, PID, GID, "contractor")}
     assert "confirm" not in contractor_kinds and contractor_kinds <= NEXT_ACTION_KINDS
-    assert sm.next_actions(session, GID, "client") == []
-    assert sm.next_actions(session, GID, "admin") == []
+    assert sm.next_actions(session, PID, GID, "client") == []
+    assert sm.next_actions(session, PID, GID, "admin") == []
 
 
 @pytest.mark.parametrize("role", ["client", "admin", "unknown"])
@@ -146,8 +147,8 @@ def test_actor_for_role_maps_contractor_and_cm():
 
 def test_inspection_review_lifecycle(session, obj):
     sm = ObjectStateMachine()
-    sm.transition(session, GID, ObjectState.REPORTED, Actor.CONTRACTOR, EV, actor_id="c1")
-    first = sm.transition_with_effects(session, GID, ObjectState.INSPECTION_REQUESTED, Actor.CONTRACTOR, EV, actor_id="c1")
+    sm.transition(session, PID, GID, ObjectState.REPORTED, Actor.CONTRACTOR, EV, actor_id="c1")
+    first = sm.transition_with_effects(session, PID, GID, ObjectState.INSPECTION_REQUESTED, Actor.CONTRACTOR, EV, actor_id="c1")
     assert len(first.created_review_ids) == 1 and first.closed_review_ids == []
     review = session.get(ReviewRequestRow, first.created_review_ids[0])
     assert (review.kind, review.status, review.assignee_role, review.global_id, review.project_id) == ("inspection", "open", "cm", GID, "P")
@@ -155,18 +156,18 @@ def test_inspection_review_lifecycle(session, obj):
     # 이미 미결 검측 요청이 있으면 중복 생성하지 않는다
     obj.state = ObjectState.ESTIMATED_DONE.value
     session.flush()
-    again = sm.transition_with_effects(session, GID, ObjectState.INSPECTION_REQUESTED, Actor.SYSTEM, SCAN_EV, confidence=0.8)
+    again = sm.transition_with_effects(session, PID, GID, ObjectState.INSPECTION_REQUESTED, Actor.SYSTEM, SCAN_EV, confidence=0.8)
     assert again.created_review_ids == []
     # cm 반려 → rejected 로 종료, 재검측 요청 시 새로 생성
-    rejected = sm.transition_with_effects(session, GID, ObjectState.IN_PROGRESS, Actor.CM, EV, actor_id="cm-1")
+    rejected = sm.transition_with_effects(session, PID, GID, ObjectState.IN_PROGRESS, Actor.CM, EV, actor_id="cm-1")
     assert rejected.closed_review_ids == [review.review_request_id]
     session.refresh(review)
     assert review.status == "rejected" and review.resolved_by == "cm-1" and review.resolved_at is not None
     assert "IN_PROGRESS" in review.resolution_note
-    second = sm.transition_with_effects(session, GID, ObjectState.INSPECTION_REQUESTED, Actor.CONTRACTOR, EV, actor_id="c1")
+    second = sm.transition_with_effects(session, PID, GID, ObjectState.INSPECTION_REQUESTED, Actor.CONTRACTOR, EV, actor_id="c1")
     assert len(second.created_review_ids) == 1 and second.created_review_ids != first.created_review_ids
     # cm 승인 → approved 로 종료
-    confirmed = sm.transition_with_effects(session, GID, ObjectState.CONFIRMED, Actor.CM, EV, actor_id="cm-1")
+    confirmed = sm.transition_with_effects(session, PID, GID, ObjectState.CONFIRMED, Actor.CM, EV, actor_id="cm-1")
     assert confirmed.closed_review_ids == second.created_review_ids
     assert session.get(ReviewRequestRow, second.created_review_ids[0]).status == "approved"
     assert not [r for r in session.query(ReviewRequestRow).all() if r.status == "open"]
@@ -177,9 +178,46 @@ def test_system_mismatch_from_inspection_keeps_review_open(session, obj):
     sm = ObjectStateMachine()
     obj.state = ObjectState.ESTIMATED_DONE.value
     session.flush()
-    created = sm.transition_with_effects(session, GID, ObjectState.INSPECTION_REQUESTED, Actor.SYSTEM, SCAN_EV, confidence=0.8)
+    created = sm.transition_with_effects(session, PID, GID, ObjectState.INSPECTION_REQUESTED, Actor.SYSTEM, SCAN_EV, confidence=0.8)
     assert session.get(ReviewRequestRow, created.created_review_ids[0]).confidence == 0.8
-    result = sm.transition_with_effects(session, GID, ObjectState.MISMATCH, Actor.SYSTEM, SCAN_EV, confidence=0.9)
+    result = sm.transition_with_effects(session, PID, GID, ObjectState.MISMATCH, Actor.SYSTEM, SCAN_EV, confidence=0.9)
     assert result.closed_review_ids == []       # 종료는 cm 결정에서만
     assert session.get(ReviewRequestRow, created.created_review_ids[0]).status == "open"
-    assert "align_scan" in {a["kind"] for a in sm.next_actions(session, GID, "cm")}
+    assert "align_scan" in {a["kind"] for a in sm.next_actions(session, PID, GID, "cm")}
+
+
+def test_transition_is_scoped_to_project(session):
+    """ADR 0005: 같은 global_id 라도 프로젝트가 다르면 완전히 별개 객체다.
+
+    한 프로젝트에서의 전이가 다른 프로젝트의 같은 global_id 객체 상태·이력을 건드리지 않아야 한다.
+    """
+    project_a, project_b = "P-A", "P-B"
+    db.ensure_project(session, project_a)
+    db.ensure_project(session, project_b)
+    db.save_objects(session, project_a, "M-A", [BimObjectDraft(global_id=GID, ifc_type="IfcColumn", level="1F")])
+    db.save_objects(session, project_b, "M-B", [BimObjectDraft(global_id=GID, ifc_type="IfcColumn", level="1F")])
+    session.commit()
+
+    sm = ObjectStateMachine()
+    sm.transition(session, project_a, GID, ObjectState.REPORTED, Actor.CONTRACTOR, EV, actor_id="c1")
+    sm.transition(session, project_a, GID, ObjectState.INSPECTION_REQUESTED, Actor.CONTRACTOR, EV, actor_id="c1")
+
+    # 프로젝트 A 는 전이가 쌓였지만
+    assert session.get(BimObjectRow, (project_a, GID)).state == ObjectState.INSPECTION_REQUESTED.value
+    assert [t.to_state for t in sm.history(session, project_a, GID)] == \
+        [ObjectState.REPORTED, ObjectState.INSPECTION_REQUESTED]
+
+    # 프로젝트 B 의 같은 global_id 객체는 영향받지 않는다
+    assert session.get(BimObjectRow, (project_b, GID)).state == ObjectState.PLANNED.value
+    assert sm.history(session, project_b, GID) == []
+    assert session.query(StateTransitionRow).filter_by(global_id=GID, project_id=project_b).count() == 0
+    assert session.query(StateTransitionRow).filter_by(global_id=GID, project_id=project_a).count() == 2
+
+    # INSPECTION_REQUESTED 진입으로 생성된 검토요청도 프로젝트별로 분리된다
+    assert len(db.open_reviews(session, [GID], kind="inspection", project_id=project_a)) == 1
+    assert len(db.open_reviews(session, [GID], kind="inspection", project_id=project_b)) == 0
+
+    # 프로젝트 B 에서 독립적으로 전이해도 A 에는 영향 없다
+    sm.transition(session, project_b, GID, ObjectState.REPORTED, Actor.CONTRACTOR, EV, actor_id="c2")
+    assert session.get(BimObjectRow, (project_a, GID)).state == ObjectState.INSPECTION_REQUESTED.value
+    assert [t.to_state for t in sm.history(session, project_b, GID)] == [ObjectState.REPORTED]
