@@ -48,7 +48,7 @@ class JobRow(Base):
     __tablename__ = "jobs"
     job_id: Mapped[str] = mapped_column(String, primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.project_id"))
-    kind: Mapped[str] = mapped_column(String)          # ingest | mapping | registration | verdict | schedule
+    kind: Mapped[str] = mapped_column(String)          # ingest | scan_upload | schedule | mapping | verdict (glossary Job kind)
     status: Mapped[str] = mapped_column(String, default="queued")  # queued | running | done | failed
     progress: Mapped[float] = mapped_column(Float, default=0.0)
     file_id: Mapped[str | None] = mapped_column(String, nullable=True)

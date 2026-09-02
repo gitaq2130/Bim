@@ -24,7 +24,7 @@ class ReviewRequest(BaseModel):
     conflicting_sources: dict[str, Any] = Field(default_factory=dict)   # {"daily_report": ..., "scan": ..., "system_logic": ...}
     confidence: float = Field(ge=0.0, le=1.0)
     evidence: Evidence
-    assignee_role: Literal["cm", "admin"] = "cm"
+    assignee_role: Literal["cm"] = "cm"   # ADR 0001 §4-1: 검토요청 처리는 cm만
     status: ReviewStatus = "open"
     resolution_note: str | None = None
     resolved_by: str | None = None

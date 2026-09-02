@@ -37,9 +37,11 @@ class Settings(BaseSettings):
             return self.jwt_secret
         if self.database_url.startswith("sqlite"):
             import logging
+            import secrets
 
-            logging.getLogger("buildtwin.settings").warning("JWT_SECRET 미설정: SQLite 개발 환경 임시 시크릿을 사용합니다")
-            return "dev-only-sqlite-secret"
+            logging.getLogger("buildtwin.settings").warning("JWT_SECRET 미설정: SQLite 개발 환경용 프로세스 수명 난수 시크릿을 생성합니다")
+            self.jwt_secret = secrets.token_urlsafe(32)   # 코드 상수 금지(§3-4). 재기동 시 토큰 무효화됨
+            return self.jwt_secret
         raise RuntimeError("JWT_SECRET 환경변수가 필요합니다 (.env)")
 
 

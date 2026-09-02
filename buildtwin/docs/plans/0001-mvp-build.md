@@ -37,3 +37,11 @@ CLAUDE.md §0의 MVP 5기능을 실제 동작 코드로 구현한다. 벤치마�
 
 ## 후속 조치 메모 (architect)
 - [ ] 픽스처 생성기: `edit_object_placement`가 `assign_container`보다 먼저 호출되어 2F 요소가 월드 z=0에 놓임. 모든 에이전트 완료 후 순서를 바꿔 재생성하고 전체 테스트 재실행(GlobalId가 바뀌므로 expected.json 동시 재생성).
+
+## 리뷰 2차 APPROVE 이후 백로그 (비차단)
+- [api] mapping 검토요청 처리 시 `conflicting_sources` 구조 지식을 `sync.review_queue.resolve_mapping_review(session, row, decision, user_id, note)`로 이관
+- [qa] 좌표 하드코딩 불변식 lint 대상에 `apps/web/src/lib`, `sync/`, `pages/` 포함
+- [frontend] 역할 기반 라우트 가드(`/daily-report` contractor, `/reviews` cm) — 현재는 서버 403만 의존
+- [frontend] 객체 목록 2000개 초과 시 페이지네이션(현재 page_size=2000 상한)
+- [architect] ADR 0005: `bim_objects` 복합 키 `(project_id, global_id)`
+- 실제 IFC(고창CDC)·실측 스캔으로 metrics.json 기준 재산정

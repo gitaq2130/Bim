@@ -75,7 +75,7 @@ buildtwin/
 │   ├── db.py                      # (architect) 엔진·세션
 │   └── settings.py                # (architect) 환경 설정(.env)
 ├── rules/                         # (knowledge) 판단 규칙 YAML, verification.yaml
-├── config/                        # (progress-engine) readiness.yaml 등 가중치·설정
+├── config/                        # 파일별 담당은 config/README.md 참조(readiness/resources/wbs=progress-engine, scan=reality-capture, sync=sync-2d3d, ingest=bim-ingest)
 ├── docs/
 │   ├── adr/                       # (architect) Architecture Decision Records
 │   ├── glossary.md                # (모두 등록 / architect 승인) 도메인 용어집
