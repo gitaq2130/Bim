@@ -213,12 +213,14 @@ def confirm_entity_mapping(session: Session, drawing_id: str, handle: str, globa
     drawing = session.get(DrawingRow, drawing_id)
     if drawing is None:
         raise NotFound(f"drawing not found: {drawing_id}")
-    if session.get(BimObjectRow, (drawing.project_id, global_id)) is None:
-        raise NotFound(f"object not found: {global_id}")
     prev_row = queries.entity_mapping(session, drawing_id, handle)
     proposal: dict[str, Any] = (row_to_mapping(prev_row).model_dump(mode="json") if prev_row is not None
                                 else {"drawing_id": drawing_id, "entity_handle": handle, "global_id": None, "confidence": None})
-    new = confirm_mapping_row(session, drawing_id, handle, global_id, user.user_id, note)
+    try:
+        # 대상 객체 존재 확인은 confirm_mapping_row(services.sync) 소유 — ValueError 를 여기서만 404 로 옮긴다.
+        new = confirm_mapping_row(session, drawing_id, handle, global_id, user.user_id, note)
+    except ValueError as exc:
+        raise NotFound(str(exc))
     record_expert_review(session, "entity_object_mapping", f"{drawing_id}:{handle}", proposal, new.model_dump(mode="json"),
                          user.user_id)
     session.commit()
@@ -285,7 +287,13 @@ def resolve_review(session: Session, review_request_id: str, decision: str, note
             session.rollback()
             raise NotFound(f"review request {review_request_id}: object not found: {exc}")
     elif row.kind == "mapping" and decision in ("approved", "rejected"):
-        resolve_mapping_review(session, row, decision, user.user_id, note)  # type: ignore[arg-type]
+        try:
+            # candidate_global_id 가 그 사이 삭제/재업로드로 사라진 경우 confirm_mapping_row(services.sync) 가
+            # ValueError 를 던진다 — 500 대신 404 로 옮긴다(sync-2d3d 소유 로직, api 는 매핑만 한다).
+            resolve_mapping_review(session, row, decision, user.user_id, note)  # type: ignore[arg-type]
+        except ValueError as exc:
+            session.rollback()
+            raise NotFound(f"review request {review_request_id}: {exc}")
     session.refresh(row)
     if row.status == "open":   # verification / on_hold / 위에서 닫히지 않은 경우: 사람의 결정을 그대로 기록
         row.status, row.resolution_note, row.resolved_by, row.resolved_at = decision, note, user.user_id, datetime.now(UTC)
