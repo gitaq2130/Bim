@@ -1,0 +1,291 @@
+"""SQLAlchemy ORM. JSON 컬럼으로 bbox/psets/evidence 저장(SQLite·PostgreSQL 공용). PostGIS 공간 인덱스는 Deferred(ADR)."""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class UserRow(Base):
+    __tablename__ = "users"
+    user_id: Mapped[str] = mapped_column(String, primary_key=True)
+    email: Mapped[str] = mapped_column(String, unique=True)
+    password_hash: Mapped[str] = mapped_column(String)
+    role: Mapped[str] = mapped_column(String)   # contractor | cm | client | admin
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class ProjectRow(Base):
+    __tablename__ = "projects"
+    project_id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class FileRow(Base):
+    __tablename__ = "files"
+    file_id: Mapped[str] = mapped_column(String, primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.project_id"))
+    kind: Mapped[str] = mapped_column(String)
+    filename: Mapped[str] = mapped_column(String)
+    uri: Mapped[str] = mapped_column(String)
+    sha256: Mapped[str] = mapped_column(String)
+    size: Mapped[int] = mapped_column(Integer)
+    uploaded_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class JobRow(Base):
+    __tablename__ = "jobs"
+    job_id: Mapped[str] = mapped_column(String, primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.project_id"))
+    kind: Mapped[str] = mapped_column(String)          # ingest | mapping | registration | verdict | schedule
+    status: Mapped[str] = mapped_column(String, default="queued")  # queued | running | done | failed
+    progress: Mapped[float] = mapped_column(Float, default=0.0)
+    file_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    result_ref: Mapped[str | None] = mapped_column(String, nullable=True)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    warnings: Mapped[list] = mapped_column(JSON, default=list)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class ModelRow(Base):
+    __tablename__ = "models"
+    model_id: Mapped[str] = mapped_column(String, primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.project_id"))
+    file_id: Mapped[str] = mapped_column(ForeignKey("files.file_id"))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    coordinate_system: Mapped[dict] = mapped_column(JSON)
+    levels: Mapped[list] = mapped_column(JSON, default=list)
+    mesh_uri: Mapped[str | None] = mapped_column(String, nullable=True)
+    stats: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class BimObjectRow(Base):
+    __tablename__ = "bim_objects"
+    global_id: Mapped[str] = mapped_column(String, primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.project_id"), index=True)
+    model_id: Mapped[str] = mapped_column(ForeignKey("models.model_id"), index=True)
+    model_version: Mapped[int] = mapped_column(Integer, default=1)
+    ifc_type: Mapped[str] = mapped_column(String, index=True)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
+    level: Mapped[str | None] = mapped_column(String, index=True, nullable=True)
+    level_elevation: Mapped[float | None] = mapped_column(Float, nullable=True)
+    zone: Mapped[str | None] = mapped_column(String, nullable=True)
+    bbox: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    mesh_ref: Mapped[str | None] = mapped_column(String, nullable=True)
+    psets: Mapped[dict] = mapped_column(JSON, default=dict)
+    material: Mapped[str | None] = mapped_column(String, nullable=True)
+    quantity: Mapped[dict] = mapped_column(JSON, default=dict)
+    express_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    state: Mapped[str] = mapped_column(String, default="PLANNED", index=True)
+    is_orphaned: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class DrawingRow(Base):
+    __tablename__ = "drawings"
+    drawing_id: Mapped[str] = mapped_column(String, primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.project_id"))
+    file_id: Mapped[str] = mapped_column(ForeignKey("files.file_id"))
+    level: Mapped[str | None] = mapped_column(String, nullable=True)
+    coordinate_system: Mapped[dict] = mapped_column(JSON)
+    alignment: Mapped[dict | None] = mapped_column(JSON, nullable=True)   # CoordinateTransform → model
+    svg_uri: Mapped[str | None] = mapped_column(String, nullable=True)
+    stats: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class DrawingEntityRow(Base):
+    __tablename__ = "drawing_entities"
+    drawing_id: Mapped[str] = mapped_column(ForeignKey("drawings.drawing_id"), primary_key=True)
+    handle: Mapped[str] = mapped_column(String, primary_key=True)
+    layer: Mapped[str] = mapped_column(String, index=True)
+    dxftype: Mapped[str] = mapped_column(String)
+    points: Mapped[list] = mapped_column(JSON, default=list)
+    bbox: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    block_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    insert_point: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    rotation_deg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    scale: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    text: Mapped[str | None] = mapped_column(String, nullable=True)
+    radius: Mapped[float | None] = mapped_column(Float, nullable=True)
+    attrs: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class EntityObjectMappingRow(Base):
+    __tablename__ = "entity_object_mappings"
+    drawing_id: Mapped[str] = mapped_column(String, primary_key=True)
+    entity_handle: Mapped[str] = mapped_column(String, primary_key=True)
+    global_id: Mapped[str] = mapped_column(ForeignKey("bim_objects.global_id"), primary_key=True)
+    confidence: Mapped[float] = mapped_column(Float)
+    evidence: Mapped[dict] = mapped_column(JSON)
+    needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
+    reviewed_by: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class ScheduleRow(Base):
+    __tablename__ = "schedules"
+    schedule_id: Mapped[str] = mapped_column(String, primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.project_id"))
+    file_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    source_format: Mapped[str] = mapped_column(String)
+    warnings: Mapped[list] = mapped_column(JSON, default=list)
+
+
+class ActivityRow(Base):
+    __tablename__ = "activities"
+    activity_id: Mapped[str] = mapped_column(String, primary_key=True)
+    schedule_id: Mapped[str] = mapped_column(ForeignKey("schedules.schedule_id"), index=True)
+    project_id: Mapped[str] = mapped_column(String, index=True)
+    name: Mapped[str] = mapped_column(String)
+    wbs_code: Mapped[str | None] = mapped_column(String, nullable=True)
+    discipline: Mapped[str | None] = mapped_column(String, nullable=True)
+    level: Mapped[str | None] = mapped_column(String, nullable=True)
+    zone: Mapped[str | None] = mapped_column(String, nullable=True)
+    planned_start: Mapped[str | None] = mapped_column(String, nullable=True)
+    planned_finish: Mapped[str | None] = mapped_column(String, nullable=True)
+    duration_days: Mapped[float | None] = mapped_column(Float, nullable=True)
+    resources: Mapped[dict] = mapped_column(JSON, default=dict)
+    percent_complete: Mapped[float] = mapped_column(Float, default=0.0)
+    source_ref: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class ActivityRelationRow(Base):
+    __tablename__ = "activity_relations"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    schedule_id: Mapped[str] = mapped_column(String, index=True)
+    predecessor_id: Mapped[str] = mapped_column(String)
+    successor_id: Mapped[str] = mapped_column(String)
+    type: Mapped[str] = mapped_column(String, default="FS")
+    lag_days: Mapped[float] = mapped_column(Float, default=0.0)
+
+
+class ActivityObjectMappingRow(Base):
+    __tablename__ = "activity_object_mappings"
+    activity_id: Mapped[str] = mapped_column(String, primary_key=True)
+    global_id: Mapped[str] = mapped_column(ForeignKey("bim_objects.global_id"), primary_key=True)
+    confidence: Mapped[float] = mapped_column(Float)
+    evidence: Mapped[dict] = mapped_column(JSON)
+    needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class ScanRow(Base):
+    __tablename__ = "scans"
+    scan_id: Mapped[str] = mapped_column(String, primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.project_id"))
+    file_id: Mapped[str] = mapped_column(ForeignKey("files.file_id"))
+    model_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    alignment_input: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    registration: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    point_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ScanVerdictRow(Base):
+    __tablename__ = "scan_verdicts"
+    scan_id: Mapped[str] = mapped_column(ForeignKey("scans.scan_id"), primary_key=True)
+    global_id: Mapped[str] = mapped_column(ForeignKey("bim_objects.global_id"), primary_key=True)
+    state: Mapped[str] = mapped_column(String)
+    confidence: Mapped[float] = mapped_column(Float)
+    evidence: Mapped[dict] = mapped_column(JSON)
+    diff_from_previous: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class StateTransitionRow(Base):
+    __tablename__ = "state_transitions"
+    transition_id: Mapped[str] = mapped_column(String, primary_key=True)
+    global_id: Mapped[str] = mapped_column(ForeignKey("bim_objects.global_id"), index=True)
+    from_state: Mapped[str] = mapped_column(String)
+    to_state: Mapped[str] = mapped_column(String)
+    actor: Mapped[str] = mapped_column(String)
+    actor_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    evidence: Mapped[dict] = mapped_column(JSON)
+    review_request_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ReviewRequestRow(Base):
+    __tablename__ = "review_requests"
+    review_request_id: Mapped[str] = mapped_column(String, primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.project_id"), index=True)
+    kind: Mapped[str] = mapped_column(String, index=True)
+    global_id: Mapped[str | None] = mapped_column(String, index=True, nullable=True)
+    activity_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    rule_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    title: Mapped[str] = mapped_column(String)
+    conflicting_sources: Mapped[dict] = mapped_column(JSON, default=dict)
+    confidence: Mapped[float] = mapped_column(Float)
+    evidence: Mapped[dict] = mapped_column(JSON)
+    assignee_role: Mapped[str] = mapped_column(String, default="cm")
+    status: Mapped[str] = mapped_column(String, default="open", index=True)
+    resolution_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolved_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class DailyReportRow(Base):
+    __tablename__ = "daily_reports"
+    report_id: Mapped[str] = mapped_column(String, primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.project_id"), index=True)
+    report_date: Mapped[str] = mapped_column(String)
+    reporter_id: Mapped[str] = mapped_column(String)
+    crew_count: Mapped[int] = mapped_column(Integer, default=0)
+    equipment: Mapped[dict] = mapped_column(JSON, default=dict)
+    items: Mapped[list] = mapped_column(JSON, default=list)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class MaterialMovementRow(Base):
+    __tablename__ = "material_movements"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[str] = mapped_column(String, index=True)
+    material_id: Mapped[str] = mapped_column(String)
+    global_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    activity_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    kind: Mapped[str] = mapped_column(String)
+    quantity: Mapped[float] = mapped_column(Float)
+    unit: Mapped[str] = mapped_column(String)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ExpertReviewLogRow(Base):
+    __tablename__ = "expert_review_logs"
+    log_id: Mapped[str] = mapped_column(String, primary_key=True)
+    entity_type: Mapped[str] = mapped_column(String)
+    entity_id: Mapped[str] = mapped_column(String, index=True)
+    proposal: Mapped[dict] = mapped_column(JSON)
+    final: Mapped[dict] = mapped_column(JSON)
+    diff: Mapped[list] = mapped_column(JSON)
+    reviewer: Mapped[str] = mapped_column(String)
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class RuleVerdictRow(Base):
+    __tablename__ = "rule_verdicts"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[str] = mapped_column(String, index=True)
+    rule_id: Mapped[str] = mapped_column(String)
+    rule_version: Mapped[int] = mapped_column(Integer)
+    global_id: Mapped[str | None] = mapped_column(String, index=True, nullable=True)
+    activity_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    risk_level: Mapped[str] = mapped_column(String)
+    action: Mapped[str] = mapped_column(Text)
+    required_evidence: Mapped[list] = mapped_column(JSON, default=list)
+    confidence: Mapped[float] = mapped_column(Float)
+    evidence: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

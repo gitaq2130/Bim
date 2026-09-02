@@ -1,0 +1,38 @@
+# 3중 검증 불일치 패턴. 담당: knowledge. progress-engine이 읽는다.
+# 각 패턴: 신고(report) / 스캔(scan) / 시스템 논리(logic) 축의 조건. 모두 만족하면 ReviewRequest 생성 + system 전이 차단.
+patterns:
+  - id: VER-001
+    title: "완료 신고 vs 스캔 미시공"
+    when: "report.claimed_state == 'completed' and scan.state == 'NOT_BUILT'"
+    severity: high
+    confidence: 0.9
+  - id: VER-002
+    title: "완료 신고 vs 스캔 시공중"
+    when: "report.claimed_state == 'completed' and scan.state == 'IN_PROGRESS'"
+    severity: medium
+    confidence: 0.8
+  - id: VER-003
+    title: "완료 신고 vs 선행공정 미확정"
+    when: "report.claimed_state == 'completed' and logic.predecessor_confirmed_ratio < 1.0"
+    severity: high
+    confidence: 0.85
+  - id: VER-004
+    title: "신고 수량이 BIM 수량 초과"
+    when: "report.quantity is not None and logic.bim_quantity is not None and report.quantity > logic.bim_quantity * 1.1"
+    severity: medium
+    confidence: 0.75
+  - id: VER-005
+    title: "스캔 완료추정 vs 신고 없음"
+    when: "scan.state == 'ESTIMATED_DONE' and report.claimed_state is None"
+    severity: low
+    confidence: 0.6
+  - id: VER-006
+    title: "완료 신고 vs 자재 반입 부족"
+    when: "report.claimed_state == 'completed' and logic.material_delivered_ratio < 0.8"
+    severity: medium
+    confidence: 0.7
+  - id: VER-007
+    title: "스캔 위치불일치"
+    when: "scan.state == 'MISMATCH'"
+    severity: high
+    confidence: 0.85

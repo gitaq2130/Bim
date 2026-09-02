@@ -1,0 +1,685 @@
+{
+  "counts": {
+    "IfcColumn": 12,
+    "IfcBeam": 16,
+    "IfcSlab": 2,
+    "IfcWall": 8,
+    "IfcDuctSegment": 4
+  },
+  "levels": [
+    {
+      "name": "1F",
+      "elevation": 0.0
+    },
+    {
+      "name": "2F",
+      "elevation": 4.0
+    }
+  ],
+  "objects": {
+    "columns": [
+      {
+        "global_id": "3jvdrwJMjFB8er0raxOnL8",
+        "name": "C1-11",
+        "origin": [
+          -0.3,
+          -0.3,
+          0.0
+        ],
+        "size": [
+          0.6,
+          0.6,
+          3.8
+        ],
+        "level": "1F",
+        "grid": "00"
+      },
+      {
+        "global_id": "0L1PX_kID6qADRxmmHfdDP",
+        "name": "C1-12",
+        "origin": [
+          -0.3,
+          7.7,
+          0.0
+        ],
+        "size": [
+          0.6,
+          0.6,
+          3.8
+        ],
+        "level": "1F",
+        "grid": "01"
+      },
+      {
+        "global_id": "0$69jdH1vDmQmBHKddxyT9",
+        "name": "C1-21",
+        "origin": [
+          5.7,
+          -0.3,
+          0.0
+        ],
+        "size": [
+          0.6,
+          0.6,
+          3.8
+        ],
+        "level": "1F",
+        "grid": "10"
+      },
+      {
+        "global_id": "0rsy_R5SP3HBtwY4Z$WtC3",
+        "name": "C1-22",
+        "origin": [
+          5.7,
+          7.7,
+          0.0
+        ],
+        "size": [
+          0.6,
+          0.6,
+          3.8
+        ],
+        "level": "1F",
+        "grid": "11"
+      },
+      {
+        "global_id": "3XrhEfyyX9YA_y5r0WdB$M",
+        "name": "C1-31",
+        "origin": [
+          11.7,
+          -0.3,
+          0.0
+        ],
+        "size": [
+          0.6,
+          0.6,
+          3.8
+        ],
+        "level": "1F",
+        "grid": "20"
+      },
+      {
+        "global_id": "3SIQw5CJb2lPVDTYlByKMr",
+        "name": "C1-32",
+        "origin": [
+          11.7,
+          7.7,
+          0.0
+        ],
+        "size": [
+          0.6,
+          0.6,
+          3.8
+        ],
+        "level": "1F",
+        "grid": "21"
+      },
+      {
+        "global_id": "3WeAEb9aTBC8rIoPIC8vRG",
+        "name": "C2-11",
+        "origin": [
+          -0.3,
+          -0.3,
+          0.0
+        ],
+        "size": [
+          0.6,
+          0.6,
+          3.8
+        ],
+        "level": "2F",
+        "grid": "00"
+      },
+      {
+        "global_id": "13EbSuk8j6VgeYlle71Kyr",
+        "name": "C2-12",
+        "origin": [
+          -0.3,
+          7.7,
+          0.0
+        ],
+        "size": [
+          0.6,
+          0.6,
+          3.8
+        ],
+        "level": "2F",
+        "grid": "01"
+      },
+      {
+        "global_id": "2w4fguLMnFjeWxxvtwxXRC",
+        "name": "C2-21",
+        "origin": [
+          5.7,
+          -0.3,
+          0.0
+        ],
+        "size": [
+          0.6,
+          0.6,
+          3.8
+        ],
+        "level": "2F",
+        "grid": "10"
+      },
+      {
+        "global_id": "32wMqmiU57FAjqt$F4KrWU",
+        "name": "C2-22",
+        "origin": [
+          5.7,
+          7.7,
+          0.0
+        ],
+        "size": [
+          0.6,
+          0.6,
+          3.8
+        ],
+        "level": "2F",
+        "grid": "11"
+      },
+      {
+        "global_id": "060GHHwCj70vXgSjk0tYbN",
+        "name": "C2-31",
+        "origin": [
+          11.7,
+          -0.3,
+          0.0
+        ],
+        "size": [
+          0.6,
+          0.6,
+          3.8
+        ],
+        "level": "2F",
+        "grid": "20"
+      },
+      {
+        "global_id": "36_x8eEOj10xzrlot17ZTc",
+        "name": "C2-32",
+        "origin": [
+          11.7,
+          7.7,
+          0.0
+        ],
+        "size": [
+          0.6,
+          0.6,
+          3.8
+        ],
+        "level": "2F",
+        "grid": "21"
+      }
+    ],
+    "beams": [
+      {
+        "global_id": "16IrPb1wL8hfBWRpFEG3q0",
+        "name": "BX1-11",
+        "origin": [
+          0.3,
+          -0.15,
+          3.3
+        ],
+        "size": [
+          5.4,
+          0.3,
+          0.5
+        ],
+        "level": "1F"
+      },
+      {
+        "global_id": "2_A4Wb3Bb9i9SyXyKeHrMc",
+        "name": "BX1-21",
+        "origin": [
+          6.3,
+          -0.15,
+          3.3
+        ],
+        "size": [
+          11.400000000000002,
+          0.3,
+          0.5
+        ],
+        "level": "1F"
+      },
+      {
+        "global_id": "1F4b_33l9FHu8hu49PSsKQ",
+        "name": "BX1-12",
+        "origin": [
+          0.3,
+          7.85,
+          3.3
+        ],
+        "size": [
+          5.4,
+          0.3,
+          0.5
+        ],
+        "level": "1F"
+      },
+      {
+        "global_id": "1DNojz63D3B9Q3HyYrIa5G",
+        "name": "BX1-22",
+        "origin": [
+          6.3,
+          7.85,
+          3.3
+        ],
+        "size": [
+          11.400000000000002,
+          0.3,
+          0.5
+        ],
+        "level": "1F"
+      },
+      {
+        "global_id": "2_7EzwrBD7yB9g0kSlLRcl",
+        "name": "BY1-1",
+        "origin": [
+          -0.15,
+          0.3,
+          3.3
+        ],
+        "size": [
+          0.3,
+          7.4,
+          0.5
+        ],
+        "level": "1F"
+      },
+      {
+        "global_id": "3$2z0zDSP4jvfFzH3wMGcC",
+        "name": "BY1-2",
+        "origin": [
+          5.85,
+          0.3,
+          3.3
+        ],
+        "size": [
+          0.3,
+          7.4,
+          0.5
+        ],
+        "level": "1F"
+      },
+      {
+        "global_id": "3ry_42ArbFggaKQzl21hON",
+        "name": "BY1-3",
+        "origin": [
+          11.85,
+          0.3,
+          3.3
+        ],
+        "size": [
+          0.3,
+          7.4,
+          0.5
+        ],
+        "level": "1F"
+      },
+      {
+        "global_id": "0aSImyTR1CNfXjgilEQnCx",
+        "name": "BC1",
+        "origin": [
+          12.3,
+          -0.15,
+          3.3
+        ],
+        "size": [
+          1.5,
+          0.3,
+          0.5
+        ],
+        "level": "1F",
+        "cantilever": true
+      },
+      {
+        "global_id": "2i07BQtTX6pfyrFoTJ6ne8",
+        "name": "BX2-11",
+        "origin": [
+          0.3,
+          -0.15,
+          3.3
+        ],
+        "size": [
+          5.4,
+          0.3,
+          0.5
+        ],
+        "level": "2F"
+      },
+      {
+        "global_id": "0WjaGzTE52m8$q8QAPFnPW",
+        "name": "BX2-21",
+        "origin": [
+          6.3,
+          -0.15,
+          3.3
+        ],
+        "size": [
+          11.400000000000002,
+          0.3,
+          0.5
+        ],
+        "level": "2F"
+      },
+      {
+        "global_id": "1YSpLn0pPBf8aVw553GVdO",
+        "name": "BX2-12",
+        "origin": [
+          0.3,
+          7.85,
+          3.3
+        ],
+        "size": [
+          5.4,
+          0.3,
+          0.5
+        ],
+        "level": "2F"
+      },
+      {
+        "global_id": "19NBEjvgL1T9Boyzq1IQrV",
+        "name": "BX2-22",
+        "origin": [
+          6.3,
+          7.85,
+          3.3
+        ],
+        "size": [
+          11.400000000000002,
+          0.3,
+          0.5
+        ],
+        "level": "2F"
+      },
+      {
+        "global_id": "2fybP3IbLD2wWonuB64gZA",
+        "name": "BY2-1",
+        "origin": [
+          -0.15,
+          0.3,
+          3.3
+        ],
+        "size": [
+          0.3,
+          7.4,
+          0.5
+        ],
+        "level": "2F"
+      },
+      {
+        "global_id": "0YcqnAQXL0BxU8RdxlfqAs",
+        "name": "BY2-2",
+        "origin": [
+          5.85,
+          0.3,
+          3.3
+        ],
+        "size": [
+          0.3,
+          7.4,
+          0.5
+        ],
+        "level": "2F"
+      },
+      {
+        "global_id": "1BM2G8$djA6ASIOZfo8hVH",
+        "name": "BY2-3",
+        "origin": [
+          11.85,
+          0.3,
+          3.3
+        ],
+        "size": [
+          0.3,
+          7.4,
+          0.5
+        ],
+        "level": "2F"
+      },
+      {
+        "global_id": "1AAwS2pNH2kPLkliLNVRA1",
+        "name": "BC2",
+        "origin": [
+          12.3,
+          -0.15,
+          3.3
+        ],
+        "size": [
+          1.5,
+          0.3,
+          0.5
+        ],
+        "level": "2F",
+        "cantilever": true
+      }
+    ],
+    "slabs": [
+      {
+        "global_id": "1JJYNFXZ5EN9lQvmRhJ6Ul",
+        "name": "S1",
+        "origin": [
+          -0.5,
+          -0.5,
+          3.8
+        ],
+        "size": [
+          13.0,
+          9.0,
+          0.2
+        ],
+        "level": "1F"
+      },
+      {
+        "global_id": "274vbg_MX9Xv31CC3ecudn",
+        "name": "S2",
+        "origin": [
+          -0.5,
+          -0.5,
+          3.8
+        ],
+        "size": [
+          13.0,
+          9.0,
+          0.2
+        ],
+        "level": "2F"
+      }
+    ],
+    "walls": [
+      {
+        "global_id": "3QG1EHR413qwqL5Nw0otQR",
+        "name": "W1-S",
+        "origin": [
+          0.0,
+          -0.4,
+          0.0
+        ],
+        "size": [
+          12.0,
+          0.2,
+          3.8
+        ],
+        "level": "1F"
+      },
+      {
+        "global_id": "1lLbtmiov9w9cAU$SHC0eq",
+        "name": "W1-N",
+        "origin": [
+          0.0,
+          8.2,
+          0.0
+        ],
+        "size": [
+          12.0,
+          0.2,
+          3.8
+        ],
+        "level": "1F"
+      },
+      {
+        "global_id": "1xfckxBGbBnukVI_Qo2xnp",
+        "name": "W1-W",
+        "origin": [
+          -0.4,
+          0.0,
+          0.0
+        ],
+        "size": [
+          0.2,
+          8.0,
+          3.8
+        ],
+        "level": "1F"
+      },
+      {
+        "global_id": "2vjsLY6QT8w8osq6$cW90l",
+        "name": "W1-E",
+        "origin": [
+          12.2,
+          0.0,
+          0.0
+        ],
+        "size": [
+          0.2,
+          8.0,
+          3.8
+        ],
+        "level": "1F"
+      },
+      {
+        "global_id": "0FsOoqrxTCkRW2Hn5v$T$Q",
+        "name": "W2-S",
+        "origin": [
+          0.0,
+          -0.4,
+          0.0
+        ],
+        "size": [
+          12.0,
+          0.2,
+          3.8
+        ],
+        "level": "2F"
+      },
+      {
+        "global_id": "35ryo_M4z73gPEMCrTZYQg",
+        "name": "W2-N",
+        "origin": [
+          0.0,
+          8.2,
+          0.0
+        ],
+        "size": [
+          12.0,
+          0.2,
+          3.8
+        ],
+        "level": "2F"
+      },
+      {
+        "global_id": "2NWNq_jHT5WBalslCz_yT4",
+        "name": "W2-W",
+        "origin": [
+          -0.4,
+          0.0,
+          0.0
+        ],
+        "size": [
+          0.2,
+          8.0,
+          3.8
+        ],
+        "level": "2F"
+      },
+      {
+        "global_id": "0is1el4kP9x9nOiNNTFaSh",
+        "name": "W2-E",
+        "origin": [
+          12.2,
+          0.0,
+          0.0
+        ],
+        "size": [
+          0.2,
+          8.0,
+          3.8
+        ],
+        "level": "2F"
+      }
+    ],
+    "ducts": [
+      {
+        "global_id": "2AtGJcZN12LPkuZssEKuDB",
+        "name": "D1-1",
+        "origin": [
+          0.5,
+          1.8,
+          2.5999999999999996
+        ],
+        "size": [
+          11.0,
+          0.4,
+          0.4
+        ],
+        "level": "1F"
+      },
+      {
+        "global_id": "1hvwdU1gzCOgeQV$ynhWLm",
+        "name": "D1-2",
+        "origin": [
+          0.5,
+          5.8,
+          2.5999999999999996
+        ],
+        "size": [
+          11.0,
+          0.4,
+          0.4
+        ],
+        "level": "1F"
+      },
+      {
+        "global_id": "17M3DqGFjB5P67ZxJWN3FK",
+        "name": "D2-1",
+        "origin": [
+          0.5,
+          1.8,
+          2.5999999999999996
+        ],
+        "size": [
+          11.0,
+          0.4,
+          0.4
+        ],
+        "level": "2F"
+      },
+      {
+        "global_id": "1u2K$1dvz8U9ir8kqf63Gp",
+        "name": "D2-2",
+        "origin": [
+          0.5,
+          5.8,
+          2.5999999999999996
+        ],
+        "size": [
+          11.0,
+          0.4,
+          0.4
+        ],
+        "level": "2F"
+      }
+    ]
+  },
+  "grid_x": [
+    0.0,
+    6.0,
+    12.0
+  ],
+  "grid_y": [
+    0.0,
+    8.0
+  ],
+  "unit": "m"
+}
