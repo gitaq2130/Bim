@@ -73,6 +73,7 @@ def test_started_claim_transitions_and_multipart(client, auth, project, ifc_job)
     assert r.status_code == 201, r.text
     out = r.json()
     assert out["transitions"] and out["transitions"][0]["to_state"] == "REPORTED" and out["transitions"][0]["actor"] == "contractor"
+    assert out["inspection_review_ids"] == []   # started 신고는 검측 요청을 만들지 않는다
     assert out["items"][0]["photo_uris"] and out["items"][0]["photo_uris"][0].startswith("/api/files/")
     photo = client.get(out["items"][0]["photo_uris"][0], headers=auth("client"))
     assert photo.status_code == 200 and photo.content.startswith(b"\xff\xd8")

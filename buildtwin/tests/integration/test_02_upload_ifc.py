@@ -46,6 +46,7 @@ def test_models_and_mesh_endpoints(client, auth, project, ifc_job):
     assert r.status_code == 200 and len(r.json()) == 1
     m = r.json()[0]
     assert m["model_uri"] == f"/api/models/{m['model_id']}/mesh" and m["levels"] and m["coordinate_system"]["source"]
+    assert isinstance(m["plan_section_default_offset"], float)
     r = client.get(m["model_uri"], headers=auth("client"))
     assert r.status_code == 200 and r.headers["content-type"].startswith("application/json")
     bundle = r.json()
@@ -55,8 +56,9 @@ def test_models_and_mesh_endpoints(client, auth, project, ifc_job):
     r = client.get(f"/api/models/{m['model_id']}/plan-section", headers=auth("client"), params={"level": "1F"})
     assert r.status_code == 200
     sec = r.json()
-    assert sec["level"] == "1F" and "coordinateSystem" in sec and sec["polylines"]
-    assert {"globalId", "points"} <= set(sec["polylines"][0])
+    assert sec["level"] == "1F" and "coordinate_system" in sec and sec["polylines"]
+    assert {"global_id", "points", "closed"} <= set(sec["polylines"][0])
+    assert sec["offset"] == m["plan_section_default_offset"] and sec["cut_elevation"] == sec["elevation"] + sec["offset"]
 
 
 def test_file_content_and_list(client, auth, project, ifc_job):

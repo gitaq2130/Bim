@@ -1,5 +1,7 @@
-"""API 통합 테스트 공용 픽스처. 앱 import 전에 DATABASE_URL/STORAGE_ROOT/CELERY_ALWAYS_EAGER 를 임시 경로로 고정한다.
+"""API 통합 테스트 공용 픽스처. 세션 시작 시(픽스처 시점에) 전용 임시 SQLite/저장소를 만들고 엔진을 재설정한다.
 
+다른 테스트 트리(tests/e2e 등)도 같은 프로세스에서 DATABASE_URL 을 바꾸므로, import 시점이 아니라 `client` 픽스처 안에서
+경로를 정해야 서로의 DB 를 공유하지 않는다(bim_objects PK 는 전역이라 같은 IFC 를 두 프로젝트에 올리면 충돌).
 세션 범위 픽스처가 한 프로젝트를 만들고 IFC → DXF → 공정표를 순서대로 올린다(파일명 숫자 접두사로 실행 순서 고정).
 """
 from __future__ import annotations
@@ -11,25 +13,11 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
-_TMP = Path(tempfile.mkdtemp(prefix="buildtwin-api-"))
-os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP / 'api-test.db').as_posix()}"
-os.environ["STORAGE_ROOT"] = str(_TMP / "storage")
-os.environ["CELERY_ALWAYS_EAGER"] = "1"
-
-from packages.core.settings import settings  # noqa: E402
-
-settings.database_url = os.environ["DATABASE_URL"]
-settings.storage_root = os.environ["STORAGE_ROOT"]
-settings.celery_always_eager = True
-
-from fastapi.testclient import TestClient  # noqa: E402
-
-from packages.core.db import init_db, reset_engine  # noqa: E402
-from services.common.celery_app import celery_app  # noqa: E402
-
-celery_app.conf.task_always_eager = True
-celery_app.conf.task_eager_propagates = True
+from packages.core.db import init_db, reset_engine
+from packages.core.settings import settings
+from services.common.celery_app import celery_app
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 ROLES = ("contractor", "cm", "client", "admin")
@@ -42,6 +30,14 @@ def load_fixture_json(name: str) -> dict:
 
 @pytest.fixture(scope="session")
 def client():
+    tmp = Path(tempfile.mkdtemp(prefix="buildtwin-api-"))
+    previous = {k: os.environ.get(k) for k in ("DATABASE_URL", "STORAGE_ROOT", "CELERY_ALWAYS_EAGER")}
+    os.environ["DATABASE_URL"] = f"sqlite:///{(tmp / 'api-test.db').as_posix()}"
+    os.environ["STORAGE_ROOT"] = str(tmp / "storage")
+    os.environ["CELERY_ALWAYS_EAGER"] = "1"
+    settings.database_url, settings.storage_root, settings.celery_always_eager = os.environ["DATABASE_URL"], os.environ["STORAGE_ROOT"], True
+    celery_app.conf.task_always_eager = True
+    celery_app.conf.task_eager_propagates = True
     reset_engine()
     init_db(settings.database_url)
     from services.api.main import create_app
@@ -50,7 +46,12 @@ def client():
     with TestClient(app) as c:
         yield c
     reset_engine()
-    shutil.rmtree(_TMP, ignore_errors=True)
+    for k, v in previous.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+    shutil.rmtree(tmp, ignore_errors=True)
 
 
 @pytest.fixture(scope="session")

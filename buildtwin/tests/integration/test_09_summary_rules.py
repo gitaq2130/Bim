@@ -13,7 +13,8 @@ def test_weekly_summary_shape(client, auth, project, ifc_job, schedule_job):
     assert sum(sum(c.values()) for c in s["state_counts_by_level"].values()) == 42
     assert set(s["state_counts_by_level"]) == {"1F", "2F"}
     assert set(s["state_counts_by_group"]) <= {"column", "beam", "slab", "wall", "duct", "pipe", "cable_tray", "facade_panel", "other"}
-    assert all({"level", "discipline", "counts", "total"} <= set(row) for row in s["state_distribution"])
+    assert all({"level", "group", "counts", "total"} <= set(row) for row in s["state_distribution"])
+    assert {row["group"] for row in s["state_distribution"]} <= {"column", "beam", "slab", "wall", "duct", "pipe", "cable_tray", "facade_panel", "other"}
     assert sum(row["total"] for row in s["state_distribution"]) == 42
     assert s["confirmed_this_week"] >= 1   # test_03 / test_08 에서 확정
     assert s["open_reviews"] == s["open_review_requests"] == sum(s["open_reviews_by_kind"].values())

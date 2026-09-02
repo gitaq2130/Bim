@@ -55,8 +55,10 @@ def test_inspection_review_approval_confirms_object(client, auth, project, ifc_j
     rv = reviews[0]
     d = client.get(f"/api/objects/{gid}", headers=auth("cm")).json()
     assert any(a["kind"] == "resolve_review" and a["review_request_id"] == rv["review_request_id"] for a in d["next_actions"])
-    r = client.post(f"/api/review-requests/{rv['review_request_id']}/resolve", headers=auth("admin"), json={"decision": "approved", "note": "검측 합격"})
+    assert client.post(f"/api/review-requests/{rv['review_request_id']}/resolve", headers=auth("admin"), json={"decision": "approved"}).status_code == 403
+    r = client.post(f"/api/review-requests/{rv['review_request_id']}/resolve", headers=auth("cm"), json={"decision": "approved", "note": "검측 합격"})
     assert r.status_code == 200, r.text
+    assert r.json()["status"] == "approved" and r.json()["resolved_by"]
     d = client.get(f"/api/objects/{gid}", headers=auth("cm")).json()
     assert d["current_state"]["state"] == "CONFIRMED" and d["current_state"]["actor"] == "cm"
     assert d["history"][0]["review_request_id"] == rv["review_request_id"]

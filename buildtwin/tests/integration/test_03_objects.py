@@ -37,6 +37,10 @@ def test_contractor_cannot_confirm(client, auth, project, ifc_job):
     r = client.post(f"/api/objects/{gid}/transitions", headers=auth("client"),
                     json={"to_state": "REPORTED", "evidence": {"source_type": "user_input", "source_id": "x"}})
     assert r.status_code == 403
+    # admin 은 actor 가 없다(ADR 0001 §4-1)
+    assert client.post(f"/api/objects/{gid}/transitions", headers=auth("admin"), json={"to_state": "CONFIRMED"}).status_code == 403
+    assert client.post(f"/api/objects/{gid}/transitions", headers=auth("admin"), json={"to_state": "REPORTED"}).status_code == 403
+    assert client.get(f"/api/objects/{gid}", headers=auth("admin")).json()["next_actions"] == []
 
 
 def test_cm_confirm_path(client, auth, project, ifc_job):
@@ -51,6 +55,8 @@ def test_cm_confirm_path(client, auth, project, ifc_job):
     assert t["from_state"] == "PLANNED" and t["to_state"] == "REPORTED" and t["actor"] == "contractor" and t["evidence"]["note"]
     r = client.post(f"/api/objects/{gid}/transitions", headers=auth("contractor"), json={"to_state": "INSPECTION_REQUESTED"})
     assert r.status_code == 201, r.text
+    assert len(r.json()["created_review_ids"]) == 1 and r.json()["closed_review_ids"] == []   # 상태기계가 검측 요청 생성
+    inspection_id = r.json()["created_review_ids"][0]
     d = client.get(f"/api/objects/{gid}", headers=auth("cm")).json()
     assert d["current_state"]["state"] == "INSPECTION_REQUESTED" and d["current_state"]["has_open_review"] is True
     kinds = {a["kind"] for a in d["next_actions"]}
@@ -59,10 +65,12 @@ def test_cm_confirm_path(client, auth, project, ifc_job):
     assert r.status_code == 201, r.text
     t = r.json()
     assert t["to_state"] == "CONFIRMED" and t["actor"] == "cm" and t["evidence"]["source_type"] == "cm_action"
+    assert t["closed_review_ids"] == [inspection_id]
     d = client.get(f"/api/objects/{gid}", headers=auth("cm")).json()
     assert d["current_state"]["state"] == "CONFIRMED" and d["current_state"]["actor"] == "cm" and d["current_state"]["confidence"] == 1.0
     assert [h["to_state"] for h in d["history"]] == ["CONFIRMED", "INSPECTION_REQUESTED", "REPORTED"]   # 최신순
     assert d["current_state"]["has_open_review"] is False   # 검측 검토요청은 승인으로 종료
-    # admin 은 cm 으로 행동: 확정 취소 가능
-    r = client.post(f"/api/objects/{gid}/transitions", headers=auth("admin"), json={"to_state": "MISMATCH", "note": "후속 발견"})
-    assert r.status_code == 201 and r.json()["actor"] == "cm"
+    # 확정 취소는 cm 만; UI 전이 근거 source_type 은 user_input / cm_action 모두 허용
+    r = client.post(f"/api/objects/{gid}/transitions", headers=auth("cm"),
+                    json={"to_state": "MISMATCH", "evidence": {"source_type": "user_input", "source_id": "ui"}, "note": "후속 발견"})
+    assert r.status_code == 201 and r.json()["actor"] == "cm" and r.json()["evidence"]["source_type"] == "user_input"

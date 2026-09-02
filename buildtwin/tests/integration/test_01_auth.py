@@ -61,3 +61,8 @@ def test_role_matrix_on_protected_endpoints(client, auth, project):
     assert client.get(f"/api/projects/{project}/review-requests", headers=auth("cm")).status_code == 200
     assert client.post("/api/review-requests/x/resolve", headers=auth("contractor"), json={"decision": "approved"}).status_code == 403
     assert client.post("/api/scans/x/alignment", headers=auth("contractor"), json={"control_points": []}).status_code == 403
+    # ADR 0001 §4-1: admin 은 확정·검측 승인·검토요청 처리·매핑 확정·작업일보 불가
+    assert client.post("/api/review-requests/x/resolve", headers=auth("admin"), json={"decision": "approved"}).status_code == 403
+    assert client.post("/api/objects/x/transitions", headers=auth("admin"), json={"to_state": "CONFIRMED"}).status_code == 403
+    assert client.post("/api/drawings/x/mappings/1/confirm", headers=auth("admin"), json={"global_id": "y"}).status_code == 403
+    assert client.post(f"/api/projects/{project}/daily-reports", headers=auth("admin"), json={"report_date": "2026-09-01", "items": []}).status_code == 403

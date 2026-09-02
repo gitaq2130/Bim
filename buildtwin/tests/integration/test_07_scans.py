@@ -9,7 +9,8 @@ from .conftest import FIXTURES, load_fixture_json, upload, wait_job
 @pytest.fixture(scope="module")
 def scan(client, auth, project, ifc_job):
     up, job = upload(client, auth("cm"), project, FIXTURES / "sample.ply")
-    assert up["kind"] == "ply" and job["status"] == "done", job
+    assert up["kind"] == "ply" and up["job_kind"] == "scan_upload" and job["kind"] == "scan_upload"
+    assert job["status"] == "done", job
     assert job["result"]["scan_id"] and job["result"]["status"] == "needs_alignment_input"
     return job["result"]
 
@@ -21,10 +22,6 @@ def test_scan_listed_awaiting_alignment(client, auth, project, scan):
     assert s["status"] == "needs_alignment_input" and s["pointcloud_uri"].startswith("/api/files/") and s["point_count"] > 0
     r = client.get(f"/api/scans/{scan['scan_id']}/registration", headers=auth("client"))
     assert r.status_code == 200 and r.json()["status"] == "needs_alignment_input"
-    # cm 의 next_actions 에 align_scan 노출
-    gid = client.get(f"/api/projects/{project}/objects", headers=auth("client"), params={"page_size": 1}).json()["items"][0]["global_id"]
-    kinds = {a["kind"] for a in client.get(f"/api/objects/{gid}", headers=auth("cm")).json()["next_actions"]}
-    assert "align_scan" in kinds
 
 
 def test_alignment_insufficient(client, auth, scan):
@@ -59,6 +56,10 @@ def test_alignment_job_produces_verdicts_without_confirmed(client, auth, project
     for o in system_confirmed:
         hist = client.get(f"/api/objects/{o['global_id']}", headers=auth("client")).json()["history"]
         assert all(h["actor"] == "cm" for h in hist if h["to_state"] == "CONFIRMED")
+    mismatch = [g for g, st in states.items() if st == "MISMATCH"]
+    if mismatch:   # MISMATCH 객체의 cm next_actions 에 align_scan(상태기계가 정의)
+        kinds = {a["kind"] for a in client.get(f"/api/objects/{mismatch[0]}", headers=auth("cm")).json()["next_actions"]}
+        assert "align_scan" in kinds
     done = [g for g, st in states.items() if st == "ESTIMATED_DONE"]
     if done:
         d = client.get(f"/api/objects/{done[0]}", headers=auth("client")).json()

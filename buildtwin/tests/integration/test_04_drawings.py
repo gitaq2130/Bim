@@ -52,7 +52,14 @@ def test_user_alignment_rebuilds_mappings(client, auth, project, dxf_job, expect
     assert r.status_code == 200, r.text
     res = r.json()
     assert res["status"] == "done" and res["job_id"] and res["mapping_count"] > 0
-    assert client.get(f"/api/jobs/{res['job_id']}", headers=auth("cm")).json()["status"] == "done"
+    job = client.get(f"/api/jobs/{res['job_id']}", headers=auth("cm")).json()
+    assert job["status"] == "done" and job["kind"] == "mapping"
+    # 이전 open mapping 검토요청은 시스템이 on_hold(superseded_by=...) 로만 표시(ADR 0001 §6)
+    if res["superseded_ids"]:
+        old = client.get(f"/api/review-requests/{res['superseded_ids'][0]}", headers=auth("cm")).json()
+        assert old["status"] == "on_hold" and old["resolution_note"].startswith("superseded_by=") and old["resolved_by"] is None
+    open_now = client.get(f"/api/projects/{project}/review-requests", headers=auth("cm"), params={"kind": "mapping", "status": "open"}).json()
+    assert len(open_now) == res["review_requests_created"]
     mappings = client.get(f"/api/drawings/{did}/mappings", headers=auth("client")).json()
     assert all(m["evidence"]["extra"]["transform_source"] == "user_input" for m in mappings)
     expected_map = {m["handle"]: m["global_id"] for m in load_fixture_json("mapping.expected.json")["mappings"]}

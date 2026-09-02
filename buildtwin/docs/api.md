@@ -73,7 +73,7 @@
 | 메서드 | 경로 | 요약 | 파라미터 | 요청 본문 | 응답 |
 |---|---|---|---|---|---|
 | GET | `/api/objects/{global_id}` | Get Object | global_id*(path) | - | ObjectDetail |
-| POST | `/api/objects/{global_id}/transitions` | Request Transition | global_id*(path) | json: TransitionRequest | StateTransition |
+| POST | `/api/objects/{global_id}/transitions` | Request Transition | global_id*(path) | json: TransitionRequest | TransitionResponse |
 | GET | `/api/projects/{project_id}/objects` | List Objects | project_id*(path), level(query), ifc_type(query), state(query), page(query), page_size(query), size(query), include_orphaned(query) | - | ObjectList |
 
 ### projects
@@ -129,7 +129,7 @@
 | ControlPoint | `name`*, `scan_xyz`*, `model_xyz`* |
 | CoordinateSystem | `source`*, `origin`, `rotation_deg`, `scale`, `unit`, `epsg`, `extent`, `notes` |
 | CoordinateTransform | `matrix`, `from_source`*, `to_source`, `rmse`, `method` |
-| DailyReportResponse | `report_id`*, `project_id`*, `report_date`*, `reporter_id`*, `crew_count`, `equipment`, `items`, `note`, `submitted_at`, `transitions`, `review_requests`, `skipped` |
+| DailyReportResponse | `report_id`*, `project_id`*, `report_date`*, `reporter_id`*, `crew_count`, `equipment`, `items`, `note`, `submitted_at`, `transitions`, `review_requests`, `inspection_review_ids`, `skipped` |
 | DailyReportView | `report_id`*, `project_id`*, `report_date`*, `reporter_id`*, `crew_count`, `equipment`, `items`, `note`, `submitted_at` |
 | DrawingEntitiesResponse | `drawing_id`*, `project_id`*, `level`, `entities`*, `coordinate_system`*, `alignment`, `svg_uri` |
 | DrawingEntityView | `handle`*, `layer`*, `dxftype`*, `points`, `bbox`, `block_name`, `insert_point`, `rotation_deg`, `scale`, `text`, `radius`, `attrs` |
@@ -147,15 +147,15 @@
 | LoginResponse | `access_token`*, `token_type`, `role`*, `user_id`*, `email`* |
 | MarkerDefinition | `marker_id`*, `model_xyz`* |
 | MarkerObservation | `marker_id`*, `scan_xyz`* |
-| ModelSummary | `model_id`*, `project_id`*, `name`, `model_uri`*, `obj_uri`, `levels`, `coordinate_system`*, `version`, `file_id`, `stats` |
+| ModelSummary | `model_id`*, `project_id`*, `name`, `model_uri`*, `obj_uri`, `levels`, `coordinate_system`*, `plan_section_default_offset`, `version`, `file_id`, `stats` |
 | NextAction | `kind`*, `label`*, `allowed_roles`*, `to_state`, `actor`, `review_request_id`, `review_kind`, `rule_id` |
 | ObjectDetail | `basic`*, `current_state`*, `history`*, `next_actions`*, `linked`* |
 | ObjectDiff | `prev_scan_id`*, `prev_state`*, `curr_state`*, `density_delta`*, `volume_delta` |
 | ObjectList | `items`*, `total`*, `page`*, `page_size`* |
 | ObjectState | enum: PLANNED, REPORTED, IN_PROGRESS, ESTIMATED_DONE, INSPECTION_REQUESTED, CONFIRMED, MISMATCH, UNVERIFIABLE |
 | ObjectStateView | `state`*, `since`, `actor`, `actor_id`, `confidence`, `evidence`, `has_open_review`, `open_review_ids` |
-| PlanSectionPolyline | `globalId`*, `ifc_type`, `points`* |
-| PlanSectionView | `level`*, `elevation`*, `cut_elevation`*, `coordinateSystem`*, `polylines`* |
+| PlanSectionPolyline | `global_id`*, `ifc_type`, `points`*, `closed` |
+| PlanSectionView | `level`*, `elevation`*, `offset`*, `cut_elevation`*, `coordinate_system`*, `svg`, `polylines`* |
 | ProjectCreate | `name`*, `project_id`, `description` |
 | ProjectView | `project_id`*, `name`*, `created_at`, `description` |
 | ReadinessScore | `activity_id`*, `score`*, `components`*, `weights`*, `blockers`*, `confidence`*, `evidence`*, `estimated_completion`, `computed_at` |
@@ -176,9 +176,10 @@
 | ScanVerdictsResponse | `scan_id`*, `registration`, `items`*, `total`* |
 | StartableActivityView | `activity_id`*, `name`, `readiness`, `confidence`, `evidence`, `blockers` |
 | StartableSet | `project_id`*, `startable`*, `blocked`*, `threshold`*, `solver_status`*, `evidence`* |
-| StateDistributionRow | `level`*, `discipline`*, `counts`*, `total`* |
+| StateDistributionRow | `level`*, `group`*, `counts`*, `total`* |
 | StateTransition | `transition_id`, `global_id`*, `from_state`*, `to_state`*, `actor`*, `actor_id`, `confidence`, `evidence`*, `review_request_id`, `occurred_at` |
 | TransitionRequest | `to_state`*, `evidence`, `note`, `confidence`, `review_request_id` |
+| TransitionResponse | `transition_id`, `global_id`*, `from_state`*, `to_state`*, `actor`*, `actor_id`, `confidence`, `evidence`*, `review_request_id`, `occurred_at`, `created_review_ids`, `closed_review_ids` |
 | UploadResponse | `job_id`*, `file_id`*, `kind`*, `job_kind`* |
 | UserView | `user_id`*, `email`*, `role`*, `name` |
 | ValidationError | `loc`*, `msg`*, `type`*, `input`, `ctx` |
