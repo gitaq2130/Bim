@@ -82,6 +82,9 @@ def test_rebuild_creates_reviews_and_supersedes_previous(session):
 
 def test_rebuild_keeps_confirmed_rows_and_manual_mappings(session):
     s = session
+    s.add(BimObjectRow(project_id=P, global_id="G2", model_id="m1", ifc_type="IfcColumn"))
+    s.add(BimObjectRow(project_id=P, global_id="G7", model_id="m1", ifc_type="IfcBeam"))
+    s.commit()
     rebuild_mappings(s, D, P, [_m("A", "G1", 0.9), _m("B", "G2", 0.5)])
     s.commit()
     confirmed = confirm_mapping_row(s, D, "B", "G2", user_id="cm-01", note="ok")
@@ -117,6 +120,48 @@ def test_rebuild_keeps_confirmed_rows_and_manual_mappings(session):
     with pytest.raises(ValueError):
         rebuild_mappings(s, D, P, [EntityObjectMapping(drawing_id="other", entity_handle="Q", global_id="G", confidence=0.9,
                                                        evidence=_m("Q", "G", 0.9).evidence)])
+
+
+def test_confirm_mapping_row_rejects_nonexistent_object(session):
+    """reviewer round-3 observation 7: confirm_mapping_row 은 (project_id, global_id) 가 실제로 존재하는지 확인해야 한다."""
+    s = session
+    with pytest.raises(ValueError, match="object not found") as exc_info:
+        confirm_mapping_row(s, D, "A", "G-GHOST", user_id="cm-01")
+    msg = str(exc_info.value)
+    assert "G-GHOST" in msg and P in msg and D in msg   # 메시지에 project/global_id/drawing 모두 명시
+    assert s.scalars(select(EntityObjectMappingRow).where(EntityObjectMappingRow.entity_handle == "A")).first() is None
+    assert open_mapping_reviews(s, D) == []
+
+
+def test_confirm_mapping_row_rejects_object_from_other_project(session):
+    """ADR 0005: global_id 가 실존해도 이 도면의 project_id 소속이 아니면 거부한다."""
+    s = session
+    P2, D2 = "p2", "d2"
+    s.add(ProjectRow(project_id=P2, name="P2"))
+    s.add(FileRow(file_id="f2", project_id=P2, kind="dxf", filename="b.dxf", uri="y", sha256="1", size=1))
+    s.add(DrawingRow(drawing_id=D2, project_id=P2, file_id="f2", level="1F", coordinate_system={"source": "dxf_local"}))
+    s.add(BimObjectRow(project_id=P2, global_id="G-OTHER", model_id="m2", ifc_type="IfcColumn"))
+    s.commit()
+
+    with pytest.raises(ValueError, match="object not found"):
+        confirm_mapping_row(s, D, "A", "G-OTHER", user_id="cm-01")   # D 는 P 소속, G-OTHER 는 P2 소속
+    assert s.scalars(select(EntityObjectMappingRow).where(EntityObjectMappingRow.entity_handle == "A")).first() is None
+
+    # 같은 global_id 라도 실제로 그 프로젝트 소속이면 통과한다
+    confirmed = confirm_mapping_row(s, D2, "A", "G-OTHER", user_id="cm-01")
+    s.commit()
+    assert confirmed.global_id == "G-OTHER"
+
+
+def test_confirm_mapping_row_happy_path_existing_object(session):
+    s = session
+    s.add(BimObjectRow(project_id=P, global_id="G-REAL", model_id="m1", ifc_type="IfcColumn"))
+    s.commit()
+    confirmed = confirm_mapping_row(s, D, "A", "G-REAL", user_id="cm-01")
+    s.commit()
+    assert confirmed.global_id == "G-REAL" and confirmed.reviewed_by == "cm-01" and confirmed.confidence == 1.0
+    row = s.scalars(select(EntityObjectMappingRow).where(EntityObjectMappingRow.entity_handle == "A")).one()
+    assert row.global_id == "G-REAL" and row.project_id == P
 
 
 def test_resolve_mapping_reviews_is_human_only(session):

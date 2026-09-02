@@ -4,7 +4,7 @@ from __future__ import annotations
 from sqlalchemy import select
 
 from packages.core.db import new_session
-from packages.core.models.orm import ExpertReviewLogRow
+from packages.core.models.orm import BimObjectRow, ExpertReviewLogRow
 
 
 def _logs(entity_type: str, entity_id: str) -> list[ExpertReviewLogRow]:
@@ -76,3 +76,56 @@ def test_inspection_rejection_returns_to_in_progress(client, auth, project, ifc_
     r = client.post(f"/api/review-requests/{rv['review_request_id']}/resolve", headers=auth("cm"), json={"action": "rejected", "note": "재작업"})
     assert r.status_code == 200 and r.json()["status"] == "rejected"
     assert client.get(f"/api/objects/{gid}", headers=auth("cm")).json()["current_state"]["state"] == "IN_PROGRESS"
+
+
+def test_resolve_review_with_orphaned_object_returns_404(client, auth, project, ifc_job):
+    """ReviewRequestRow 의 (project_id, global_id) 가 이후 삭제로 더 이상 객체를 가리키지 못하면 500 이 아니라 404.
+
+    `project` 는 세션 스코프 픽스처(다른 테스트 파일도 42개 객체를 전제)라, 객체를 지웠다가
+    검증이 끝나면 원래 행으로 복구하고 이 테스트가 만든 전이·검토요청 기록도 함께 지운다.
+    """
+    items = client.get(f"/api/projects/{project}/objects", headers=auth("client"),
+                       params={"state": "PLANNED"}).json()["items"]
+    assert items, "no PLANNED object left to orphan"
+    gid = items[0]["global_id"]
+
+    s = new_session()
+    try:
+        original = s.get(BimObjectRow, (project, gid))
+        assert original is not None
+        snapshot = {c.name: getattr(original, c.name) for c in BimObjectRow.__table__.columns}
+    finally:
+        s.close()
+
+    assert client.post(f"/api/objects/{gid}/transitions", headers=auth("contractor"), json={"to_state": "REPORTED"}).status_code == 201
+    assert client.post(f"/api/objects/{gid}/transitions", headers=auth("contractor"), json={"to_state": "INSPECTION_REQUESTED"}).status_code == 201
+    rv = client.get(f"/api/projects/{project}/review-requests", headers=auth("cm"),
+                    params={"kind": "inspection", "status": "open", "global_id": gid}).json()[0]
+
+    s = new_session()
+    try:
+        row = s.get(BimObjectRow, (project, gid))
+        assert row is not None
+        s.delete(row)
+        s.commit()
+    finally:
+        s.close()
+
+    try:
+        r = client.post(f"/api/review-requests/{rv['review_request_id']}/resolve", headers=auth("cm"),
+                        json={"decision": "approved", "note": "객체가 삭제된 뒤 처리 시도"})
+        assert r.status_code == 404, r.text
+        detail = r.json()["detail"]
+        assert rv["review_request_id"] in detail
+        assert gid in detail
+        # 검토요청 자체는 여전히 open 으로 남는다(상태기계가 처리하지 못했으므로)
+        assert client.get(f"/api/review-requests/{rv['review_request_id']}", headers=auth("cm")).json()["status"] == "open"
+    finally:
+        s = new_session()
+        try:
+            s.query(StateTransitionRow).filter_by(project_id=project, global_id=gid).delete()
+            s.query(ReviewRequestRow).filter_by(review_request_id=rv["review_request_id"]).delete()
+            s.merge(BimObjectRow(**snapshot))
+            s.commit()
+        finally:
+            s.close()

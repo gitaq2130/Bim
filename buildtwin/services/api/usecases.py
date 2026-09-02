@@ -31,6 +31,7 @@ from services.progress import persistence as db
 from services.progress.readiness import compute_readiness
 from services.progress.scheduler import compute_startable
 from services.progress.state_machine import (
+    ObjectNotFoundError,
     ObjectStateMachine,
     RoleNotAllowedError,
     TransitionBlockedByReviewError,
@@ -279,6 +280,10 @@ def resolve_review(session: Session, review_request_id: str, decision: str, note
                 session.rollback()
                 raise Conflict(f"cannot confirm object on approval: {exc}")
             log.info("inspection rejected but no rework transition: %s", exc)
+        except ObjectNotFoundError as exc:
+            # ReviewRequestRow 가 가리키는 객체가 이후 삭제/재업로드로 사라진 경우(orphan) — 500 대신 404
+            session.rollback()
+            raise NotFound(f"review request {review_request_id}: object not found: {exc}")
     elif row.kind == "mapping" and decision in ("approved", "rejected"):
         resolve_mapping_review(session, row, decision, user.user_id, note)  # type: ignore[arg-type]
     session.refresh(row)
