@@ -34,3 +34,6 @@ CLAUDE.md §0의 MVP 5기능을 실제 동작 코드로 구현한다. 벤치마�
 - 합성 픽스처로만 검증됨. 실제 IFC(고창CDC 등)·실측 스캔으로 재검증 필요.
 - E57은 pye57 미설치(선택 의존성). LAS/PLY로 시작.
 - MinIO 미설정 시 로컬 `storage/` 폴백.
+
+## 후속 조치 메모 (architect)
+- [ ] 픽스처 생성기: `edit_object_placement`가 `assign_container`보다 먼저 호출되어 2F 요소가 월드 z=0에 놓임. 모든 에이전트 완료 후 순서를 바꿔 재생성하고 전체 테스트 재실행(GlobalId가 바뀌므로 expected.json 동시 재생성).

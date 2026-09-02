@@ -319,6 +319,8 @@ export const Viewer3D = forwardRef<Viewer3DHandle, Viewer3DProps & ExtraProps>(f
         return modelRef.current ? Array.from(modelRef.current.objects.keys()) : [];
       },
     }),
+    // 헬퍼들은 ref 만 읽는 안정적인 클로저이므로 의존성에 넣지 않는다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
 

@@ -2,7 +2,7 @@
 from .coordinate import BBox2D, BBox3D, CoordinateSystem, CoordinateTransform
 from .evidence import Evidence
 from .identity import IFC_TYPE_GROUP, TARGET_IFC_TYPES, BimObject, BimObjectDraft, DrawingEntity, DrawingEntityDraft
-from .ingest import FileKind, IngestResult, IngestWarning
+from .ingest import FileKind, IngestResult, IngestStatus, IngestWarning
 from .knowledge import CaseRecord, ExpertReviewLog, RiskLevel, Rule, RuleVerdict
 from .mapping import MAPPING_REVIEW_THRESHOLD, ActivityObjectMapping, EntityObjectMapping
 from .progress import (Activity, ActivityRelation, Blocker, DailyReport, DailyReportItem, MaterialMovement,
