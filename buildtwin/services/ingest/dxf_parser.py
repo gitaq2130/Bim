@@ -14,6 +14,7 @@ import ezdxf.bbox
 from ezdxf.math import Vec3
 
 from packages.core.models import BBox2D, BBox3D, CoordinateSystem, DrawingEntityDraft, IngestResult, IngestWarning
+from packages.core.models.ingest import IngestStatus
 
 # $INSUNITS 코드 → (단위명, 1단위당 미터). DXF 사양(DXF Reference, HEADER $INSUNITS) 기준 정의값.
 INSUNITS_TO_METERS: dict[int, tuple[str, float]] = {
@@ -242,7 +243,7 @@ def parse_dxf(path: str | Path) -> IngestResult:
         source="dxf_local", scale=scale, unit=unit_name, extent=extent,
         notes=f"dxfversion={doc.dxfversion}; insunits={insunits}; {extent_note}; origin/rotation to model frame must come from user input or grid alignment",
     )
-    status = "ok" if entities else "failed"
+    status: IngestStatus = "ok" if entities else "failed"
     if entities and any(w.code == "DXF_ENTITY_FAILED" for w in warnings):
         status = "partial"
     return IngestResult(status=status, source_kind="dxf", entities=entities, warnings=warnings,

@@ -1,0 +1,19 @@
+# 2D↔3D 매핑·그리드 정합 임계값. 담당: sync-2d3d. 코드에 숫자 리터럴로 두지 않고 여기서 읽는다.
+# ---- 매핑(matcher) ----
+min_geo_score: 0.05            # 기하 점수(IoU/겹침비) 이 값 미만인 후보는 버린다
+review_threshold: 0.7          # confidence 미만이면 needs_review (core 계약값 MAPPING_REVIEW_THRESHOLD와 동일)
+line_buffer_ratio: 0.5         # 선형 엔티티(LINE 등) 버퍼 = 이 비율 × 후보 객체들의 대표 부재 폭(bbox에서 유도)
+geo_weight: 0.6                # confidence = geo_weight·geo + rule_weight·rule_norm
+rule_weight: 0.4
+rule_mismatch_penalty: -0.5    # 레이어/블록 규칙이 다른 IfcType을 가리킬 때의 감점
+skip_dxftypes: [TEXT, MTEXT, ATTDEF, ATTRIB, DIMENSION, LEADER, MLEADER, TOLERANCE, VIEWPORT, IMAGE, WIPEOUT]
+skip_layers: ["*TEXT*", "*ANNO*", "*DIM*", "*TITLE*", "DEFPOINTS"]   # 그리드 레이어는 rules/layer_mapping.yaml의 grid_layers
+# ---- 그리드 자동 정합(transform.auto_align_by_grid) ----
+grid_angle_tolerance_deg: 5.0          # 같은 방향군으로 묶는 각도 허용치
+grid_orthogonality_tolerance_deg: 20.0 # 두 방향군이 직교로 간주되는 허용치
+grid_min_intersections: 3              # 교점 수 미만이면 정합 포기
+grid_inlier_ratio: 0.1                 # 인라이어 허용 거리 = 이 비율 × 모델 그리드 최소 간격
+grid_max_hypothesis_pairs: 2000        # RANSAC 가설용 도면 교점 쌍 최대 샘플 수
+grid_column_cluster_ratio: 0.5         # IfcGrid 없을 때 기둥 중심 군집 허용치 = 이 비율 × 기둥 폭 중앙값
+# ---- 평면 단면(plan_section) ----
+plan_section_default_offset: 1.2       # m. 층 레벨 + 이 값에서 자른다(뷰어 기본과 동일 의미)

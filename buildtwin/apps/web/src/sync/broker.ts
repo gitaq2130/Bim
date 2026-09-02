@@ -9,6 +9,10 @@ import type { StoreApi } from "zustand";
 import type { SelectionRoot, SelectionSource } from "./selectionSlice";
 import type { Viewer2DHandle, Viewer3DHandle } from "./viewerTypes";
 
+/** 브로커가 실제로 호출하는 최소 핸들 표면 (테스트 가짜 핸들도 이것만 구현하면 된다) */
+export type Viewer3DLike = Pick<Viewer3DHandle, "highlight" | "clearHighlight" | "flyTo">;
+export type Viewer2DLike = Pick<Viewer2DHandle, "highlight" | "clearHighlight" | "panTo">;
+
 export interface MappingLike {
   entity_handle: string;
   global_id: string;
@@ -16,8 +20,8 @@ export interface MappingLike {
 }
 
 export interface BrokerViewers {
-  viewer2d?: Viewer2DHandle | null;
-  viewer3d?: Viewer3DHandle | null;
+  viewer2d?: Viewer2DLike | null;
+  viewer3d?: Viewer3DLike | null;
 }
 
 export interface SelectionBroker {
@@ -38,8 +42,8 @@ type SelectionStore = Pick<StoreApi<SelectionRoot>, "getState" | "subscribe">;
 const uniq = (xs: string[]) => Array.from(new Set(xs));
 
 export function createBroker(store: SelectionStore): SelectionBroker {
-  let viewer2d: Viewer2DHandle | null = null;
-  let viewer3d: Viewer3DHandle | null = null;
+  let viewer2d: Viewer2DLike | null = null;
+  let viewer3d: Viewer3DLike | null = null;
   const handleToGids = new Map<string, string[]>();
   const gidToHandles = new Map<string, string[]>();
   let pushing = false;

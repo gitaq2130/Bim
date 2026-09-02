@@ -81,3 +81,18 @@
 | RVT | `rvt` | 직접 파싱 불가. APS Model Derivative → IFC, 또는 IFC 내보내기 안내 |
 | 포인트클라우드 | `e57` / `las` / `ply` | Open3D 정합 |
 | 공정표 | `csv` / MS Project `xml` / P6 `xer` | progress-engine importer |
+
+## 지식 엔진 (knowledge) — services/knowledge, rules/
+
+| 한국어 | 영어 | 정의 |
+|---|---|---|
+| 안전 표현식 | `safe expression` (`services/common/safe_expr`) | 규칙 `when` 조건식. `eval` 없이 AST 허용목록(비교·and/or/not·산술·속성·상수 키 인덱싱·`len/abs/min/max/norm`)만 평가 |
+| 위험등급 | `RiskLevel` | 규칙 판정의 심각도: `LOW` / `MEDIUM` / `HIGH` / `CRITICAL` |
+| 규칙 범위 | `RuleScope` | 규칙이 적용되는 공종(`discipline`)과 IFC 타입(`object_types`). 비어 있으면 전체 적용 |
+| 규칙 신뢰도 | `reliability` | 규칙 출처의 신뢰도(0~1). `RuleVerdict.confidence = reliability × 입력 confidence` |
+| 규칙 출처 | `source` (`expert` / `case` / `standard`) | 전문가 인터뷰 / 사례 DB(`source_ref: CASE-xxxx`) / 시방서·기준 |
+| 규칙 컨텍스트 | `rule context` (`scan` / `object` / `activity` / `readiness` / `report` / `logic`) | 규칙 엔진 입력 이름. `logic.days_until_planned_start`는 엔진이 `activity.planned_start`에서 파생 |
+| 매칭 입력 | `matched_inputs` | 규칙 판정 `evidence.extra`에 기록되는, 조건식이 참조한 컨텍스트 이름 목록 |
+| 사례 저장소 | `CaseStore` (`rules/cases/*.yaml`) | 사례 DB 파일 저장소. `to_rule_draft`로 `source: case` 규칙 초안 생성 |
+| 추론 제공자 | `ReasoningProvider` / `NullReasoningProvider` | LLM 추론 인터페이스(Protocol). MVP는 빈 결과를 돌려주는 Null 구현만 |
+| 검토 diff | `json_diff` (`{path, op: add\|remove\|change, before, after}`) | 전문가 검토 로그의 제안 vs 최종값 차이. 중첩 dict는 `a.b`, 리스트는 `a[0]` 경로 |

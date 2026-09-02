@@ -1,51 +1,14 @@
 /**
- * 뷰어 핸들 계약 (.claude/agents/viewer-3d.md / viewer-2d.md 에서 복사).
- * frontend·sync 는 이 타입으로만 뷰어를 다룬다. 실제 구현은 src/viewer3d, src/viewer2d.
+ * 뷰어 핸들 계약. 실제 구현 모듈(src/viewer3d, src/viewer2d)의 타입을 그대로 재노출한다.
+ * frontend·sync 는 이 파일을 통해서만 뷰어 타입을 참조한다 (구현 내부 접근 금지).
  */
-import type { CoordinateSystem, ObjectState, PlanSection, BBox2D, DrawingEntityView } from "../api/types";
-
-export type { CoordinateSystem, ObjectState, PlanSection, BBox2D, DrawingEntityView };
-
-/** 뷰어에 넘기는 4x4 행렬 (viewer2d/types.ts 의 CoordinateTransform 과 동일). */
-export type ViewerTransform = number[][];
-
-export interface Viewer3DHandle {
-  highlight(globalIds: string[], opts?: { exclusive?: boolean }): void;
-  clearHighlight(): void;
-  flyTo(globalId: string): Promise<void>;
-  setState(globalId: string, state: ObjectState): void;
-  setStates(map: Record<string, ObjectState>): void;
-  getPlanSection(level: string): Promise<PlanSection>;
-  togglePointCloud(visible: boolean): void;
-  loadPointCloud(url: string, transform: ViewerTransform): Promise<void>;
-  isolate(globalIds: string[] | null): void;
-}
-
-export interface Viewer3DProps {
-  modelUrl: string;
-  onSelect?: (globalId: string | null) => void;
-  onHover?: (globalId: string | null) => void;
-  initialStates?: Record<string, ObjectState>;
-  className?: string;
-  style?: React.CSSProperties;
-}
-
-export interface Viewer2DHandle {
-  highlight(ids: string[], opts?: { exclusive?: boolean }): void;
-  clearHighlight(): void;
-  panTo(id: string, opts?: { zoom?: number }): void;
-  setOverlay(section: PlanSection | null, opts?: { opacity?: number; transform?: ViewerTransform }): void;
-  setOverlayOpacity(opacity: number): void;
-  fitToView(): void;
-}
-
-export interface Viewer2DProps {
-  drawingId: string;
-  entities: DrawingEntityView[];
-  coordinateSystem: CoordinateSystem;
-  onSelect?: (id: string | null) => void;
-  onAreaSelect?: (ids: string[], bbox: BBox2D) => void;
-  onHover?: (id: string | null) => void;
-  className?: string;
-  style?: React.CSSProperties;
-}
+export type {
+  Viewer3DHandle,
+  Viewer3DProps,
+  PlanSection,
+  CoordinateSystem as ViewerCoordinateSystem,
+  CoordinateTransform as ViewerCoordinateTransform,
+  LevelInfo,
+  ObjectState,
+} from "../viewer3d/types";
+export type { Viewer2DHandle, Viewer2DProps, DrawingEntityView, BBox2D } from "../viewer2d/types";

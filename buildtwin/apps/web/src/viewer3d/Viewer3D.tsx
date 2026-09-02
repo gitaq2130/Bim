@@ -7,7 +7,7 @@
  * - 렌더러(WebGL)는 useEffect 안에서 try/catch 로 지연 생성한다 → jsdom 에서도 import·mount 가능.
  *   WebGL 이 없으면 scene/model/handle 은 그대로 동작하고 그리기만 생략한다(getPlanSection 테스트 가능).
  */
-import React, { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { colorForState, EDGE_COLOR, HIGHLIGHT_EMISSIVE } from "./colors";

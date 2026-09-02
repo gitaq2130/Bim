@@ -83,11 +83,15 @@ def test_unknown_name_is_unsafe():
         evaluate("nope == 1", CTX)
 
 
-def test_eval_error_on_none_comparison():
-    with pytest.raises(ExpressionEvalError):
-        evaluate("logic.ratio > 0.5", CTX)
+def test_none_semantics_and_eval_errors():
+    # None 과의 크기 비교는 False, None 산술은 None (규칙 값 누락 → 조용히 불일치)
+    assert evaluate("logic.ratio > 0.5", CTX) is False
+    assert evaluate("logic.ratio * 2 is None", CTX) is True
+    assert evaluate("'a' in logic.ratio", CTX) is False
     with pytest.raises(ExpressionEvalError):
         evaluate("1 / (logic.days - 3)", CTX)
+    with pytest.raises(ExpressionEvalError):
+        evaluate("scan.state + 1", CTX)
 
 
 def test_pydantic_attribute_and_extra_fallback():
@@ -96,8 +100,9 @@ def test_pydantic_attribute_and_extra_fallback():
     assert evaluate("ev.source_id == 's1'", ctx)
     assert evaluate("ev.offset_vector.norm == 5.0", ctx)
     assert evaluate("ev.file_uri is None", ctx)
-    # 메서드는 값으로 노출하지 않는다
-    assert evaluate("ev.model_dump is None", ctx)
+    # 메서드(호출 가능 속성)는 값으로 노출하지 않는다
+    with pytest.raises(UnsafeExpressionError):
+        evaluate("ev.model_dump is None", ctx)
 
 
 def test_referenced_names_excludes_calls():

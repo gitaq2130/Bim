@@ -132,12 +132,12 @@ export const ROOT_FLIP_TRANSFORM = "scale(1,-1)";
 
 /** 도면 점 → SVG 점 (루트 변환과 동일: y 부호 반전). */
 export function drawingToSvg(p: readonly [number, number]): [number, number] {
-  return [p[0], -p[1]];
+  return [p[0], 0 - p[1]];
 }
 
 /** SVG 점 → 도면 점. */
 export function svgToDrawing(p: readonly [number, number]): [number, number] {
-  return [p[0], -p[1]];
+  return [p[0], 0 - p[1]];
 }
 
 /**

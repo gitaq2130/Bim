@@ -61,7 +61,7 @@ viewer3d 의 `PlanSection` 타입은 그대로 넘길 수 있다.
 svg.viewer2d[data-drawing-id][data-coordinate-source]
   g.v2d-root[transform=scale(1,-1)]
     g.v2d-entities
-      g[data-layer=A][stroke=색]      ← 레이어당 하나, 팔레트는 레이어 인덱스 순
+      g.layer[data-layer=A][stroke=색]      ← 레이어당 하나, 팔레트는 레이어 인덱스 순
         line|polyline|polygon|circle|path|g.insert-marker|text [data-handle][data-layer]
     g.overlay[data-level][opacity]      ← setOverlay 시
       polyline|polygon[data-global-id]

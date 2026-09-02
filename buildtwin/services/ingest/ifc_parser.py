@@ -22,6 +22,7 @@ import ifcopenshell.util.unit as ifc_unit
 import numpy as np
 
 from packages.core.models import TARGET_IFC_TYPES, BBox3D, BimObjectDraft, CoordinateSystem, IngestResult, IngestWarning
+from packages.core.models.ingest import IngestStatus
 
 MESH_BUNDLE_SUFFIX = ".mesh.json"
 OBJ_SUFFIX = ".obj"
@@ -386,6 +387,7 @@ def parse_ifc(path: str | Path, out_dir: str | Path | None = None) -> IngestResu
 
     stats["objects_total"] = len(objects)
     stats["levels_total"] = len(levels)
+    status: IngestStatus
     if not objects:
         status = "failed"
     elif no_geometry or failed_geometry:

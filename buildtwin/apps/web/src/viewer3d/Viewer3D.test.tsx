@@ -3,7 +3,7 @@
  * 핸들 API(getPlanSection 등)가 동작하는지 본다. 렌더 결과는 검증하지 않는다(Playwright 담당).
  */
 import { act, render, waitFor } from "@testing-library/react";
-import React, { createRef } from "react";
+import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Viewer3D } from "./Viewer3D";
 import type { MeshBundle, Viewer3DHandle } from "./types";

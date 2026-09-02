@@ -305,3 +305,9 @@ def material_totals(session: Session, activity_ids: list[str], global_ids: list[
     total_in = sum(r.quantity for r in rows if r.kind == "in")
     total_out = sum(r.quantity for r in rows if r.kind == "out")
     return float(total_in), float(total_out), len(rows)
+
+
+def load_objects_by_ids(session: Session, global_ids: list[str]) -> list[BimObjectRow]:
+    if not global_ids:
+        return []
+    return list(session.scalars(select(BimObjectRow).where(BimObjectRow.global_id.in_(global_ids))))

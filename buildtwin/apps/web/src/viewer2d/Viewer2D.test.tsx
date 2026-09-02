@@ -72,7 +72,7 @@ describe("Viewer2D rendering", () => {
     expect(el(svg, "A").getAttribute("data-layer")).toBe("WALL");
     expect(el(svg, "C").tagName).toBe("circle");
     expect(el(svg, "I").getAttribute("data-block")).toBe("BLK");
-    expect(svg.querySelectorAll("g[data-layer]").length).toBe(3);
+    expect(svg.querySelectorAll("g.layer[data-layer]").length).toBe(3);
     expect(svg.querySelector(".v2d-root")!.getAttribute("transform")).toBe("scale(1,-1)");
     // viewBox 는 bbox (0,0)-(75,75) 에서 유도, y 반전
     const vb = svg.getAttribute("viewBox")!.split(" ").map(Number);

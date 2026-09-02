@@ -170,7 +170,7 @@ export const Viewer2D = forwardRef<Viewer2DHandle, Viewer2DProps>(function Viewe
   const layerElements = useMemo(
     () =>
       model.layers.map((g) => (
-        <g key={g.layer} data-layer={g.layer} stroke={g.color} fill={g.color}>
+        <g key={g.layer} className="layer" data-layer={g.layer} stroke={g.color} fill={g.color}>
           {g.elements.map((d, i) => renderDescriptor(d, `${i}:${d.handle}`, true))}
         </g>
       )),
