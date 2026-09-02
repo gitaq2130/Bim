@@ -27,7 +27,7 @@ def list_activities(project_id: str, session: Session = Depends(get_session), _:
                                 wbs_code=a.wbs_code, discipline=a.discipline, level=a.level, zone=a.zone,
                                 planned_start=a.planned_start, planned_finish=a.planned_finish, duration_days=a.duration_days,
                                 resources=dict(a.resources or {}), percent_complete=a.percent_complete or 0.0,
-                                source_ref=a.source_ref, mapped_global_ids=db.mapped_global_ids(session, a.activity_id),
+                                source_ref=a.source_ref, mapped_global_ids=db.mapped_global_ids(session, project_id, a.activity_id),
                                 predecessor_ids=preds.get(a.activity_id, [])))
     return out
 

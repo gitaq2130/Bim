@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from packages.core.models import EntityObjectMapping, Evidence, ReviewRequest
-from packages.core.models.orm import EntityObjectMappingRow, ReviewRequestRow
+from packages.core.models.orm import BimObjectRow, EntityObjectMappingRow, ReviewRequestRow
 
 from .config import SyncConfig, load_sync_config
 from .persistence import _project_id_of_drawing, open_mapping_reviews, row_to_mapping, save_mappings
@@ -82,9 +82,16 @@ def confirm_mapping_row(session: Session, drawing_id: str, entity_handle: str, g
     """사용자 확정(행 단위). 기존 매핑이 있으면 confirm_mapping(재지정 가능), 없으면 수동 매핑(confidence 1.0,
     evidence source_type=user_input). 저장 후 그 엔티티의 open 검토요청을 approved 로 닫는다(사람 액션).
 
-    ADR 0005: project_id 는 매핑 계약에 없다 — 여기서 도면(drawing_id)에서 유도해 저장 행에 싣는다."""
+    ADR 0005: project_id 는 매핑 계약에 없다 — 여기서 도면(drawing_id)에서 유도해 저장 행에 싣는다.
+
+    ADR 0005 무결성: (project_id, global_id) 가 객체 키이므로, 그 프로젝트에 실제로 존재하는 객체인지 여기서 확인한다
+    (SQLite 는 이 엔진에서 FK 를 강제하지 않는다 — reviewer round-3 observation 7). 다른 프로젝트에 있는 global_id 도
+    이 도면의 project_id 기준으로는 "존재하지 않음"이다."""
     _require_user(user_id)
     project_id = _project_id_of_drawing(session, drawing_id)
+    if session.get(BimObjectRow, (project_id, global_id)) is None:
+        raise ValueError(f"object not found: global_id={global_id!r} in project={project_id!r} "
+                         f"(drawing={drawing_id!r})")
     row = session.scalars(select(EntityObjectMappingRow).where(
         EntityObjectMappingRow.drawing_id == drawing_id, EntityObjectMappingRow.entity_handle == entity_handle)).first()
     if row is not None:
