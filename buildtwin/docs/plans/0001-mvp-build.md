@@ -38,10 +38,19 @@ CLAUDE.md §0의 MVP 5기능을 실제 동작 코드로 구현한다. 벤치마�
 ## 후속 조치 메모 (architect)
 - [ ] 픽스처 생성기: `edit_object_placement`가 `assign_container`보다 먼저 호출되어 2F 요소가 월드 z=0에 놓임. 모든 에이전트 완료 후 순서를 바꿔 재생성하고 전체 테스트 재실행(GlobalId가 바뀌므로 expected.json 동시 재생성).
 
-## 리뷰 2차 APPROVE 이후 백로그 (비차단)
-- [api] mapping 검토요청 처리 시 `conflicting_sources` 구조 지식을 `sync.review_queue.resolve_mapping_review(session, row, decision, user_id, note)`로 이관
-- [qa] 좌표 하드코딩 불변식 lint 대상에 `apps/web/src/lib`, `sync/`, `pages/` 포함
-- [frontend] 역할 기반 라우트 가드(`/daily-report` contractor, `/reviews` cm) — 현재는 서버 403만 의존
-- [frontend] 객체 목록 2000개 초과 시 페이지네이션(현재 page_size=2000 상한)
-- [architect] ADR 0005: `bim_objects` 복합 키 `(project_id, global_id)`
-- 실제 IFC(고창CDC)·실측 스캔으로 metrics.json 기준 재산정
+## 리뷰 2차 APPROVE 이후 백로그
+
+### 완료 (2026-09-02)
+- [x] [api] mapping 검토요청 처리의 `conflicting_sources` 구조 지식을 `sync.review_queue.resolve_mapping_review()`로 이관 — API에는 역할 검사·검토 로그·응답 구성만 남음
+- [x] [qa] 좌표 하드코딩 불변식 검사 범위를 `apps/web/src` 전체로 확대 (뷰어 2개 디렉터리 → 전 트리). 오탐·실제 위반 0건
+- [x] [frontend] 역할 기반 라우트 가드 `RequireRole` — `/daily-report`는 contractor, `/reviews`는 cm (admin 제외, ADR 0001 §4-1). 서버 403이 실제 강제, 이건 UX 안내
+- [x] [frontend] 객체 목록 전체 페이지네이션 `useAllObjects` — `total`까지 페이지 순회, 25페이지(5만 객체) 방어 상한 + 초과 시 경고 배너
+- [x] [architect] ADR 0005 작성 (Accepted)
+
+### 진행 예정
+- [ ] **ADR 0005 구현 사이클** — `bim_objects` PK를 `(project_id, global_id)`로. 담당·지점은 ADR 0005 "구현 순서" 참고. 표면: 행 생성 5곳, `global_id` 조회 23곳(progress 13, api 9, ingest 1)
+- [ ] 실제 IFC(고창CDC)·실측 스캔으로 `tests/metrics.json` 기준 재산정 — **사용자 파일 필요**
+
+### 관측된 개선 후보 (미착수)
+- Job 진행률이 SQLite에서 작업 종료 시점에만 보임(락 회피). PostgreSQL에서는 중간 진행률 노출 가능
+- `queries.latest_model`과 `ingest.persistence.latest_model` 중복(읽기 전용 헬퍼)
