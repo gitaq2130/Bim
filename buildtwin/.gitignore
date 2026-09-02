@@ -1,0 +1,19 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+node_modules/
+dist/
+apps/web/dist/
+# 대용량 픽스처는 make fixtures로 받는다
+tests/fixtures/*.ifc
+tests/fixtures/*.dxf
+tests/fixtures/*.e57
+tests/fixtures/*.las
+tests/fixtures/*.ply
+!tests/fixtures/README.md
