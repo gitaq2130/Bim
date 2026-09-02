@@ -53,7 +53,7 @@ def sample_faces(bmin: np.ndarray, bmax: np.ndarray, spacing: float,
         cv = bmin[v] + (np.arange(nv) + 0.5) * (size[v] / nv)
         gu, gv = np.meshgrid(cu, cv, indexing="ij")
         cell_area = (size[u] / nu) * (size[v] / nv)
-        for side, val, sign in ((0, bmin[ax], -1.0), (1, bmax[ax], 1.0)):
+        for val, sign in ((bmin[ax], -1.0), (bmax[ax], 1.0)):
             normal = np.zeros(3)
             normal[ax] = sign
             if facing_from is not None:

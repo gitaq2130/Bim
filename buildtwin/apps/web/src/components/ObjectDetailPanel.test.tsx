@@ -31,7 +31,7 @@ describe("ObjectDetailPanel", () => {
     const { calls } = setup("cm");
     const user = userEvent.setup();
 
-    expect(await screen.findByText("C-12")).toBeInTheDocument();
+    expect(await screen.findByText("C-12", { selector: "strong" })).toBeInTheDocument();
     const tabs = screen.getAllByRole("tab").map((t) => t.textContent);
     expect(tabs).toEqual(["기본정보", "상태", "이력", "다음행동"]);
 
@@ -68,7 +68,7 @@ describe("ObjectDetailPanel", () => {
   it("contractor 역할: 확정 버튼이 DOM 에 없고, 자기 역할의 행동만 보인다", async () => {
     setup("contractor");
     const user = userEvent.setup();
-    await screen.findByText("C-12");
+    await screen.findByText("C-12", { selector: "strong" });
     await user.click(screen.getByRole("tab", { name: "다음행동" }));
     expect(screen.queryByRole("button", { name: "확정" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "반려(재작업)" })).not.toBeInTheDocument();
@@ -78,7 +78,7 @@ describe("ObjectDetailPanel", () => {
   it("cm 역할: 확정 버튼 → 확인 다이얼로그 → POST /objects/{gid}/transitions (to_state=CONFIRMED, evidence 포함)", async () => {
     const { calls } = setup("cm");
     const user = userEvent.setup();
-    await screen.findByText("C-12");
+    await screen.findByText("C-12", { selector: "strong" });
     await user.click(screen.getByRole("tab", { name: "다음행동" }));
     await user.click(screen.getByRole("button", { name: "확정" }));
 
@@ -99,7 +99,7 @@ describe("ObjectDetailPanel", () => {
   it("서버 403 을 화면에 표시한다", async () => {
     setup("cm", 403);
     const user = userEvent.setup();
-    await screen.findByText("C-12");
+    await screen.findByText("C-12", { selector: "strong" });
     await user.click(screen.getByRole("tab", { name: "다음행동" }));
     await user.click(screen.getByRole("button", { name: "확정" }));
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "확정" }));

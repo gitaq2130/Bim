@@ -178,8 +178,10 @@ def compute_metrics(points_model: np.ndarray, spec: ObjectSpec, cfg: ScanConfig,
         m.occupied_volume = float(len(vox) * v.bbox_margin ** 3)
     m.surface_coverage = _coverage(bmin, bmax, tree, cfg, others)
 
-    # 위치불일치 탐색: 점은 있는데 표면과 안 맞을 때만(비용 절감 + 정합된 객체는 탐색 불필요)
-    if m.density >= v.min_density_not_built and m.surface_match_ratio < v.min_surface_match_done:
+    # 위치불일치 탐색: 점은 있는데 표면 일치율 또는 표면 확인율이 완료 기준에 못 미칠 때(한 축만 어긋나면 수직 면은 여전히
+    # 일치하므로 일치율만으로는 잡히지 않는다 → 확인율도 본다). 뚜렷이 정렬된 객체는 탐색하지 않는다(비용).
+    if m.density >= v.min_density_not_built and (m.surface_match_ratio < v.min_surface_match_done
+                                                or m.surface_coverage < v.min_surface_match_done):
         window = points_inside(points_model, bmin - v.search_margin, bmax + v.search_margin)
         cand = points_model[window]
         if len(cand):
@@ -269,7 +271,7 @@ def judge_objects(points_model: np.ndarray, objects: Iterable[Any], cfg: ScanCon
 
     # 1차: 밀도·일치율만으로 '물리적으로 존재하는(솔리드)' 객체 → 가림 계산의 bbox 차폐물
     solid: list[BBox3D] = []
-    for s, (bmin, bmax) in zip(specs, arrays):
+    for s, (bmin, bmax) in zip(specs, arrays, strict=True):
         n_in, n_match = _match_stats(pts, bmin, bmax, cfg)
         area = bbox_surface_area(s.bbox)
         if area > 0 and n_in / area >= v.density_done and n_in and n_match / n_in >= v.min_surface_match_done:

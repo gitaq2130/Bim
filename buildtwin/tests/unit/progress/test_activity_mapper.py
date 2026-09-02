@@ -32,7 +32,8 @@ def test_level_mismatch_is_excluded_and_keyword_only_lowers_confidence(sample_ob
     by_act: dict[str, list] = {}
     for m in mappings:
         by_act.setdefault(m.activity_id, []).append(m)
-    assert [m.global_id for m in by_act["X1"]] == ["274vbg_MX9Xv31CC3ecudn"]
+    slab_2f = [o.global_id for o in sample_objects if o.ifc_type == "IfcSlab" and o.level == "2F"]
+    assert [m.global_id for m in by_act["X1"]] == slab_2f
     assert by_act["X1"][0].evidence.method == "keyword_rule"
     assert by_act["X1"][0].confidence < 0.9
     assert "X2" not in by_act and "X3" not in by_act

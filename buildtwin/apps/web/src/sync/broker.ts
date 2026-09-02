@@ -55,33 +55,35 @@ export function createBroker(store: SelectionStore): SelectionBroker {
     if (p && typeof (p as Promise<unknown>).catch === "function") (p as Promise<unknown>).catch(() => {});
   };
 
-  const pushTo2d = (handles: string[]) => {
+  /** single = 선택이 객체 하나를 뜻함(그 객체가 여러 handle 에 매핑돼 있어도). 그때만 panTo/flyTo. */
+  const pushTo2d = (handles: string[], single: boolean) => {
     if (!viewer2d) return;
     if (handles.length === 0) {
       viewer2d.clearHighlight();
       return;
     }
     viewer2d.highlight(handles, { exclusive: true });
-    if (handles.length === 1) viewer2d.panTo(handles[0]);
+    if (single) viewer2d.panTo(handles[0]);
   };
 
-  const pushTo3d = (globalIds: string[]) => {
+  const pushTo3d = (globalIds: string[], single: boolean) => {
     if (!viewer3d) return;
     if (globalIds.length === 0) {
       viewer3d.clearHighlight();
       return;
     }
     viewer3d.highlight(globalIds, { exclusive: true });
-    if (globalIds.length === 1) swallow(viewer3d.flyTo(globalIds[0]));
+    if (single) swallow(viewer3d.flyTo(globalIds[0]));
   };
 
   /** 구독자: 원천(source)이 아닌 쪽에만 전파 */
   const propagate = (source: SelectionSource, globalIds: string[], entityHandles: string[]) => {
     if (pushing) return;
     pushing = true;
+    const single = globalIds.length === 1 || (globalIds.length === 0 && entityHandles.length === 1);
     try {
-      if (source !== "3d") pushTo3d(globalIds);
-      if (source !== "2d") pushTo2d(entityHandles);
+      if (source !== "3d") pushTo3d(globalIds, single);
+      if (source !== "2d") pushTo2d(entityHandles, single);
     } finally {
       pushing = false;
     }

@@ -21,7 +21,8 @@ def test_plan_section_1f_has_six_column_outlines(objects):
     assert len(cols) == 6
     assert all(len(p["points"]) == 5 and p["points"][0] == p["points"][-1] for p in cols)
     assert all(p["level"] == "1F" for p in sec["polylines"])
-    c11 = next(p for p in cols if p["global_id"] == "3jvdrwJMjFB8er0raxOnL8")
+    c11_id = next(o.global_id for o in objects if o.name == "C1-11")
+    c11 = next(p for p in cols if p["global_id"] == c11_id)
     assert np.allclose(c11["points"][:4], [[-0.3, -0.3], [0.3, -0.3], [0.3, 0.3], [-0.3, 0.3]], atol=1e-9)
     # 보(z 3.3~3.8)는 1.2m 단면에 없고, 3.5m 단면에는 있다
     assert not [p for p in sec["polylines"] if p["ifc_type"] == "IfcBeam"]

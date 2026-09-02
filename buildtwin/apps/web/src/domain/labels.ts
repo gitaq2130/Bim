@@ -4,6 +4,8 @@
  */
 import type { Actor, ClaimedState, ReviewKind, ReviewStatus, ScanState, UserRole } from "../api/types";
 
+import { STATE_LABELS_KO } from "../viewer3d/colors";
+
 export { STATE_COLORS, STATE_LABELS_KO, colorForState } from "../viewer3d/colors";
 
 export const SCAN_STATE_LABELS: Record<ScanState, string> = {
@@ -57,10 +59,8 @@ export function labelForAnyState(s: string | null | undefined): string {
   if (!s) return "-";
   const tables: Record<string, string>[] = [SCAN_STATE_LABELS, CLAIMED_STATE_LABELS];
   // ObjectState 우선
-  const os = (STATE_LABELS_KO_SAFE as Record<string, string>)[s];
+  const os = (STATE_LABELS_KO as Record<string, string>)[s];
   if (os) return os;
   for (const t of tables) if (t[s]) return t[s];
   return s;
 }
-
-import { STATE_LABELS_KO as STATE_LABELS_KO_SAFE } from "../viewer3d/colors";

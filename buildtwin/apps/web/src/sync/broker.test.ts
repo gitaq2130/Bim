@@ -69,6 +69,17 @@ describe("selection broker", () => {
     expect(v2.panTo).not.toHaveBeenCalled();
   });
 
+  it("2D 영역 선택이 객체 하나로 귀결되면 flyTo 한다", () => {
+    const store = makeStore();
+    const broker = createBroker(store);
+    const v3 = fake3d();
+    broker.attach({ viewer3d: v3 });
+    broker.setMappings(mappings);
+    broker.selectArea2d(["H1", "H1b"]);
+    expect(v3.highlight).toHaveBeenCalledWith(["G1"], { exclusive: true });
+    expect(v3.flyTo).toHaveBeenCalledWith("G1");
+  });
+
   it("2D 영역 선택 → 3D highlight(globalIds 합집합, 중복 제거), 다중이면 flyTo 없음", () => {
     const store = makeStore();
     const broker = createBroker(store);

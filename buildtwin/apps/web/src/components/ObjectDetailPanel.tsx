@@ -36,12 +36,12 @@ export function ObjectDetailPanel({
 
   if (!globalId) return <aside className="detail-panel muted">3D 또는 2D 뷰에서 객체를 선택하세요.</aside>;
   if (q.isPending) return <aside className="detail-panel">불러오는 중…</aside>;
-  if (q.isError) (
-    <aside className="detail-panel">
-      <ErrorBox error={q.error} />
-    </aside>
-  );
-  if (!q.data) return <aside className="detail-panel"><ErrorBox error={q.error} /></aside>;
+  if (q.isError || !q.data)
+    return (
+      <aside className="detail-panel">
+        <ErrorBox error={q.error ?? new Error("객체 정보를 불러올 수 없습니다")} />
+      </aside>
+    );
   const d = q.data;
 
   return (
