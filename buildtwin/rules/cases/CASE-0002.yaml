@@ -1,0 +1,20 @@
+- case_id: CASE-0002
+  project_type: logistics_center
+  discipline: mep
+  situation: "2층 천장 내 공조 덕트(1200x600)가 철골 보 하부와 간섭, 시공 후 발견"
+  early_signals:
+    - "설비 시공상세도 승인 전 착수"
+    - "BIM 간섭검토 결과 clash 미해소 상태로 작업 시작"
+  direct_impact: "덕트 30m 철거·재제작, 천장고 50mm 하향"
+  cascading_impacts:
+    - "천장 마감 착수 지연"
+    - "스프링클러 배관 루트 변경"
+  recommended_actions:
+    - "착수 전 clash 해소 확인을 Readiness 항목으로 강제"
+    - "시공상세도 승인 후 착수"
+    - "천장 마감 전 설비 검측 실시"
+  outcome: "재시공 비용 시공사 부담, 마감 착수 12일 지연"
+  source_ref: "설계변경 회의록 2026-02"
+  reliability: 0.75
+  created_by: "knowledge"
+  created_at: "2026-08-20T00:00:00Z"
