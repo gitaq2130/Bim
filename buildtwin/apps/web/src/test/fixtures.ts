@@ -1,0 +1,86 @@
+import type { Evidence, ObjectDetail } from "../api/types";
+
+const ev = (over: Partial<Evidence> = {}): Evidence => ({
+  source_type: "scan",
+  source_id: "scan-001",
+  file_uri: "s3://buildtwin/scans/scan-001.e57",
+  method: "density_ratio",
+  ...over,
+});
+
+export const objectDetailFixture: ObjectDetail = {
+  basic: {
+    global_id: "2O2Fr$t4X7Zf8NOew3FLOH",
+    ifc_type: "IfcColumn",
+    name: "C-12",
+    level: "1F",
+    zone: "A",
+    bbox: { min: [10, 20, 0], max: [10.6, 20.6, 3.5] },
+    psets: { Pset_ColumnCommon: { LoadBearing: true, Reference: "C1" } },
+    material: "Concrete C30",
+    quantity: { volume: 1.26 },
+    state: "INSPECTION_REQUESTED",
+  },
+  current_state: {
+    state: "INSPECTION_REQUESTED",
+    since: "2026-09-01T08:30:00Z",
+    actor: "contractor",
+    actor_id: "user-contractor",
+    confidence: 1,
+    evidence: ev({ source_type: "daily_report", source_id: "dr-77", method: null }),
+    has_open_review: false,
+  },
+  history: [
+    {
+      transition_id: "t3",
+      global_id: "2O2Fr$t4X7Zf8NOew3FLOH",
+      from_state: "ESTIMATED_DONE",
+      to_state: "INSPECTION_REQUESTED",
+      actor: "contractor",
+      actor_id: "user-contractor",
+      confidence: null,
+      evidence: ev({ source_type: "daily_report", source_id: "dr-77" }),
+      occurred_at: "2026-09-01T08:30:00Z",
+    },
+    {
+      transition_id: "t2",
+      global_id: "2O2Fr$t4X7Zf8NOew3FLOH",
+      from_state: "REPORTED",
+      to_state: "ESTIMATED_DONE",
+      actor: "system",
+      actor_id: "task-scan-001",
+      confidence: 0.86,
+      evidence: ev(),
+      occurred_at: "2026-08-30T10:00:00Z",
+    },
+    {
+      transition_id: "t1",
+      global_id: "2O2Fr$t4X7Zf8NOew3FLOH",
+      from_state: "PLANNED",
+      to_state: "REPORTED",
+      actor: "contractor",
+      actor_id: "user-contractor",
+      confidence: null,
+      evidence: ev({ source_type: "daily_report", source_id: "dr-70" }),
+      occurred_at: "2026-08-25T09:00:00Z",
+    },
+  ],
+  next_actions: [
+    { kind: "confirm", label: "확정", allowed_roles: ["cm"], to_state: "CONFIRMED" },
+    { kind: "reject", label: "반려(재작업)", allowed_roles: ["cm"], to_state: "IN_PROGRESS" },
+    { kind: "inspect", label: "검측 재요청", allowed_roles: ["contractor"], to_state: "INSPECTION_REQUESTED" },
+  ],
+  linked: {
+    entity_handles: ["1A3F", "1A40"],
+    activity_ids: ["ACT-100"],
+    material_ids: [],
+    drawing_id: "dwg-1",
+    latest_scan_verdict: {
+      scan_id: "scan-001",
+      global_id: "2O2Fr$t4X7Zf8NOew3FLOH",
+      state: "ESTIMATED_DONE",
+      confidence: 0.86,
+      evidence: ev(),
+    },
+  },
+};

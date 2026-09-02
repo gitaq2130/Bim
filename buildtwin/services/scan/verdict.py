@@ -7,7 +7,7 @@
 - point_count / density        : bbox(+margin) 안 점 수, 표면적(m²) 당 밀도
 - surface_match_ratio          : 안쪽 점 중 bbox 표면에서 surface_distance 안에 있는 비율(형상 일치율)
 - surface_coverage             : bbox 표면 격자 셀 중 mismatch_offset 안에 점이 있는 비율(표면 확인율).
-                                 다른 객체의 여유 범위와 겹치는 셀(접합부)은 어느 객체의 증거로도 세지 않는다.
+                                 다른 객체 bbox 에서 interface_margin 안에 있는 셀(접합부)은 어느 객체의 증거로도 세지 않는다.
 - z_coverage                   : bbox 높이 구간(폭 bbox_margin) 중 점이 있는 비율(시공 높이 비율)
 - offset_vector                : XY 이동 탐색(±2·mismatch_offset)으로 찾은, 점군을 가장 잘 설명하는 bbox 이동량
 - occlusion_ratio              : occlusion.compute_occlusion 참조
@@ -112,7 +112,7 @@ def _coverage(bmin: np.ndarray, bmax: np.ndarray, tree: cKDTree | None, cfg: Sca
     samples, _, areas = sample_faces(bmin, bmax, v.mismatch_offset)
     if len(samples) == 0 or tree is None:
         return 0.0
-    keep = ~_interface_mask(samples, others, v.bbox_margin)
+    keep = ~_interface_mask(samples, others, v.interface_margin)
     if not keep.any():
         return 0.0
     d, _ = tree.query(samples[keep], k=1, distance_upper_bound=v.mismatch_offset)

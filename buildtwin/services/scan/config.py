@@ -45,8 +45,17 @@ class VerdictConfig(BaseModel):
     # ---- 파생값(독립 임계값이 아니라 위 값들의 조합) -------------------------------------------
     @property
     def coverage_not_built(self) -> float:
-        """표면 확인율(coverage) 기준 NOT_BUILT 상한. 밀도 임계 비율(min_density_not_built/density_done)을 표면 확인율에 그대로 적용."""
-        return min(1.0, self.min_density_not_built / self.density_done)
+        """표면 확인율(coverage) 기준 NOT_BUILT 상한. 밀도 축의 '미시공/시공중 경계'(min_density_not_built)를 시공중 기준
+        밀도(density_in_progress)에 대한 비율로 환산해 표면 확인율 축에 적용한다. 인접 객체·바닥 점이 만드는 체계적 오염(수 %)보다
+        높고, 실제 부분 시공(수십 %)보다 낮은 값이 된다."""
+        ref = self.density_in_progress if self.density_in_progress > 0 else self.density_done
+        return min(1.0, self.min_density_not_built / ref)
+
+    @property
+    def interface_margin(self) -> float:
+        """접합부 판정 여유(m). 다른 객체 bbox 에서 이 거리 안의 표면 셀은 그 객체의 (노이즈 포함) 표면 점으로 확인될 수 있으므로
+        어느 객체의 증거로도 세지 않는다 = 확인 반경(mismatch_offset) + 표면 노이즈 허용(surface_distance)."""
+        return self.mismatch_offset + self.surface_distance
 
     @property
     def mismatch_search_range(self) -> float:
