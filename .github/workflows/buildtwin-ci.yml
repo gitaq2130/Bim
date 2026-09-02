@@ -1,0 +1,182 @@
+# BuildTwin CI — 담당: qa (buildtwin/.claude/agents/qa.md)
+# lint · unit 은 병렬로 돌아 서로의 실패를 가리지 않는다. integration · e2e 는 unit 이 초록일 때만 돈다.
+# 회귀 기준(tests/metrics.json)은 unit 잡의 tests/regression 에서 강제되고, 측정값은 아티팩트로 남긴다.
+name: buildtwin-ci
+
+on:
+  push:
+    paths:
+      - "buildtwin/**"
+      - ".github/workflows/buildtwin-ci.yml"
+  pull_request:
+    paths:
+      - "buildtwin/**"
+      - ".github/workflows/buildtwin-ci.yml"
+
+concurrency:
+  group: buildtwin-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: buildtwin
+
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "22"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  lint:
+    name: lint (ruff · mypy · eslint · tsc)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: buildtwin/pyproject.toml
+      - name: System libs (open3d 런타임 — mypy 가 실제 모듈을 import 하지는 않지만 설치 실패를 막는다)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libgl1 libgomp1
+      - name: Install python deps (pyproject dependency list + dev)
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+      - name: ruff
+        run: ruff check services packages tests scripts
+      - name: mypy (pyproject [tool.mypy])
+        run: mypy services packages
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: buildtwin/apps/web/package-lock.json
+      - name: npm ci
+        working-directory: buildtwin/apps/web
+        run: npm ci
+      - name: eslint
+        working-directory: buildtwin/apps/web
+        run: npm run lint
+      - name: tsc --noEmit
+        working-directory: buildtwin/apps/web
+        run: npx tsc --noEmit
+
+  unit:
+    name: unit (pytest unit · invariants · regression / vitest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: buildtwin/pyproject.toml
+      - name: System libs for open3d
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libgl1 libgomp1
+      - name: Install python deps (pyproject dependency list + dev)
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+      - name: make fixtures (합성 IFC/DXF/PLY/공정표, seed 고정)
+        run: python scripts/fetch_fixtures.py
+      - name: pytest unit + invariants + regression
+        run: pytest tests/unit tests/invariants tests/regression -q
+      - name: Upload measured metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: metrics-measured
+          path: buildtwin/tests/metrics.measured.json
+          if-no-files-found: warn
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: buildtwin/apps/web/package-lock.json
+      - name: npm ci
+        working-directory: buildtwin/apps/web
+        run: npm ci
+      - name: vitest
+        working-directory: buildtwin/apps/web
+        run: npx vitest run
+
+  integration:
+    name: integration (API + Celery eager + DB)
+    runs-on: ubuntu-latest
+    needs: [unit]
+    timeout-minutes: 30
+    continue-on-error: false
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: buildtwin
+          POSTGRES_PASSWORD: buildtwin
+          POSTGRES_DB: buildtwin_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U buildtwin -d buildtwin_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      # 통합 테스트 기본은 sqlite + Celery eager(packages/core/settings.py). 서비스 컨테이너는 옵트인 — 테스트가 이 값을 읽어 쓸 수 있다.
+      BUILDTWIN_CI_POSTGRES_URL: postgresql://buildtwin:buildtwin@localhost:5432/buildtwin_test
+      BUILDTWIN_CI_REDIS_URL: redis://localhost:6379/0
+      CELERY_ALWAYS_EAGER: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: buildtwin/pyproject.toml
+      - name: System libs for open3d
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libgl1 libgomp1
+      - name: Install python deps
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+      - name: make fixtures
+        run: python scripts/fetch_fixtures.py
+      - name: pytest integration
+        run: pytest tests/integration -q
+
+  e2e:
+    name: e2e (핵심 흐름 · Playwright chromium)
+    runs-on: ubuntu-latest
+    needs: [unit]
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: buildtwin/pyproject.toml
+      - name: System libs for open3d
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libgl1 libgomp1
+      - name: Install python deps + playwright
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]" playwright pytest-playwright
+          python -m playwright install --with-deps chromium
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: buildtwin/apps/web/package-lock.json
+      - name: npm ci
+        working-directory: buildtwin/apps/web
+        run: npm ci
+      - name: make fixtures
+        run: python scripts/fetch_fixtures.py
+      - name: pytest e2e
+        env:
+          CELERY_ALWAYS_EAGER: "true"
+        run: pytest tests/e2e -q

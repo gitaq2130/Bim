@@ -16,7 +16,7 @@ from services.sync.transform import (
     kabsch_2d,
 )
 
-from .helpers import load_dxf_entities, load_ifc_objects, load_json, true_alignment
+from tests.helpers.sync_fixtures import load_dxf_entities, load_ifc_objects, load_json, true_alignment
 
 
 @pytest.fixture(scope="module")

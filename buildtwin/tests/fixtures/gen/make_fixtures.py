@@ -241,11 +241,14 @@ def build_ply(ids: dict) -> None:
     for i, c in enumerate(cols):
         o, s = c["origin"], c["size"]
         if i <= 2:
-            pts.append(_sample_box_surface(o, s, 800)); verdict_expected[c["global_id"]] = "ESTIMATED_DONE"
+            pts.append(_sample_box_surface(o, s, 800))
+            verdict_expected[c["global_id"]] = "ESTIMATED_DONE"
         elif i == 3:
-            pts.append(_sample_box_surface(o, (s[0], s[1], s[2] * 0.45), 800)); verdict_expected[c["global_id"]] = "IN_PROGRESS"
+            pts.append(_sample_box_surface(o, (s[0], s[1], s[2] * 0.45), 800))
+            verdict_expected[c["global_id"]] = "IN_PROGRESS"
         elif i == 4:
-            pts.append(_sample_box_surface((o[0] + 0.08, o[1] + 0.08, o[2]), s, 800)); verdict_expected[c["global_id"]] = "MISMATCH"
+            pts.append(_sample_box_surface((o[0] + 0.08, o[1] + 0.08, o[2]), s, 800))
+            verdict_expected[c["global_id"]] = "MISMATCH"
         else:
             verdict_expected[c["global_id"]] = "UNVERIFIABLE"   # 가림: 스캐너 앞에 차폐 박스
     # 차폐 박스: 마지막 기둥과 스캐너 사이
@@ -257,7 +260,8 @@ def build_ply(ids: dict) -> None:
     # 벽 1F 남측 완료
     w = [w for w in ids["walls"] if w["level"] == "1F" and w["name"].endswith("-S")][0]
     (wx0, wy0, wz0), (wx1, wy1, wz1) = w["bbox"]
-    pts.append(_sample_box_surface((wx0, wy0, wz0), (wx1 - wx0, wy1 - wy0, wz1 - wz0), 500)); verdict_expected[w["global_id"]] = "ESTIMATED_DONE"
+    pts.append(_sample_box_surface((wx0, wy0, wz0), (wx1 - wx0, wy1 - wy0, wz1 - wz0), 500))
+    verdict_expected[w["global_id"]] = "ESTIMATED_DONE"
     for w in ids["walls"]:
         if w["level"] == "1F" and w["global_id"] not in verdict_expected:
             verdict_expected[w["global_id"]] = "NOT_BUILT"

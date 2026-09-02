@@ -6,7 +6,7 @@ import pytest
 from packages.core.models import BBox3D, BimObjectDraft
 from services.sync.plan_section import level_elevation, plan_section_from_objects
 
-from .helpers import load_ifc_objects
+from tests.helpers.sync_fixtures import load_ifc_objects
 
 
 @pytest.fixture(scope="module")

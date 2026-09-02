@@ -10,7 +10,7 @@ from services.sync.matcher import build_mappings, entity_geometry, geo_iou, typi
 from services.sync.rules import load_layer_rules
 from services.sync.transform import DrawingAlignment, auto_align_by_grid, grid_from_ifc_objects
 
-from .helpers import accuracy, expected_mappings, load_dxf_entities, load_ifc_objects, true_alignment
+from tests.helpers.sync_fixtures import accuracy, expected_mappings, load_dxf_entities, load_ifc_objects, true_alignment
 
 DRAWING_ID = "dwg-sample-1f"
 

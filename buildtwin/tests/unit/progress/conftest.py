@@ -1,7 +1,6 @@
-"""progress-engine 단위 테스트 공용 픽스처: 인메모리 SQLite + 샘플 객체/공정표."""
+"""progress-engine 단위 테스트 공용 픽스처: 인메모리 SQLite + 샘플 객체/공정표(로더는 tests/helpers/progress_fixtures)."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -11,11 +10,12 @@ from packages.core.models.identity import BimObjectDraft
 from services.progress import persistence as db
 from services.progress.activity_mapper import map_activities_to_objects
 from services.progress.importers import import_schedule
+from tests.helpers.progress_fixtures import CATEGORY_TO_IFC, load_sample_objects, load_schedule_expected
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
 PROJECT_ID = "P-TEST"
 MODEL_ID = "M-TEST"
-CATEGORY_TO_IFC = {"columns": "IfcColumn", "beams": "IfcBeam", "slabs": "IfcSlab", "walls": "IfcWall", "ducts": "IfcDuctSegment"}
+__all__ = ["CATEGORY_TO_IFC", "FIXTURES", "PROJECT_ID", "MODEL_ID"]
 
 
 @pytest.fixture
@@ -32,18 +32,12 @@ def session():
 
 @pytest.fixture(scope="session")
 def schedule_expected() -> dict:
-    return json.loads((FIXTURES / "schedule.expected.json").read_text(encoding="utf-8"))
+    return load_schedule_expected()
 
 
 @pytest.fixture(scope="session")
 def sample_objects() -> list[BimObjectDraft]:
-    data = json.loads((FIXTURES / "sample.ifc.expected.json").read_text(encoding="utf-8"))
-    drafts: list[BimObjectDraft] = []
-    for category, items in data["objects"].items():
-        for o in items:
-            drafts.append(BimObjectDraft(global_id=o["global_id"], ifc_type=CATEGORY_TO_IFC[category], name=o.get("name"),
-                                         level=o.get("level"), quantity={"volume": 1.0}))
-    return drafts
+    return load_sample_objects()
 
 
 @pytest.fixture

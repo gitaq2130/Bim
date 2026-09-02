@@ -1,0 +1,7 @@
+{
+  "mapping_column_accuracy": 0.90,
+  "mapping_overall_accuracy": 0.80,
+  "scan_verdict_accuracy": 0.85,
+  "registration_rmse_max": 0.03,
+  "activity_mapping_accuracy": 0.90
+}

@@ -1,4 +1,4 @@
-"""sync 테스트 입력 빌더. 라이브러리 코드는 ingest 에 의존하지 않으므로 여기서 ezdxf/ifcopenshell 로 직접 만든다."""
+"""sync 테스트 입력 빌더(tests/helpers — unit·regression 공용). 라이브러리 코드는 ingest 에 의존하지 않으므로 여기서 ezdxf/ifcopenshell 로 직접 만든다."""
 from __future__ import annotations
 
 import json
@@ -14,7 +14,7 @@ from ezdxf import units as dxf_units
 from packages.core.models import TARGET_IFC_TYPES, BBox2D, BBox3D, BimObjectDraft, DrawingEntityDraft
 from services.sync.transform import DrawingAlignment
 
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 SAMPLE_DXF = FIXTURES / "sample.dxf"
 SAMPLE_IFC = FIXTURES / "sample.ifc"
 
