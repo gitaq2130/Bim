@@ -16,13 +16,13 @@ def test_cases_load_from_repo():
     store = CaseStore(ROOT / "rules" / "cases")
     cases = store.all()
     assert len(cases) >= 3
-    assert {c.discipline for c in cases} >= {"structure", "mep", "architecture"}
+    assert {c.discipline for c in cases} >= {"structure", "mechanical", "architecture"}
     assert store.get("CASE-0002").situation.startswith("2층 천장")
 
 
 def test_find():
     store = CaseStore(ROOT / "rules" / "cases")
-    assert [c.case_id for c in store.find(discipline="mep")] == ["CASE-0002"]
+    assert [c.case_id for c in store.find(discipline="mechanical")] == ["CASE-0002"]
     assert [c.case_id for c in store.find(keywords=["패널", "지연"])] == ["CASE-0003"]
     assert [c.case_id for c in store.find(project_type="logistics_center", keywords="기둥")] == ["CASE-0001"]
     assert store.find(discipline="civil") == []
@@ -52,6 +52,15 @@ def test_add_persist_and_reload(tmp_path: Path):
     assert CaseStore(tmp_path).get("CASE-T1").project_type == "plant"
     with pytest.raises(CaseLoadError):
         store.add(case)
+    with pytest.raises(CaseLoadError, match="discipline"):
+        store.add(CaseRecord(case_id="CASE-T2", project_type="plant", discipline="mep", situation="s", direct_impact="d"))
+
+
+def test_all_case_disciplines_allowed():
+    from services.knowledge import ALLOWED_DISCIPLINES
+
+    for c in CaseStore(ROOT / "rules" / "cases").all():
+        assert c.discipline in ALLOWED_DISCIPLINES, c.case_id
 
 
 def test_case_rules_reference_existing_cases():

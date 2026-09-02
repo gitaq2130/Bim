@@ -11,7 +11,14 @@ from packages.core.models.review import ReviewRequest
 from packages.core.models.scan import ScanState, ScanVerdict
 from packages.core.models.state import ALLOWED_TRANSITIONS, Actor, InvalidTransitionError, ObjectState
 from services.progress import persistence as db
-from services.progress.state_machine import ObjectNotFoundError, ObjectStateMachine, TransitionBlockedByReviewError
+from services.progress.state_machine import (
+    NEXT_ACTION_KINDS,
+    ObjectNotFoundError,
+    ObjectStateMachine,
+    RoleNotAllowedError,
+    TransitionBlockedByReviewError,
+    actor_for_role,
+)
 
 GID = "OBJ0000000000000000001"
 EV = Evidence(source_type="cm_action", source_id="user-cm-1", note="test")
@@ -111,12 +118,68 @@ def test_history_and_next_actions(session, obj):
     hist = sm.history(session, GID)
     assert [(h.from_state, h.to_state) for h in hist] == [(ObjectState.PLANNED, ObjectState.REPORTED),
                                                           (ObjectState.REPORTED, ObjectState.INSPECTION_REQUESTED)]
-    cm_kinds = {a["kind"] for a in sm.next_actions(session, GID, "cm")}
-    assert {"confirm", "reject_inspection", "flag_mismatch"} <= cm_kinds
+    cm_actions = sm.next_actions(session, GID, "cm")
+    cm_kinds = {a["kind"] for a in cm_actions}
+    assert {"confirm", "reject_inspection", "flag_mismatch", "resolve_review"} <= cm_kinds
+    assert cm_kinds <= NEXT_ACTION_KINDS
+    for a in cm_actions:
+        assert a["allowed_roles"] == ["cm"]          # admin 은 확정·검측·검토요청 처리 불가
+    resolve = [a for a in cm_actions if a["kind"] == "resolve_review"]
+    assert resolve and resolve[0]["review_kind"] == "inspection"   # INSPECTION_REQUESTED 진입 시 자동 생성된 검측 요청
     contractor_kinds = {a["kind"] for a in sm.next_actions(session, GID, "contractor")}
-    assert "confirm" not in contractor_kinds
+    assert "confirm" not in contractor_kinds and contractor_kinds <= NEXT_ACTION_KINDS
     assert sm.next_actions(session, GID, "client") == []
-    db.save_review_request(session, ReviewRequest(project_id="P", kind="inspection", global_id=GID, title="i", confidence=1.0,
-                                                  evidence=Evidence(source_type="cm_action", source_id="cm")))
-    resolve = [a for a in sm.next_actions(session, GID, "admin") if a["kind"] == "resolve_review"]
-    assert resolve and resolve[0]["review_kind"] == "inspection" and "admin" in resolve[0]["allowed_roles"]
+    assert sm.next_actions(session, GID, "admin") == []
+
+
+@pytest.mark.parametrize("role", ["client", "admin", "unknown"])
+def test_actor_for_role_rejects_non_acting_roles(role):
+    with pytest.raises(RoleNotAllowedError) as exc:
+        actor_for_role(role)
+    assert isinstance(exc.value, PermissionError) and exc.value.role == role
+
+
+def test_actor_for_role_maps_contractor_and_cm():
+    assert actor_for_role("contractor") == Actor.CONTRACTOR
+    assert actor_for_role("CM") == Actor.CM
+
+
+def test_inspection_review_lifecycle(session, obj):
+    sm = ObjectStateMachine()
+    sm.transition(session, GID, ObjectState.REPORTED, Actor.CONTRACTOR, EV, actor_id="c1")
+    first = sm.transition_with_effects(session, GID, ObjectState.INSPECTION_REQUESTED, Actor.CONTRACTOR, EV, actor_id="c1")
+    assert len(first.created_review_ids) == 1 and first.closed_review_ids == []
+    review = session.get(ReviewRequestRow, first.created_review_ids[0])
+    assert (review.kind, review.status, review.assignee_role, review.global_id, review.project_id) == ("inspection", "open", "cm", GID, "P")
+    assert review.confidence == 1.0 and review.evidence["source_id"] == "user-cm-1"
+    # 이미 미결 검측 요청이 있으면 중복 생성하지 않는다
+    obj.state = ObjectState.ESTIMATED_DONE.value
+    session.flush()
+    again = sm.transition_with_effects(session, GID, ObjectState.INSPECTION_REQUESTED, Actor.SYSTEM, SCAN_EV, confidence=0.8)
+    assert again.created_review_ids == []
+    # cm 반려 → rejected 로 종료, 재검측 요청 시 새로 생성
+    rejected = sm.transition_with_effects(session, GID, ObjectState.IN_PROGRESS, Actor.CM, EV, actor_id="cm-1")
+    assert rejected.closed_review_ids == [review.review_request_id]
+    session.refresh(review)
+    assert review.status == "rejected" and review.resolved_by == "cm-1" and review.resolved_at is not None
+    assert "IN_PROGRESS" in review.resolution_note
+    second = sm.transition_with_effects(session, GID, ObjectState.INSPECTION_REQUESTED, Actor.CONTRACTOR, EV, actor_id="c1")
+    assert len(second.created_review_ids) == 1 and second.created_review_ids != first.created_review_ids
+    # cm 승인 → approved 로 종료
+    confirmed = sm.transition_with_effects(session, GID, ObjectState.CONFIRMED, Actor.CM, EV, actor_id="cm-1")
+    assert confirmed.closed_review_ids == second.created_review_ids
+    assert session.get(ReviewRequestRow, second.created_review_ids[0]).status == "approved"
+    assert not [r for r in session.query(ReviewRequestRow).all() if r.status == "open"]
+    assert session.query(ReviewRequestRow).count() == 2
+
+
+def test_system_mismatch_from_inspection_keeps_review_open(session, obj):
+    sm = ObjectStateMachine()
+    obj.state = ObjectState.ESTIMATED_DONE.value
+    session.flush()
+    created = sm.transition_with_effects(session, GID, ObjectState.INSPECTION_REQUESTED, Actor.SYSTEM, SCAN_EV, confidence=0.8)
+    assert session.get(ReviewRequestRow, created.created_review_ids[0]).confidence == 0.8
+    result = sm.transition_with_effects(session, GID, ObjectState.MISMATCH, Actor.SYSTEM, SCAN_EV, confidence=0.9)
+    assert result.closed_review_ids == []       # 종료는 cm 결정에서만
+    assert session.get(ReviewRequestRow, created.created_review_ids[0]).status == "open"
+    assert "align_scan" in {a["kind"] for a in sm.next_actions(session, GID, "cm")}

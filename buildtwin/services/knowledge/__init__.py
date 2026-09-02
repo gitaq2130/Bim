@@ -11,7 +11,7 @@ from packages.core.models.knowledge import (
 from services.knowledge.cases import CaseStore, to_rule_draft
 from services.knowledge.engine import RuleEngine, persist_verdicts
 from services.knowledge.llm_interface import NullReasoningProvider, ReasoningContext, ReasoningProvider
-from services.knowledge.loader import RuleLoadError, load_rules
+from services.knowledge.loader import ALLOWED_DISCIPLINES, RuleLoadError, load_rules
 from services.knowledge.review_log import (
     ExpertReviewLogMiddleware,
     expert_review_recorder,
@@ -21,7 +21,7 @@ from services.knowledge.review_log import (
 
 __all__ = [
     "Rule", "RuleScope", "RuleThen", "RuleVerdict", "RiskLevel", "CaseRecord", "ExpertReviewLog",
-    "RuleEngine", "persist_verdicts", "load_rules", "RuleLoadError",
+    "RuleEngine", "persist_verdicts", "load_rules", "RuleLoadError", "ALLOWED_DISCIPLINES",
     "record_expert_review", "expert_review_recorder", "json_diff", "ExpertReviewLogMiddleware",
     "CaseStore", "to_rule_draft",
     "ReasoningContext", "ReasoningProvider", "NullReasoningProvider",

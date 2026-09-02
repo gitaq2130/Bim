@@ -3,11 +3,15 @@
 - transition(): validate_transition + 불변식 4(미결 verification 검토요청 시 system 전이 차단) + 행 기록.
 - apply_scan_verdict(): ScanState → ObjectState 를 system actor 로. NOT_BUILT 은 전이 없음. 표에 없으면 None.
 - apply_daily_report(): contractor actor 로 REPORTED / IN_PROGRESS, 완료 신고는 3중 검증 통과 시에만 INSPECTION_REQUESTED.
+- 검측 ReviewRequest(kind=inspection) 생명주기(ADR 0001 §6, CLAUDE.md §3-11): INSPECTION_REQUESTED 진입 시 생성,
+  cm 의 CONFIRMED/IN_PROGRESS/MISMATCH 전이 시 종료(approved/rejected). API 는 호출만 한다.
+- 역할→actor 매핑(ADR 0001 §4-1): contractor→contractor, cm→cm 뿐. client/admin 은 RoleNotAllowedError(→ API 403).
 """
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -36,6 +40,14 @@ class ObjectNotFoundError(LookupError):
     pass
 
 
+class RoleNotAllowedError(PermissionError):
+    """ADR 0001 §4-1: client/admin 은 상태 전이·검측 승인·검토요청 처리 권한이 없다(API 는 403 으로 매핑)."""
+
+    def __init__(self, role: str):
+        self.role = role
+        super().__init__(f"role {role!r} cannot act on object state (allowed: contractor, cm)")
+
+
 class TransitionBlockedByReviewError(Exception):
     """ADR 0001 불변식 4: 미결 verification ReviewRequest 가 있는 객체는 system 전이 불가."""
 
@@ -56,15 +68,77 @@ CLAIMED_TO_OBJECT_STATE: dict[str, ObjectState] = {
     "in_progress": ObjectState.IN_PROGRESS,
     "completed": ObjectState.INSPECTION_REQUESTED,
 }
-ROLE_TO_ACTOR: dict[str, Actor] = {"contractor": Actor.CONTRACTOR, "cm": Actor.CM, "admin": Actor.CM}
-ACTOR_TO_ROLES: dict[Actor, list[str]] = {Actor.CONTRACTOR: ["contractor"], Actor.CM: ["cm", "admin"], Actor.SYSTEM: []}
+ROLE_TO_ACTOR: dict[str, Actor] = {"contractor": Actor.CONTRACTOR, "cm": Actor.CM}     # ADR 0001 §4-1 — admin/client 없음
+ACTOR_TO_ROLES: dict[Actor, list[str]] = {Actor.CONTRACTOR: ["contractor"], Actor.CM: ["cm"], Actor.SYSTEM: []}
+NEXT_ACTION_KINDS: frozenset[str] = frozenset({
+    "confirm", "request_inspection", "reject_inspection", "report_progress", "accept_rework", "order_rework",
+    "revoke_confirmation", "flag_mismatch", "resolve_review", "align_scan", "inspect",
+})   # docs/glossary.md "다음 행동 종류" 와 1:1
+INSPECTION_DECISIONS: dict[ObjectState, str] = {ObjectState.CONFIRMED: "approved", ObjectState.IN_PROGRESS: "rejected",
+                                                ObjectState.MISMATCH: "rejected"}
+
+
+def actor_for_role(role: str) -> Actor:
+    """UserRole → Actor. client/admin 은 RoleNotAllowedError."""
+    actor = ROLE_TO_ACTOR.get(str(role).lower())
+    if actor is None:
+        raise RoleNotAllowedError(role)
+    return actor
+
+
+@dataclass
+class TransitionResult:
+    transition: StateTransition
+    created_review_ids: list[str] = field(default_factory=list)   # 생성된 inspection ReviewRequest id
+    closed_review_ids: list[str] = field(default_factory=list)    # 종료된 inspection ReviewRequest id
+
+
+def ensure_inspection_review(session: Session, global_id: str, transition: StateTransition) -> list[str]:
+    """INSPECTION_REQUESTED 진입 시 미결 inspection 검토요청이 없으면 하나 만든다. 생성된 id 목록을 돌려준다."""
+    if transition.to_state != ObjectState.INSPECTION_REQUESTED:
+        return []
+    if db.open_reviews(session, [global_id], kind="inspection"):
+        return []
+    row = session.get(BimObjectRow, global_id)
+    if row is None:
+        raise ObjectNotFoundError(global_id)
+    review = ReviewRequest(
+        project_id=row.project_id, kind="inspection", global_id=global_id,
+        title=f"검측 요청: {row.name or global_id} ({row.ifc_type}, {row.level or '-'})",
+        confidence=transition.confidence if transition.confidence is not None else 1.0,
+        evidence=transition.evidence, assignee_role="cm",
+        conflicting_sources={"transition_id": str(transition.transition_id), "actor": transition.actor.value,
+                             "from_state": transition.from_state.value},
+    )
+    db.save_review_request(session, review)
+    return [str(review.review_request_id)]
+
+
+def close_inspection_reviews(session: Session, global_id: str, transition: StateTransition) -> list[str]:
+    """cm 이 INSPECTION_REQUESTED 에서 CONFIRMED(approved) / IN_PROGRESS·MISMATCH(rejected) 로 전이하면 미결 inspection 요청을 닫는다."""
+    if transition.actor != Actor.CM or transition.from_state != ObjectState.INSPECTION_REQUESTED:
+        return []
+    status = INSPECTION_DECISIONS.get(transition.to_state)
+    if status is None:
+        return []
+    closed: list[str] = []
+    for review in db.open_reviews(session, [global_id], kind="inspection"):
+        review.status = status
+        review.resolved_by = transition.actor_id
+        review.resolved_at = datetime.now(UTC)
+        review.resolution_note = (f"{transition.from_state.value} -> {transition.to_state.value} by cm"
+                                  f"{f' ({transition.actor_id})' if transition.actor_id else ''}; transition_id={transition.transition_id}")
+        closed.append(review.review_request_id)
+    session.flush()
+    return closed
 
 
 @dataclass
 class DailyReportOutcome:
     report_id: str
     transitions: list[StateTransition] = field(default_factory=list)
-    review_requests: list[ReviewRequest] = field(default_factory=list)
+    review_requests: list[ReviewRequest] = field(default_factory=list)      # 3중 검증(verification) 검토요청
+    inspection_review_ids: list[str] = field(default_factory=list)         # 자동 생성된 inspection 검토요청 id
     skipped: list[dict] = field(default_factory=list)
 
 
@@ -75,9 +149,10 @@ class ObjectStateMachine:
             raise ObjectNotFoundError(global_id)
         return row
 
-    def transition(self, session: Session, global_id: str, to_state: ObjectState | str, actor: Actor | str, evidence: Evidence,
-                   actor_id: str | None = None, confidence: float | None = None,
-                   review_request_id: UUID | str | None = None) -> StateTransition:
+    def transition_with_effects(self, session: Session, global_id: str, to_state: ObjectState | str, actor: Actor | str,
+                                evidence: Evidence, actor_id: str | None = None, confidence: float | None = None,
+                                review_request_id: UUID | str | None = None) -> TransitionResult:
+        """전이 + 부수효과(검측 ReviewRequest 생성/종료). 생성·종료된 검토요청 id 를 함께 돌려준다."""
         row = self._load(session, global_id)
         from_state, to_state, actor = ObjectState(row.state), ObjectState(to_state), Actor(actor)
         validate_transition(from_state, to_state, actor)
@@ -96,7 +171,16 @@ class ObjectStateMachine:
         ))
         row.state = to_state.value
         session.flush()
-        return transition
+        closed = close_inspection_reviews(session, global_id, transition)
+        created = ensure_inspection_review(session, global_id, transition)
+        return TransitionResult(transition=transition, created_review_ids=created, closed_review_ids=closed)
+
+    def transition(self, session: Session, global_id: str, to_state: ObjectState | str, actor: Actor | str, evidence: Evidence,
+                   actor_id: str | None = None, confidence: float | None = None,
+                   review_request_id: UUID | str | None = None) -> StateTransition:
+        """transition_with_effects 와 같되 StateTransition 만 돌려준다(부수효과는 동일하게 적용)."""
+        return self.transition_with_effects(session, global_id, to_state, actor, evidence, actor_id=actor_id,
+                                            confidence=confidence, review_request_id=review_request_id).transition
 
     # ---------------------------------------------------------------- scan
     def apply_scan_verdict(self, session: Session, verdict: ScanVerdict) -> StateTransition | None:
@@ -155,8 +239,10 @@ class ObjectStateMachine:
                                     note=f"claimed_state={item.claimed_state}",
                                     extra={"item_index": index, "item": item.model_dump(mode="json"),
                                            "photo_uris": list(item.photo_uris)})
-                outcome.transitions.append(self.transition(session, gid, target, Actor.CONTRACTOR, evidence,
-                                                           actor_id=report.reporter_id))
+                result = self.transition_with_effects(session, gid, target, Actor.CONTRACTOR, evidence,
+                                                      actor_id=report.reporter_id)
+                outcome.transitions.append(result.transition)
+                outcome.inspection_review_ids.extend(result.created_review_ids)
         return outcome
 
     # ---------------------------------------------------------------- queries
@@ -164,19 +250,25 @@ class ObjectStateMachine:
         return [db.transition_row_to_model(r) for r in db.load_transitions(session, global_id)]
 
     def next_actions(self, session: Session, global_id: str, role: str) -> list[dict]:
+        """역할별 다음 행동. kind 는 NEXT_ACTION_KINDS(glossary) 안에서만. client/admin 은 빈 목록(조회 전용)."""
         row = self._load(session, global_id)
         from_state = ObjectState(row.state)
-        actor = ROLE_TO_ACTOR.get(role)
+        try:
+            actor = actor_for_role(role)
+        except RoleNotAllowedError:
+            return []
         actions: list[dict] = []
-        if actor is not None:
-            for target in allowed_targets(from_state, actor):
-                actions.append({"kind": _action_kind(from_state, target, actor), "to_state": target.value,
-                                "actor": actor.value, "allowed_roles": ACTOR_TO_ROLES[actor]})
+        for target in allowed_targets(from_state, actor):
+            kind = _action_kind(from_state, target, actor)
+            assert kind in NEXT_ACTION_KINDS
+            actions.append({"kind": kind, "to_state": target.value, "actor": actor.value, "allowed_roles": ACTOR_TO_ROLES[actor]})
         if actor == Actor.CM:
             for review in db.open_reviews(session, [global_id]):
                 actions.append({"kind": "resolve_review", "to_state": None, "actor": actor.value,
                                 "allowed_roles": ACTOR_TO_ROLES[Actor.CM], "review_request_id": review.review_request_id,
                                 "review_kind": review.kind, "rule_id": review.rule_id})
+            if from_state in (ObjectState.MISMATCH, ObjectState.UNVERIFIABLE):
+                actions.append({"kind": "align_scan", "to_state": None, "actor": actor.value, "allowed_roles": ACTOR_TO_ROLES[Actor.CM]})
         return actions
 
 

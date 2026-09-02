@@ -8,7 +8,7 @@ import yaml
 
 from packages.core.models.knowledge import CaseRecord, RiskLevel, Rule, RuleScope, RuleThen
 from services.common.safe_expr import validate
-from services.knowledge.loader import default_rules_dir
+from services.knowledge.loader import RuleLoadError, check_discipline, default_rules_dir
 
 __all__ = ["CaseStore", "to_rule_draft", "CaseLoadError"]
 
@@ -27,9 +27,13 @@ def _load_file(path: Path) -> list[CaseRecord]:
     out: list[CaseRecord] = []
     for i, item in enumerate(data):
         try:
-            out.append(CaseRecord.model_validate(item))
+            case = CaseRecord.model_validate(item)
+            check_discipline(case.discipline, f"{path}[{i}] {case.case_id}")
+        except RuleLoadError as e:
+            raise CaseLoadError(str(e)) from e
         except Exception as e:
             raise CaseLoadError(f"{path}[{i}]: {e}") from e
+        out.append(case)
     return out
 
 
@@ -67,6 +71,10 @@ class CaseStore:
     def add(self, case: CaseRecord, persist: bool = False) -> CaseRecord:
         if case.case_id in self._cases:
             raise CaseLoadError(f"duplicate case id {case.case_id}")
+        try:
+            check_discipline(case.discipline, f"case {case.case_id}")
+        except RuleLoadError as e:
+            raise CaseLoadError(str(e)) from e
         self._cases[case.case_id] = case
         if persist:
             self.cases_dir.mkdir(parents=True, exist_ok=True)

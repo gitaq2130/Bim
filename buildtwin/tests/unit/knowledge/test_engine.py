@@ -36,8 +36,8 @@ def test_mismatch_scan_verdict_confidence_and_evidence(mismatch_scan, column_obj
     ]
     # 50mm 초과 → STR-002(25~50mm)는 맞지 않는다
     assert "RULE-STR-002" not in by_id
-    # MEP 규칙은 scope로 걸러진다
-    assert not any(r.startswith("RULE-MEP") for r in by_id)
+    # 기계·전기 규칙은 scope로 걸러진다
+    assert not any(r.startswith(("RULE-MEC", "RULE-ELE")) for r in by_id)
 
 
 def test_no_scan_gives_confidence_from_reliability_only(activity):
@@ -70,7 +70,7 @@ def test_repo_rules_schedule_and_critical(activity, mismatch_scan):
 def test_scope_filtering():
     rules = [
         _rule("STR", "scan.state == 'MISMATCH'", discipline="structure", object_types=["IfcColumn"]),
-        _rule("MEP", "scan.state == 'MISMATCH'", discipline="mep", object_types=["IfcDuctSegment"]),
+        _rule("MEP", "scan.state == 'MISMATCH'", discipline="mechanical", object_types=["IfcDuctSegment"]),
         _rule("ANY", "scan.state == 'MISMATCH'"),
     ]
     engine = RuleEngine(rules=rules)
@@ -78,7 +78,7 @@ def test_scope_filtering():
     assert {v.rule_id for v in engine.evaluate(ctx)} == {"STR", "MEP", "ANY"}
     assert {v.rule_id for v in engine.evaluate(ctx, scope={"discipline": "structure"})} == {"STR", "ANY"}
     assert {v.rule_id for v in engine.evaluate(ctx, scope={"object_types": ["IfcDuctSegment"]})} == {"MEP", "ANY"}
-    assert {v.rule_id for v in engine.evaluate(ctx, scope={"discipline": "mep", "object_types": ["IfcColumn"]})} == {"ANY"}
+    assert {v.rule_id for v in engine.evaluate(ctx, scope={"discipline": "mechanical", "object_types": ["IfcColumn"]})} == {"ANY"}
 
 
 def test_missing_values_do_not_match():

@@ -8,7 +8,16 @@ import yaml
 from packages.core.models.knowledge import Rule
 from services.common.safe_expr import UnsafeExpressionError, validate
 
-__all__ = ["RuleLoadError", "load_rules", "default_rules_dir"]
+__all__ = ["RuleLoadError", "load_rules", "default_rules_dir", "ALLOWED_DISCIPLINES", "check_discipline"]
+
+# docs/glossary.md "공종(discipline)" 허용값. `mep`는 쓰지 않는다(mechanical / electrical로 나눈다).
+ALLOWED_DISCIPLINES: frozenset[str] = frozenset({"structure", "architecture", "mechanical", "electrical", "civil", "finishing"})
+
+
+def check_discipline(value: str | None, where: str) -> None:
+    """discipline이 glossary 허용값이 아니면 RuleLoadError."""
+    if value is not None and value not in ALLOWED_DISCIPLINES:
+        raise RuleLoadError(f"{where}: discipline {value!r} not in {sorted(ALLOWED_DISCIPLINES)}")
 
 
 class RuleLoadError(ValueError):
@@ -38,6 +47,7 @@ def _load_file(path: Path) -> list[Rule]:
             rule = Rule.model_validate(item)
         except Exception as e:
             raise RuleLoadError(f"{path}[{i}] ({item.get('id', '?')}): {e}") from e
+        check_discipline(rule.scope.discipline, f"{path} rule {rule.id}")
         try:
             validate(rule.when)
         except UnsafeExpressionError as e:

@@ -29,6 +29,24 @@ def test_load_rules_from_repo():
     assert any(r.source == "case" for r in rules)
 
 
+def test_rule_disciplines_in_glossary_set():
+    from services.knowledge import ALLOWED_DISCIPLINES
+
+    rules = load_rules(RULES_DIR)
+    assert ALLOWED_DISCIPLINES == {"structure", "architecture", "mechanical", "electrical", "civil", "finishing"}
+    for r in rules:
+        assert r.scope.discipline is None or r.scope.discipline in ALLOWED_DISCIPLINES, r.id
+    assert {r.scope.discipline for r in rules} >= {"structure", "mechanical", "electrical"}
+
+
+def test_disallowed_discipline_raises(tmp_path: Path):
+    bad = _rule("RULE-X-004")
+    bad["scope"] = {"discipline": "mep"}
+    _write(tmp_path, "a.yaml", [bad])
+    with pytest.raises(RuleLoadError, match="discipline 'mep'"):
+        load_rules(tmp_path)
+
+
 def test_default_dir_matches_settings():
     assert {r.id for r in load_rules()} == {r.id for r in load_rules(RULES_DIR)}
 

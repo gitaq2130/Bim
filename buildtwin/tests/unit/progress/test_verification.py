@@ -81,6 +81,8 @@ def test_consistent_completion_reaches_inspection_requested(session, seeded):
     assert [t.to_state for t in done.transitions] == [ObjectState.INSPECTION_REQUESTED]
     assert done.transitions[0].actor.value == "contractor" and done.transitions[0].evidence.source_type == "daily_report"
     assert session.get(BimObjectRow, gid).state == ObjectState.INSPECTION_REQUESTED.value
+    assert len(done.inspection_review_ids) == 1
+    assert session.get(ReviewRequestRow, done.inspection_review_ids[0]).kind == "inspection"
 
 
 def test_quantity_over_bim_creates_ver_004(session, seeded):
