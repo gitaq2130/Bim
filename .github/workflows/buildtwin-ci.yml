@@ -164,7 +164,7 @@ jobs:
       - name: Install python deps + playwright
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]" playwright pytest-playwright
+          python -m pip install -e ".[dev]" "playwright==1.56.*" pytest-playwright
           python -m playwright install --with-deps chromium
       - uses: actions/setup-node@v4
         with:
@@ -174,9 +174,12 @@ jobs:
       - name: npm ci
         working-directory: buildtwin/apps/web
         run: npm ci
+      - name: Build web (vite preview serves dist in the smoke test)
+        working-directory: buildtwin/apps/web
+        run: npm run build
       - name: make fixtures
         run: python scripts/fetch_fixtures.py
-      - name: pytest e2e
+      - name: pytest e2e (core flow via TestClient + Playwright smoke via uvicorn/vite preview)
         env:
           CELERY_ALWAYS_EAGER: "true"
         run: pytest tests/e2e -q

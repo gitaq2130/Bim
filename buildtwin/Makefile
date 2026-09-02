@@ -1,7 +1,7 @@
 # BuildTwin — 담당: qa
 # make dev / make test / make lint / make docs / make fixtures / make e2e / make api / make web
 
-.PHONY: dev test lint docs fixtures fixtures-public test-py test-unit test-invariants test-regression test-integration test-web e2e lint-py lint-web api web setup
+.PHONY: dev test lint docs fixtures fixtures-public test-py test-unit test-invariants test-regression test-integration test-web e2e e2e-deps web-build lint-py lint-web api web setup
 
 PY := . .venv/bin/activate &&
 
@@ -44,7 +44,13 @@ test-integration: ## API + Celery(eager) + DB
 test-web:
 	cd apps/web && npx vitest run
 
-e2e: fixtures ## 핵심 흐름 E2E(tests/e2e, Playwright) — 로컬 API 필요 시 make api 를 먼저 띄운다
+web-build: ## apps/web → dist (Playwright 스모크가 vite preview 로 서빙)
+	cd apps/web && npm run build
+
+e2e-deps: ## Playwright(python) — 로컬은 PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers 의 내장 Chromium 사용, CI 는 playwright install
+	$(PY) pip install -q "playwright==1.56.*" pytest-playwright
+
+e2e: fixtures web-build ## 핵심 흐름 E2E(TestClient 8단계) + Playwright 스모크(uvicorn + vite preview 자동 기동)
 	$(PY) pytest tests/e2e -q
 
 lint: lint-py lint-web

@@ -4,6 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from packages.core import settings as settings_module
 from packages.core.models.scan import ScanState
@@ -83,4 +84,31 @@ def test_half_height_is_in_progress_and_offset_is_mismatch(cfg):
 def test_missing_config_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(settings_module.settings, "config_dir", str(tmp_path))
     with pytest.raises(FileNotFoundError):
+        load_scan_config()
+
+
+def test_derived_values_follow_yaml_ratios(swapped_config_dir):
+    """reference_spacing 과 mismatch_search_range 는 코드 상수가 아니라 yaml 의 비율·배수에서 나온다."""
+    base = load_scan_config()
+    assert base.registration.reference_spacing == pytest.approx(
+        base.registration.icp_max_distance * base.registration.reference_spacing_ratio)
+    assert base.verdict.mismatch_search_range == pytest.approx(
+        base.verdict.mismatch_offset * base.verdict.mismatch_search_multiplier)
+    assert base.verdict.search_margin == pytest.approx(base.verdict.bbox_margin + base.verdict.mismatch_search_range)
+
+    swapped = swapped_config_dir(registration={"reference_spacing_ratio": base.registration.reference_spacing_ratio * 3},
+                                 verdict={"mismatch_search_multiplier": base.verdict.mismatch_search_multiplier * 4})
+    assert swapped.registration.reference_spacing == pytest.approx(base.registration.reference_spacing * 3)
+    assert swapped.verdict.mismatch_search_range == pytest.approx(base.verdict.mismatch_search_range * 4)
+    assert swapped.verdict.search_margin == pytest.approx(base.verdict.bbox_margin + base.verdict.mismatch_search_range * 4)
+
+
+def test_ratio_keys_are_required(tmp_path, monkeypatch):
+    """코드 기본값이 없으므로 yaml 에서 키가 빠지면 로드가 실패해야 한다."""
+    raw = yaml.safe_load(scan_config_path().read_text(encoding="utf-8"))
+    del raw["registration"]["reference_spacing_ratio"]
+    del raw["verdict"]["mismatch_search_multiplier"]
+    (tmp_path / "scan.yaml").write_text(yaml.safe_dump(raw), encoding="utf-8")
+    monkeypatch.setattr(settings_module.settings, "config_dir", str(tmp_path))
+    with pytest.raises(ValidationError):
         load_scan_config()

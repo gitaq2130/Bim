@@ -1,6 +1,6 @@
 - case_id: CASE-0002
   project_type: logistics_center
-  discipline: mep
+  discipline: mechanical
   situation: "2층 천장 내 공조 덕트(1200x600)가 철골 보 하부와 간섭, 시공 후 발견"
   early_signals:
     - "설비 시공상세도 승인 전 착수"

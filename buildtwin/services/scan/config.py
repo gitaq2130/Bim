@@ -22,11 +22,12 @@ class RegistrationConfig(BaseModel):
     icp_max_distance: float = Field(gt=0)    # m. ICP 대응점 최대 거리
     icp_max_iterations: int = Field(ge=1)
     min_fitness: float = Field(ge=0, le=1)   # 대응점 비율 하한
+    reference_spacing_ratio: float = Field(gt=0)   # 참조 점군 간격 / icp_max_distance
 
     @property
     def reference_spacing(self) -> float:
-        """BIM 표면 참조 점군 간격(m). ICP 대응 거리의 절반 — 대응 거리 안에 항상 참조점이 있도록."""
-        return self.icp_max_distance / 2.0
+        """BIM 표면 참조 점군 간격(m) = icp_max_distance × reference_spacing_ratio (대응 거리 안에 항상 참조점이 있도록)."""
+        return self.icp_max_distance * self.reference_spacing_ratio
 
 
 class VerdictConfig(BaseModel):
@@ -39,6 +40,7 @@ class VerdictConfig(BaseModel):
     density_done: float = Field(gt=0)              # points/m²
     min_surface_match_done: float = Field(ge=0, le=1)
     mismatch_offset: float = Field(gt=0)           # m. 초과 offset이면 MISMATCH
+    mismatch_search_multiplier: float = Field(gt=0)  # 탐색 범위 / mismatch_offset
     occlusion_unverifiable: float = Field(ge=0, le=1)
     confidence_floor: float = Field(ge=0, le=1)
 
@@ -59,8 +61,8 @@ class VerdictConfig(BaseModel):
 
     @property
     def mismatch_search_range(self) -> float:
-        """위치불일치 탐색 범위(m). 허용 offset의 2배까지 XY로 bbox를 이동시켜 본다."""
-        return 2.0 * self.mismatch_offset
+        """위치불일치 탐색 범위(m) = mismatch_offset × mismatch_search_multiplier. 이 범위까지 XY로 bbox를 이동시켜 본다."""
+        return self.mismatch_offset * self.mismatch_search_multiplier
 
     @property
     def search_margin(self) -> float:

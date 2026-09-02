@@ -5,6 +5,7 @@ registration:
   icp_max_distance: 0.10         # ICP 대응점 최대 거리(m)
   icp_max_iterations: 50
   min_fitness: 0.3
+  reference_spacing_ratio: 0.5     # BIM 참조 점군 간격 = icp_max_distance × 이 비율
 verdict:
   bbox_margin: 0.05              # m. 객체 바운딩박스 여유
   surface_distance: 0.03         # m. 이 거리 안이면 표면 일치로 간주
@@ -13,5 +14,6 @@ verdict:
   density_done: 400              # 이상이고 형상 일치율 충족 시 ESTIMATED_DONE
   min_surface_match_done: 0.6    # 표면 일치율(0~1)
   mismatch_offset: 0.05          # m. 평균 offset 초과 시 MISMATCH
+  mismatch_search_multiplier: 2.0 # 위치불일치 탐색 범위 = mismatch_offset × 이 배수
   occlusion_unverifiable: 0.6    # 가림 비율 초과 시 UNVERIFIABLE
   confidence_floor: 0.2
