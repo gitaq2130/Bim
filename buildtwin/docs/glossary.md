@@ -192,6 +192,9 @@ reviewer 4차 지적 1: 동일 상태코드(특히 409)가 서로 무관한 여�
 | `user_not_found` | 404 | `POST /api/projects/{pid}/members`에 지정한 `user_id`가 `users`에 없음(ADR 0006 §4) |
 | `duplicate_member` | 409 | `POST /api/projects/{pid}/members`가 이미 그 프로젝트의 멤버인 `user_id`를 다시 추가하려 함 |
 | `member_not_found` | 404 | `DELETE /api/projects/{pid}/members/{user_id}`가 가리키는 멤버십 행이 없음 |
+| `document_not_found` | 404 | `(project_id, doc_id)`로 문서를 찾을 수 없음(ADR 0007 §8). 문서 조회는 언제나 두 키를 함께 건다 |
+| `document_register_invalid` | 422 | 업로드된 문서관리대장(xlsx)에서 헤더 행을 찾지 못했거나 필수 컬럼(`제목`)이 없어 어떤 시트도 읽을 수 없음(ADR 0007 §2-5 규칙 3). 요청은 잘 형성되었고 거부 사유가 파일 내용의 의미적 자격이므로 400이 아닌 422 |
+| `document_mapping_target_not_found` | 404 | 문서↔Activity 매핑 생성·확정이 가리키는 `doc_id` 또는 `activity_id`가 그 프로젝트에 없음(ADR 0007 §4·§7) |
 | `admin_cannot_be_member` | 422 | `POST /api/projects/{pid}/members`의 대상 `user_id`가 전역 `admin` 계정임. admin은 **어떤 프로젝트의 멤버도 될 수 없다**(ADR 0006 §2-1) — 멤버십 행이 있으면 그 프로젝트 역할이 인가의 근거가 되므로, 이 금지가 없으면 admin이 스스로 `cm` 프로젝트 역할을 발급해 확정 권한을 얻는다. 읽기측(`project_role`/`caller_project_role`)이 admin 호출자의 멤버십 행을 무시하는 심층 방어와 한 쌍이다. 400이 아닌 이유는 요청이 잘 형성되었고 거부 사유가 대상의 의미적 자격이기 때문이며, 409가 아닌 이유는 상태를 바꿔 재시도할 수 있다는 뜻이 아니기 때문이다(ADR 0006 §2-1 근거) |
 
 ### 부칙 — reviewer 5차 지적 반영 (api, 2026-09-03)
@@ -227,3 +230,40 @@ reviewer 4차 지적 1: 동일 상태코드(특히 409)가 서로 무관한 여�
   `GET /activities/{id}/readiness`, 그리고 `drawings/{id}`·`scans/{id}`·`models/{id}`·`files/{id}`·`jobs/{id}` 등
   surrogate id 라우트 전부)는 대상 행을 먼저 읽어(없으면 그 자원의 기존 404 code, 예: `review_request_not_found`)
   그 행의 `project_id`로 멤버십을 검사한다.
+
+## ADR 0007 추가 항목 (architect, 2026-09-03) — 문서관리대장 연동
+
+문서관리대장(ADR 0007)이 도입한 개념. **핵심은 두 가지다** — ① `drawing_approval`의 입력이 수동 플래그에서
+발주처가 대장에 적은 사실로 바뀐다, ② 문서의 `공종`은 **신뢰할 수 없는 필드**이며 대조는 **제목 텍스트**로 한다.
+
+| 한국어 | 영어(식별자) | 정의 |
+|---|---|---|
+| 문서관리대장 | `DocumentRegister` (`document_register`) | 현장의 문서 발신·회신을 기록한 xlsx 대장. **BuildTwin이 아니라 이 파일이 정본**이며 우리는 읽기만 한다(ADR 0007 §1). 시트 하나가 문서 종류 하나 |
+| 문서 | `Document` (`documents`) | 대장의 한 행을 적재한 것. PK = **`(project_id, doc_id)` 복합 키**(ADR 0005와 같은 프로젝트 범위 키). `doc_id` 단독 조회 금지 |
+| 문서 식별자 | `doc_id` | `"doc-" + sha256("{doc_type}\|{sender_normalized}\|{seq_normalized}\|{title_normalized}")[:16]`의 결정적 대리키. **공종이 산출식에 들어가지 않는다** — 신뢰할 수 없는 필드가 문서의 정체성에 관여하면 안 되기 때문(ADR 0007 §2-1). 주간 재업로드가 그대로 upsert 가 된다 |
+| 문서 종류 | `doc_type` = `TFA` / `TFR` / `FI` / `SCAR` / `NCR` / `DN` / `VE` / `RFI` / `other` | TFA=승인/검토/참조 요청서(시공상세도 승인), TFR=자료제출서, FI=현장지시, SCAR=시정조치요구, NCR=부적합보고, DN=통보, VE=설계변경/가치공학, RFI=질의회신. 시트명→종류 표는 `config/document_register.yaml` |
+| 문서번호 | `doc_number` | 대장에서 `발신-HG-종류-공종-번호` 형식으로 **수식 생성되는 파생 컬럼**. **파싱하지 않는다** — 표시·검색·blocker 문구 전용이며 구조화된 값은 언제나 대장의 개별 컬럼에서 읽는다(ADR 0007 §2-4). 공란·중복이 가능하므로 유니크 제약도 식별자 용도도 없다 |
+| 처리결과 | `result_raw` | 대장 `처리결과` 컬럼의 **원문 그대로**(자유 텍스트, 공란 가능). 절대 해석해 덮어쓰지 않는다. 정규화 결과는 `approval_status`에 따로 담는다 |
+| 승인 상태 | `DocumentApprovalStatus` = `APPROVED` / `APPROVED_WITH_COMMENTS` / `REJECTED` / `RESUBMIT_REQUIRED` / `IN_REVIEW` / `UNKNOWN` | `result_raw`를 정규화한 값. **`ObjectState`와 무관하며 어떤 상태 전이도 일으키지 않는다**(ADR 0007 §3-1). 공란·해석 불가는 `UNKNOWN`이고 **절대 승인으로 추측하지 않는다** |
+| 조건부승인 | `APPROVED_WITH_COMMENTS` | 기본적으로 **승인으로 보지 않는다** — 조건 충족 여부가 대장에 없어 착수 가능 여부를 알 수 없기 때문(ADR 0007 §3-3). 무엇을 승인으로 볼지는 `readiness.yaml`의 `document_approval.approved_statuses`가 정한다 |
+| 처리결과 정규화 규칙 | `status_normalization` (`config/document_register.yaml`) | 정규식 → 상태 + confidence 표. 코드에 한국어 문자열 리터럴을 두지 않기 위한 장치. 규칙 id는 `DOCST-nnn`이며 `evidence.rule_id`에 남는다 |
+| 신뢰 불가 공종 | `discipline_raw` (untrusted) | 대장의 `공종` 원문. 협력사가 원본과 다르게 적는 일이 흔해 **단독 매핑 근거가 될 수 없고, 일치는 가점만, 불일치는 감점·배제하지 않는다**(ADR 0007 §4 규칙 2). 정규화 결과는 `discipline_normalized` |
+| 번호 정규화 | `seq_normalized` | `번호` 원문에서 숫자 이외를 모두 제거해 이어붙인 값(`26-049`→`26049`, `제26-07-09호`→`260709`). **자릿수를 재해석하지 않는다**(연도 확장·선행 0 제거 금지) |
+| 제목 대조 | `title matching` | 문서↔Activity 매핑의 **필수 근거**. `min_similarity` 미만이면 다른 근거가 모두 맞아도 후보가 아니다(ADR 0007 §4 규칙 1). 유사도 = `SequenceMatcher` 비율과 토큰 Jaccard의 가중합 |
+| 판별 토큰 | `discriminative token` (`zone` / `section` / `revision` / `level`) | 문서 제목과 Activity **양쪽에 모두 존재하고 값이 다르면 유사도와 무관하게 후보에서 하드 배제**하는 토큰. "ASRS-1구간 vs ASRS-4구간", "1차 vs 2차"를 걸러낸다. 한쪽에만 있으면 배제하지 않고 confidence만 낮춘다(ADR 0007 §4 규칙 3) |
+| 문서-작업 매핑 | `ActivityDocumentMapping` (`activity_document_mappings`) | 문서 ↔ Activity 연결. PK = `(activity_id, doc_id)`, `project_id`는 Activity에서 유도, **복합 FK `(project_id, doc_id)`**. `confidence`·`evidence`·`needs_review`·`reviewed_by` 필수. 문서↔객체 직접 매핑은 만들지 않는다(대장에 객체 식별 정보가 없음) |
+| 매핑 자동 확정 금지 | `always_needs_review` | 시스템이 만든 문서 매핑은 **confidence 값과 무관하게 항상 `needs_review=True`**다. 유사도 0.99여도 그렇다. ADR 0001의 "스캔 AI는 `ESTIMATED_DONE`까지, `CONFIRMED`는 cm만"과 같은 구조이며, `MAPPING_REVIEW_THRESHOLD`(0.7)는 문서 매핑에 적용되지 않는다 |
+| 문서 매핑 검토요청 | `ReviewKind` += `document_mapping` | 미확정 문서 매핑을 CM 검토 큐로 보내는 검토요청. `assignee_role="cm"`. 기존 `mapping`을 재사용하지 않는 이유는 `services/sync`의 해소 로직이 `drawing_id`/`entity_handle`을 기대하기 때문. 해소는 `services/progress`가 소유 |
+| 문서 승인 우선순위 | document evidence > manual flag > unknown default | `drawing_approval` 입력의 3단 사다리(ADR 0007 §5-2). ① 확정 매핑된 필수 문서 → 전부 승인이면 1.0, 아니면 0.0 ② 없으면 기존 `resources.drawing_approved` ③ 둘 다 없으면 `component_defaults.drawing_approval_unknown`. **사실(대장)이 주장(수동 플래그)을 이긴다** |
+| 필수 문서 | `required_doc_types` (`config/readiness.yaml`, 기본 `[TFA]`) | 착수 가능 판단을 좌우하는 문서 종류. "필수"란 **그 Activity에 확정 매핑된 문서 중 이 종류에 속하는 것**이며, 문서가 없는데 요구사항을 발명하지 않는다 |
+| 도면승인 논리곱 | `scoring: all_or_nothing` | `drawing_approval`은 비율이 아니라 AND다 — 필수 문서 전부 승인이면 1.0, 하나라도 아니면 0.0. 비율(9/10=0.9)을 쓰면 `start_threshold` 0.75를 넘겨 미승인 도면 위에서 착수 가능이 뜬다. 비율은 점수가 아니라 `Blocker.reason`·`evidence`로만 보고한다(ADR 0007 §5-1) |
+| 고아 문서 | `documents.is_orphaned` | 최근 대장 업로드에 없던 문서. **삭제하지 않고 표시만** 하며 판단은 **그 업로드에 존재한 `doc_type` 안에서만** 한다(TFA 시트만 올렸다고 TFR이 고아가 되면 안 된다). readiness 계산에서 제외(ADR 0007 §2-2) |
+| 문서 근거 가용성 | `logic.document_evidence_available` / `logic.drawing_approval_status` = `approved` / `not_approved` / `unknown` | 3중 검증 `logic` 축의 새 입력(ADR 0007 §6-1). **`unknown`을 조건으로 삼는 검증 패턴은 만들지 않는다** — 문서 데이터가 없는 프로젝트가 통째로 검토요청으로 뒤덮이기 때문 |
+
+### 대장 업로드 인가 (ADR 0007 §7)
+
+문서관리대장 업로드는 **그 프로젝트의 `cm`만** 가능하다 — 다른 파일 종류가 `contractor`/`cm` 모두를 허용하는 것과
+다르다. 근거: 대장의 `처리결과`는 발주처·CM 측 판단의 기록이고 그것이 착수 가능 판단을 움직이므로, 시공사가
+올릴 수 있으면 **피검자가 자기 승인 상태를 스스로 기록**하는 구조가 되어 ADR 0001 불변식 1("확정은 cm만")을
+데이터 입력 경로로 우회한다. 문서 조회는 모든 프로젝트 멤버(+admin), 매핑 생성·확정은 `cm`만, 전역 `admin`은
+행위 라우트에서 403 `forbidden_role`(ADR 0006 §2-1).

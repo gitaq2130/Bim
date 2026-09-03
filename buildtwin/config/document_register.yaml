@@ -169,5 +169,5 @@ import_warnings:
   document_possibly_renamed: "제목만 다르고 (종류·발신·번호)가 같은 기존 문서가 있음 — 자동 병합하지 않음"
   header_row_not_found: "헤더 행을 찾지 못해 시트를 건너뜀"
   required_column_missing: "필수 컬럼(제목)이 없어 시트를 건너뜀"
-  status_unmatched: "처리결과 텍스트를 어떤 규칙으로도 해석하지 못함 — UNKNOWN 으로 적재"
+  document_status_unmatched: "처리결과 텍스트를 어떤 규칙으로도 해석하지 못함 — UNKNOWN 으로 적재(evidence.method=register_status_unmatched)"
   sheet_skipped: "skip_sheets 설정에 의해 건너뜀"
