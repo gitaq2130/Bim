@@ -22,12 +22,10 @@ __all__ = ["CATEGORY_TO_IFC", "FIXTURES", "PROJECT_ID", "MODEL_ID", "ensure_mode
 def ensure_model_chain(session, project_id: str, model_id: str, file_id: str | None = None) -> ModelRow:
     """ProjectRow -> FileRow -> ModelRow 부모 체인을 픽스처에서 미리 만든다.
 
-    services.progress.persistence.ensure_model()(db.save_objects() 가 내부에서 호출)은
-    ModelRow.file_id 에 f"{model_id}:file" 이라는 아직 존재하지 않는 FileRow 를 그대로 채워
-    넣는다 — FK 강제 하에서는 위반이지만, 지금까지 이 함수를 부르는 프로덕션 호출자가 없어
-    드러나지 않았을 뿐이다(services/progress/persistence.py:43-50, 자세한 내용은 conftest 하단
-    주석과 최종 보고 참고). 여기서는 프로덕션 코드를 고치지 않고, ModelRow 를 미리 만들어 두어
-    ensure_model() 이 "이미 있음"으로 보고 자기 삽입을 건너뛰게 한다.
+    db.ensure_model()(db.save_objects() 가 내부에서 호출)은 이제 자리표시 FileRow 도 스스로
+    만들어 FK 를 충족하므로(services/progress/persistence.py:ensure_model), 이 헬퍼가 없어도
+    save_objects() 자체는 더 이상 실패하지 않는다. 다만 테스트가 진짜 파일(모델 전용 file_id,
+    지정한 kind 등)이 딸린 ModelRow 를 원할 때는 여전히 이 헬퍼를 써서 직접 체인을 구성한다.
     """
     db.ensure_project(session, project_id)
     row = session.get(ModelRow, model_id)

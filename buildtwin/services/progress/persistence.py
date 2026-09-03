@@ -17,6 +17,7 @@ from packages.core.models.orm import (
     ActivityRow,
     BimObjectRow,
     DailyReportRow,
+    FileRow,
     MaterialMovementRow,
     ModelRow,
     ProjectRow,
@@ -41,10 +42,21 @@ def ensure_project(session: Session, project_id: str, name: str | None = None) -
 
 
 def ensure_model(session: Session, project_id: str, model_id: str) -> ModelRow:
+    """model_id 가 아직 없으면 자리표시(placeholder) ModelRow 를 만든다.
+
+    ModelRow.file_id 는 files.file_id 를 참조하는 non-nullable FK 이므로, 실제 업로드 파일이
+    없는 자리표시 모델도 자기 몫의 자리표시 FileRow 를 함께 가져야 행이 합법적이다(FK 강제 하
+    회귀 — 이 함수가 file_id 만 채우고 그 행은 만들지 않아 실패했었다).
+    """
     row = session.get(ModelRow, model_id)
     if row is None:
         ensure_project(session, project_id)
-        row = ModelRow(model_id=model_id, project_id=project_id, file_id=f"{model_id}:file", coordinate_system={})
+        file_id = f"{model_id}:file"
+        if session.get(FileRow, file_id) is None:
+            session.add(FileRow(file_id=file_id, project_id=project_id, kind="model_placeholder",
+                                filename=f"{model_id}.ifc", uri=f"placeholder://{file_id}", sha256="", size=0))
+            session.flush()
+        row = ModelRow(model_id=model_id, project_id=project_id, file_id=file_id, coordinate_system={})
         session.add(row)
         session.flush()
     return row

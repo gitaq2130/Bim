@@ -4,38 +4,16 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select
 
-from packages.core.db import init_db, new_session, reset_engine
 from packages.core.models import MAPPING_REVIEW_THRESHOLD, EntityObjectMapping, Evidence
-from packages.core.models.orm import (
-    BimObjectRow,
-    DrawingRow,
-    EntityObjectMappingRow,
-    FileRow,
-    ProjectRow,
-    ReviewRequestRow,
-)
+from packages.core.models.orm import BimObjectRow, EntityObjectMappingRow, FileRow, ProjectRow, ReviewRequestRow
 from services.sync.config import load_sync_config
 from services.sync.persistence import RebuildResult, load_mappings, open_mapping_reviews, rebuild_mappings
 from services.sync.review_queue import confirm_mapping_row, resolve_mapping_reviews
 from services.sync.rules import layer_rule_score, load_layer_rules
 
+from .conftest import make_bim_object, make_drawing
+
 D, P = "d1", "p1"
-
-
-@pytest.fixture
-def session():
-    reset_engine()
-    init_db("sqlite://")
-    s = new_session()
-    s.add(ProjectRow(project_id=P, name="P"))
-    s.add(FileRow(file_id="f1", project_id=P, kind="dxf", filename="a.dxf", uri="x", sha256="0", size=1))
-    s.add(DrawingRow(drawing_id=D, project_id=P, file_id="f1", level="1F", coordinate_system={"source": "dxf_local"}))
-    s.commit()
-    try:
-        yield s
-    finally:
-        s.close()
-        reset_engine()
 
 
 def _m(handle: str, gid: str, conf: float, drawing_id: str = D) -> EntityObjectMapping:
