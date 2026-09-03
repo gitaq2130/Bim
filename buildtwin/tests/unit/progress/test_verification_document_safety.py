@@ -25,8 +25,6 @@ def _clear_cache():
 
 
 def _rules_text() -> str:
-    from pathlib import Path
-
     from packages.core.settings import ROOT
 
     return (ROOT / "rules" / "verification.yaml").read_text(encoding="utf-8")
