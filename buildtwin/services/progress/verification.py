@@ -23,6 +23,8 @@ from packages.core.settings import ROOT, settings
 from services.common.safe_expr import SafeExprError, compile_expr
 
 from . import persistence as db
+from .config_loader import load_readiness_config
+from .document_mapper import confirmed_required_documents
 from .readiness import predecessor_completion
 
 log = logging.getLogger(__name__)
@@ -76,6 +78,11 @@ def build_logic_context(session: Session, project_id: str, global_id: str, quant
     predecessor_confirmed_ratio, bim_quantity, material_delivered_ratio, consecutive_unverifiable(최근 스캔부터 연속
     UNVERIFIABLE 횟수), clash_count(미결 verification 검토요청 수), inspection_passed(CONFIRMED→True, 검측 대기→False,
     그 외 None), matched_case_ids(knowledge 가 채움; 여기서는 빈 리스트), days_until_planned_start(귀속 Activity 중 가장 이른 착수일까지 일수).
+
+    ADR 0007 §6-1: document_evidence_available/drawing_approval_status/unapproved_document_count/
+    unapproved_document_numbers/pending_document_mappings/rejected_document_count. 안전 규칙: 문서 데이터가
+    없으면 drawing_approval_status 는 언제나 "unknown" 이고 VER-008/009/010 은 이를 조건으로 쓰지 않으므로
+    문서 미업로드 프로젝트에서는 항상 미발동이다.
     """
     activity_ids = db.activity_ids_for_object(session, project_id, global_id)
     ratios = [predecessor_completion(session, project_id, a)[0].value for a in activity_ids]
@@ -120,11 +127,40 @@ def build_logic_context(session: Session, project_id: str, global_id: str, quant
     starts = [date.fromisoformat(r.planned_start) for a in activity_ids
               if (r := db.load_activity(session, a)) is not None and r.planned_start]
     days_until_start = (min(starts) - today).days if starts else None
+
+    doc_cfg = load_readiness_config().get("document_approval", {})
+    doc_evidence = confirmed_required_documents(session, project_id, activity_ids, doc_cfg) if doc_cfg.get("enabled", True) \
+        else None
+    if doc_evidence is None or not doc_evidence.confirmed_required:
+        # document_evidence_available=False -> drawing_approval_status 는 언제나 "unknown"(ADR §6-1).
+        # 문서 데이터가 없는 프로젝트는 여기서 끝나고, VER-008/009/010 은 "unknown" 을 조건으로 쓰지 않으므로 미발동한다.
+        document_evidence_available = False
+        drawing_approval_status = "unknown"
+        unapproved_document_count = 0
+        unapproved_document_numbers: list[str] = []
+        rejected_document_count = 0
+        pending_document_mappings = doc_evidence.pending_count if doc_evidence is not None else 0
+    else:
+        approved_statuses = set(doc_cfg.get("approved_statuses", ["APPROVED"]))
+        unapproved = [d for d in doc_evidence.confirmed_required if d.approval_status not in approved_statuses]
+        document_evidence_available = True
+        drawing_approval_status = "not_approved" if unapproved else "approved"
+        unapproved_document_count = len(unapproved)
+        unapproved_document_numbers = [d.doc_number or d.doc_id for d in unapproved]
+        rejected_document_count = sum(1 for d in unapproved if d.approval_status == "REJECTED")
+        pending_document_mappings = doc_evidence.pending_count
+
     return {"predecessor_confirmed_ratio": predecessor_ratio, "bim_quantity": bim_quantity,
             "material_delivered_ratio": material_ratio, "consecutive_unverifiable": consecutive_unverifiable,
             "clash_count": len(open_verification), "inspection_passed": inspection_passed, "matched_case_ids": [],
             "days_until_planned_start": days_until_start, "object_state": state.value if state else None,
-            "activity_ids": activity_ids, "material_in": total_in, "material_out": total_out}
+            "activity_ids": activity_ids, "material_in": total_in, "material_out": total_out,
+            "document_evidence_available": document_evidence_available,
+            "drawing_approval_status": drawing_approval_status,
+            "unapproved_document_count": unapproved_document_count,
+            "unapproved_document_numbers": unapproved_document_numbers,
+            "pending_document_mappings": pending_document_mappings,
+            "rejected_document_count": rejected_document_count}
 
 
 def run_verification(session: Session, project_id: str, global_id: str, report_item: DailyReportItem | None,

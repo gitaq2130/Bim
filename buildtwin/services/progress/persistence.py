@@ -8,15 +8,18 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from packages.core.models.coordinate import BBox3D
+from packages.core.models.document import ActivityDocumentMapping, Document, DocumentApprovalStatus, DocumentType
 from packages.core.models.evidence import Evidence
 from packages.core.models.identity import BimObject, BimObjectDraft
 from packages.core.models.mapping import ActivityObjectMapping
 from packages.core.models.orm import (
+    ActivityDocumentMappingRow,
     ActivityObjectMappingRow,
     ActivityRelationRow,
     ActivityRow,
     BimObjectRow,
     DailyReportRow,
+    DocumentRow,
     MaterialMovementRow,
     ModelRow,
     ProjectRow,
@@ -247,6 +250,93 @@ def mapped_global_ids(session: Session, project_id: str, activity_id: str) -> li
 def activity_ids_for_object(session: Session, project_id: str, global_id: str) -> list[str]:
     """ADR 0005 규칙 2: global_id 만으로는 프로젝트 간 모호하므로 project_id 를 함께 건다."""
     return [m.activity_id for m in load_mappings(session, project_id, global_id=global_id)]
+
+
+# ------------------------------------------------------------------ documents (ADR 0007)
+def document_row_to_model(row: DocumentRow) -> Document:
+    return Document(
+        project_id=row.project_id, doc_id=row.doc_id, doc_type=DocumentType(row.doc_type), sender=row.sender,
+        sender_normalized=row.sender_normalized, discipline_raw=row.discipline_raw,
+        discipline_normalized=row.discipline_normalized, seq_raw=row.seq_raw, seq_normalized=row.seq_normalized,
+        doc_number=row.doc_number, title=row.title, title_normalized=row.title_normalized, issued_on=row.issued_on,
+        result_raw=row.result_raw, approval_status=DocumentApprovalStatus(row.approval_status),
+        approval_confidence=row.approval_confidence, approval_evidence=Evidence(**row.approval_evidence),
+        completed_on=row.completed_on, file_id=row.file_id, sheet_name=row.sheet_name, source_row=row.source_row,
+        needs_review=row.needs_review, is_orphaned=row.is_orphaned,
+    )
+
+
+def load_document(session: Session, project_id: str, doc_id: str) -> DocumentRow | None:
+    """ADR 0007 §2-3: doc_id 단독 조회 금지 — (project_id, doc_id) 복합키로만 조회한다."""
+    return session.get(DocumentRow, (project_id, doc_id))
+
+
+def documents_by_ids(session: Session, project_id: str, doc_ids: list[str]) -> dict[str, DocumentRow]:
+    if not doc_ids:
+        return {}
+    rows = session.scalars(select(DocumentRow).where(DocumentRow.project_id == project_id,
+                                                       DocumentRow.doc_id.in_(doc_ids)))
+    return {r.doc_id: r for r in rows}
+
+
+def load_documents(session: Session, project_id: str, doc_type: str | None = None,
+                   include_orphaned: bool = True) -> list[DocumentRow]:
+    stmt = select(DocumentRow).where(DocumentRow.project_id == project_id)
+    if doc_type is not None:
+        stmt = stmt.where(DocumentRow.doc_type == doc_type)
+    if not include_orphaned:
+        stmt = stmt.where(DocumentRow.is_orphaned.is_(False))
+    return list(session.scalars(stmt.order_by(DocumentRow.doc_id)))
+
+
+def document_mappings_for_activity(session: Session, project_id: str, activity_id: str) -> list[ActivityDocumentMappingRow]:
+    return document_mappings_for_activities(session, project_id, [activity_id])
+
+
+def document_mappings_for_activities(session: Session, project_id: str,
+                                     activity_ids: list[str]) -> list[ActivityDocumentMappingRow]:
+    """ADR 0005 규칙 2 와 같은 패턴: project_id 를 항상 함께 건다."""
+    if not activity_ids:
+        return []
+    return list(session.scalars(select(ActivityDocumentMappingRow).where(
+        ActivityDocumentMappingRow.project_id == project_id,
+        ActivityDocumentMappingRow.activity_id.in_(activity_ids))))
+
+
+def save_document_mapping(session: Session, mapping: ActivityDocumentMapping) -> ActivityDocumentMappingRow:
+    """ADR 0005 규칙 1과 같은 패턴: project_id 는 호출자가 주입하지 않고 Activity 에서 유도한다."""
+    activity = session.get(ActivityRow, mapping.activity_id)
+    if activity is None:
+        raise LookupError(f"activity not found: {mapping.activity_id}")
+    project_id = activity.project_id
+    row = session.get(ActivityDocumentMappingRow, (mapping.activity_id, mapping.doc_id))
+    if row is None:
+        row = ActivityDocumentMappingRow(
+            activity_id=mapping.activity_id, doc_id=mapping.doc_id, project_id=project_id,
+            confidence=mapping.confidence, evidence=mapping.evidence.model_dump(mode="json"),
+            needs_review=mapping.needs_review, reviewed_by=mapping.reviewed_by,
+        )
+        session.add(row)
+    else:
+        row.project_id = project_id
+        row.confidence, row.evidence = mapping.confidence, mapping.evidence.model_dump(mode="json")
+        row.needs_review, row.reviewed_by = mapping.needs_review, mapping.reviewed_by
+    return row
+
+
+def save_document_mappings(session: Session, mappings: list[ActivityDocumentMapping]) -> int:
+    count = 0
+    for m in mappings:
+        save_document_mapping(session, m)
+        count += 1
+    session.flush()
+    return count
+
+
+def document_mapping_row_to_model(row: ActivityDocumentMappingRow) -> ActivityDocumentMapping:
+    return ActivityDocumentMapping(activity_id=row.activity_id, doc_id=row.doc_id, confidence=row.confidence,
+                                   evidence=Evidence(**row.evidence), needs_review=row.needs_review,
+                                   reviewed_by=row.reviewed_by)
 
 
 # ------------------------------------------------------------------ reviews

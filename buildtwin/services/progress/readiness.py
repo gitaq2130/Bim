@@ -6,7 +6,10 @@
 - inspection: 선행 Activity 객체 중 검측 대기(INSPECTION_REQUESTED) 또는 미결 inspection 검토요청이 없는 비율.
 - material_delivery: 반입량 / 필요량(resources.material_required). 필요량이 없으면 config 기본값, 자재 기록이 전혀 없으면
   기본값 + 결측 처리(confidence 감점).
-- drawing_approval: resources.drawing_approved == 1 이면 1.0, 그 외 config component_defaults.drawing_approval_unknown(결측).
+- drawing_approval: 우선순위 사다리(ADR 0007 §5-2) — ① 확정(needs_review=False) 매핑된 필수 문서(TFA 등)가
+  있으면 전부 승인일 때만 1.0(논리곱, 비율 아님), ② 없으면 resources.drawing_approved 플래그(기존 동작),
+  ③ 둘 다 없으면 config component_defaults.drawing_approval_unknown(결측). document_approval.enabled=false 면
+  ①을 건너뛴다.
 - open_clashes: 이 Activity 객체 중 미결 verification 검토요청이 없는 비율.
 - crew_assigned: resources.crew > 0 이면 1.0, 아니면 0.0 (키가 없으면 결측).
 confidence = 1 - 결측 구성요소 비율.
@@ -14,16 +17,18 @@ confidence = 1 - 결측 구성요소 비율.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from sqlalchemy.orm import Session
 
 from packages.core.models.evidence import Evidence
-from packages.core.models.orm import ActivityRow
+from packages.core.models.orm import ActivityRow, DocumentRow
 from packages.core.models.progress import Blocker, ReadinessScore
 from packages.core.models.state import ObjectState
 
 from . import persistence as db
 from .config_loader import load_readiness_config
+from .document_mapper import confirmed_required_documents
 
 PERCENT_COMPLETE_DONE = 100.0   # 퍼센트 만점(단위 정의). 임계값 아님
 COMPONENT_NAMES: tuple[str, ...] = ("predecessor_completion", "inspection", "material_delivery", "drawing_approval",
@@ -106,7 +111,8 @@ def material_component(session: Session, project_id: str, activity_ids: list[str
     return ComponentResult(value, reason=reason, related_ids=list(activity_ids), note="required quantity unknown")
 
 
-def drawing_component(resources: dict[str, float], defaults: dict[str, float]) -> ComponentResult:
+def _drawing_component_legacy(resources: dict[str, float], defaults: dict[str, float]) -> ComponentResult:
+    """순위 2·3 (ADR 0007 §5-2) — 문서 근거가 없을 때의 기존 동작. 그대로 보존한다(하위 호환의 핵심)."""
     flag = resources.get("drawing_approved")
     if flag is None:
         return ComponentResult(float(defaults["drawing_approval_unknown"]), missing=True, reason="drawing approval unknown",
@@ -114,6 +120,61 @@ def drawing_component(resources: dict[str, float], defaults: dict[str, float]) -
     if float(flag) >= 1.0:
         return ComponentResult(1.0)
     return ComponentResult(0.0, reason="drawing not approved")
+
+
+def _unapproved_reason(unapproved: list[DocumentRow], limit: int) -> str:
+    """case① "n건의 필수 문서가 미승인: ..." 또는 case③ UNKNOWN 전용 문구(ADR 0007 §5-3)."""
+    all_unknown = all(d.approval_status == "UNKNOWN" for d in unapproved)
+    shown = unapproved[:limit]
+    frags = []
+    for d in shown:
+        label = f"{d.doc_number or d.doc_id} «{d.title}»"
+        frags.append(f"{label} 처리결과 미기재(UNKNOWN)" if all_unknown else f"{label} ({d.approval_status})")
+    overflow = len(unapproved) - len(shown)
+    joined = "; ".join(frags) + (f" 외 {overflow}건" if overflow > 0 else "")
+    return joined if all_unknown else f"{len(unapproved)}건의 필수 문서가 미승인: {joined}"
+
+
+def drawing_component(session: Session, project_id: str, activity_id: str, resources: dict[str, float],
+                      defaults: dict[str, float], doc_cfg: dict[str, Any]) -> tuple[ComponentResult, dict[str, Any]]:
+    """ADR 0007 §5. 값 산출은 논리곱(AND) — 필수 문서 전부 승인 -> 1.0, 하나라도 아니면 0.0. 비율은 점수가
+    아니라 note/blocker 로만 보고한다. 두 번째 튜플 항목은 ReadinessScore.evidence.extra 에 병합할 값
+    (예: manual_flag_overridden) — Blocker·ComponentResult 모델은 바꾸지 않는다.
+    """
+    extra: dict[str, Any] = {}
+    if not doc_cfg.get("enabled", True):
+        return _drawing_component_legacy(resources, defaults), extra   # 킬 스위치: 순위 1을 완전히 건너뛴다
+
+    evidence = confirmed_required_documents(session, project_id, [activity_id], doc_cfg)
+    limit = int(doc_cfg.get("blocker_document_limit", 5))
+
+    if evidence.confirmed_required:   # 순위 1: 문서 근거
+        approved_statuses = set(doc_cfg.get("approved_statuses", ["APPROVED"]))
+        total = len(evidence.confirmed_required)
+        approved = [d for d in evidence.confirmed_required if d.approval_status in approved_statuses]
+        unapproved = [d for d in evidence.confirmed_required if d.approval_status not in approved_statuses]
+        value = 1.0 if not unapproved else 0.0
+        note = f"approved={len(approved)}/{total}; pending_mappings={evidence.pending_count}"
+        reason = _unapproved_reason(unapproved, limit) if unapproved else None
+        if unapproved:
+            flag = resources.get("drawing_approved")   # 규칙: 문서 근거가 수동 플래그를 이긴다. 충돌은 조용히 무시하지 않는다
+            if flag is not None and float(flag) >= 1.0:
+                extra["manual_flag_overridden"] = True
+        result = ComponentResult(value, missing=evidence.pending_count > 0, reason=reason,
+                                 related_ids=[d.doc_id for d in unapproved], note=note)
+        return result, extra
+
+    legacy = _drawing_component_legacy(resources, defaults)
+    if evidence.pending_count > 0:   # 순위 1 후보는 없지만 미확정 매핑은 있다 — "아직 모른다"를 confidence 에 반영
+        pending_reason = (f"문서 매핑 {evidence.pending_count}건이 CM 검토 대기 — "
+                          "확정 전까지 도면 승인 근거로 쓰지 않음")
+        result = ComponentResult(legacy.value, missing=True,
+                                 reason=pending_reason if legacy.value < 1.0 else None,
+                                 related_ids=[m.doc_id for m in db.document_mappings_for_activity(session, project_id, activity_id)
+                                              if m.needs_review],
+                                 note=f"approved=0/0; pending_mappings={evidence.pending_count}")
+        return result, extra
+    return legacy, extra   # 순위 2·3: 완전히 기존 동작
 
 
 def clashes_component(session: Session, project_id: str, global_ids: list[str]) -> ComponentResult:
@@ -155,12 +216,14 @@ def compute_readiness(session: Session, activity_id: str, weights: dict[str, flo
     own = activity_progress(session, project_id, activity_id, row)
 
     pred, estimated, pred_progress = predecessor_completion(session, project_id, activity_id)
+    drawing_result, drawing_extra = drawing_component(session, project_id, activity_id, resources, defaults,
+                                                       cfg.get("document_approval", {}))
     results: dict[str, ComponentResult] = {
         "predecessor_completion": pred,
         "inspection": inspection_component(session, project_id, pred_progress),
         "material_delivery": material_component(session, project_id, [activity_id], own.global_ids,
                                                  resources.get("material_required"), defaults),
-        "drawing_approval": drawing_component(resources, defaults),
+        "drawing_approval": drawing_result,
         "open_clashes": clashes_component(session, project_id, own.global_ids),
         "crew_assigned": crew_component(resources),
     }
@@ -172,11 +235,14 @@ def compute_readiness(session: Session, activity_id: str, weights: dict[str, flo
         for c, r in results.items() if r.value < 1.0
     ]
     missing = [c for c, r in results.items() if r.missing]
+    evidence_extra: dict[str, Any] = {"predecessors": [p.activity_id for p in pred_progress], "mapped_objects": own.global_ids,
+                                      "missing_components": missing,
+                                      "weights_source": "override" if weights is not cfg["weights"] else "config"}
+    evidence_extra.update(drawing_extra)   # 예: manual_flag_overridden=True — 조용히 무시하지 않는다
     evidence = Evidence(
         source_type="system_logic", source_id=activity_id, method="readiness_weighted_sum",
         note="; ".join(f"{c}: {r.note}" for c, r in results.items() if r.note) or None,
-        extra={"predecessors": [p.activity_id for p in pred_progress], "mapped_objects": own.global_ids,
-               "missing_components": missing, "weights_source": "override" if weights is not cfg["weights"] else "config"},
+        extra=evidence_extra,
     )
     return ReadinessScore(activity_id=activity_id, score=max(0.0, min(1.0, score)),
                           components={c: r.value for c, r in results.items()}, weights=weights, blockers=blockers,

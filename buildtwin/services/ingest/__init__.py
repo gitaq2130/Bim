@@ -12,12 +12,19 @@ from packages.core.models import CoordinateSystem, FileKind, IngestResult, Inges
 from .dwg_adapter import convert_dwg_to_dxf, parse_dwg
 from .dxf_parser import parse_dxf
 from .ifc_parser import parse_ifc
-from .persistence import PersistedModel, persist_drawing, persist_ingest_result
+from .persistence import (
+    PersistedDocumentImport,
+    PersistedModel,
+    persist_document_register_import,
+    persist_drawing,
+    persist_ingest_result,
+)
 from .rvt_adapter import APSModelDerivativeClient, ingest_rvt
 
 __all__ = [
-    "APSModelDerivativeClient", "PersistedModel", "convert_dwg_to_dxf", "detect_file_kind", "ingest_file",
-    "ingest_rvt", "parse_dwg", "parse_dxf", "parse_ifc", "persist_drawing", "persist_ingest_result",
+    "APSModelDerivativeClient", "PersistedDocumentImport", "PersistedModel", "convert_dwg_to_dxf",
+    "detect_file_kind", "ingest_file", "ingest_rvt", "parse_dwg", "parse_dxf", "parse_ifc",
+    "persist_document_register_import", "persist_drawing", "persist_ingest_result",
 ]
 
 _EXTENSION_KINDS: dict[str, FileKind] = {
