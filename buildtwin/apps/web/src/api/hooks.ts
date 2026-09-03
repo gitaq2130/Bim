@@ -22,6 +22,9 @@ import type {
   PlanSection,
   Project,
   ProjectCreate,
+  ProjectMember,
+  ProjectMemberCreate,
+  ProjectRole,
   ReadinessScore,
   ResolveReviewRequest,
   ReviewKind,
@@ -52,6 +55,7 @@ export const queryKeys = {
   scanVerdicts: (sid: string) => ["scans", sid, "verdicts"] as const,
   reviews: (pid: string, kind?: ReviewKind | "", status?: ReviewStatus | "") =>
     ["projects", pid, "review-requests", kind ?? "", status ?? ""] as const,
+  members: (pid: string) => ["projects", pid, "members"] as const,
   readiness: (aid: string) => ["activities", aid, "readiness"] as const,
   startable: (pid: string) => ["projects", pid, "startable"] as const,
   weeklySummary: (pid: string) => ["projects", pid, "weekly-summary"] as const,
@@ -84,6 +88,33 @@ export function useCreateProject() {
     mutationFn: (body: ProjectCreate) => api.post<Project>("/projects", body),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.projects }),
   });
+}
+
+/** GET /projects/{id} — 프로젝트 상세. `my_role`(ADR 0006)의 근거 쿼리이므로 useProjectRole 이 이걸 감싼다. */
+export function useProject(projectId: string | null | undefined) {
+  return useQuery({
+    queryKey: queryKeys.project(projectId ?? ""),
+    queryFn: () => api.get<Project>(`/projects/${projectId}`),
+    enabled: !!projectId,
+  });
+}
+
+export interface ProjectRoleResult {
+  /** 이 프로젝트에서 호출자의 역할. 로딩/비멤버/admin 은 null. 서버 my_role 을 그대로 옮긴 값 — Zustand 로 복제하지 않는다(ADR 0006 §3 규칙 4). */
+  role: ProjectRole | null;
+  isLoading: boolean;
+  isError: boolean;
+  error: unknown;
+}
+
+/**
+ * 프로젝트별 역할 소스(ADR 0006). 화면의 모든 역할 판단은 전역 `auth.role` 대신 이 훅을 읽는다.
+ * `useProject`(TanStack Query)를 그대로 감싸므로, 같은 projectId 를 보는 다른 컴포넌트(RequireProjectAccess 등)와
+ * 캐시를 공유해 중복 요청이 생기지 않는다.
+ */
+export function useProjectRole(projectId: string | null | undefined): ProjectRoleResult {
+  const q = useProject(projectId);
+  return { role: q.data?.my_role ?? null, isLoading: q.isPending, isError: q.isError, error: q.error };
 }
 
 // ---- files / jobs ----
@@ -327,5 +358,29 @@ export function useWeeklySummary(projectId: string | null | undefined) {
     queryKey: queryKeys.weeklySummary(projectId ?? ""),
     queryFn: () => api.get<WeeklySummary>(`/projects/${projectId}/weekly-summary`),
     enabled: !!projectId,
+  });
+}
+
+// ---- 멤버십 (ADR 0006 §4 — admin 전용) ----
+export function useProjectMembers(projectId: string | null | undefined) {
+  return useQuery({
+    queryKey: queryKeys.members(projectId ?? ""),
+    queryFn: async () =>
+      toPaginated(await api.get<ProjectMember[] | Paginated<ProjectMember>>(`/projects/${projectId}/members`)).items,
+    enabled: !!projectId,
+  });
+}
+export function useAddProjectMember(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: ProjectMemberCreate) => api.post<ProjectMember>(`/projects/${projectId}/members`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.members(projectId) }),
+  });
+}
+export function useRemoveProjectMember(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) => api.del<void>(`/projects/${projectId}/members/${userId}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.members(projectId) }),
   });
 }

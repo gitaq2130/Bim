@@ -4,8 +4,13 @@
 2. sample.ifc 업로드 → 잡 폴링 → 객체 수  6. schedule.csv → Readiness → 착수 가능 집합
 3. sample.dxf 업로드 → 매핑 정확도 ≥ 기준  7. 작업일보 "완료" + 스캔 NOT_BUILT → ReviewRequest, 자동 CONFIRMED 없음
 4. 3D 객체 → 2D 엔티티 / 2D 영역 → 3D 객체 8. cm 승인 → CONFIRMED 전이 + ExpertReviewLog
+9. ADR 0006 격리: 두 번째 프로젝트(다른 멤버 구성) → 1번 프로젝트의 contractor 는 조회·행위 모두 404, 자기 멤버는 정상
 
 정확도·rmse 기준은 tests/metrics.json(회귀 기준)과 같은 값을 쓴다. 테스트는 파일 순서대로 실행되며 `flow` 에 결과를 누적한다.
+
+ADR 0006: 프로젝트 접근권은 `project_members` 행의 존재로 정의된다(없으면 404 `project_not_found`) — 1단계에서
+이 흐름이 실제로 쓰는 역할(cm/contractor)에게만 멤버십을 준다(tests/integration/conftest.py 의 `project`/`add_member`
+패턴을 그대로 따른다). admin 은 행위 역할이 없으므로(ADR 0001 §4-1, ADR 0006 §2) 프로젝트 생성에만 남아 있다.
 """
 from __future__ import annotations
 
@@ -16,7 +21,7 @@ from packages.core.db import new_session
 from packages.core.models.orm import ExpertReviewLogRow
 from packages.core.models.scan import ScanState
 
-from .conftest import FIXTURES, METRICS, Api, load_fixture_json
+from .conftest import FIXTURES, METRICS, Api, add_member, load_fixture_json
 
 SCAN_STATES = {s.value for s in ScanState}
 
@@ -51,6 +56,11 @@ def test_step1_cm_login_and_project_creation(flow):
     r = a.post("/projects", "admin", json={"name": "E2E 핵심 흐름 현장"})
     assert r.status_code == 201, r.text
     flow["project"] = r.json()["project_id"]
+    # ADR 0006: 멤버십 행이 접근권을 정의한다 — 이 흐름이 실제로 쓰는 역할(cm/contractor)에게 부여한다.
+    # client 는 이 프로젝트에 넣지 않는다: 9단계 격리 시나리오의 "다른 프로젝트 전용 멤버" 로 쓴다.
+    flow["user_ids"] = {role: a.user_id(role) for role in ("cm", "contractor", "client")}
+    add_member(a, flow["project"], flow["user_ids"]["cm"], "cm")
+    add_member(a, flow["project"], flow["user_ids"]["contractor"], "contractor")
     assert a.get(f"/projects/{flow['project']}", "cm").status_code == 200
 
 
@@ -242,3 +252,43 @@ def test_step8_cm_approval_confirms_and_records_expert_review_log(flow):
     assert _review_logs("review_request", insp["review_request_id"])
     confirmed = a.get(f"/projects/{flow['project']}/objects", "cm", state="CONFIRMED").json()
     assert confirmed["total"] == 1 and confirmed["items"][0]["global_id"] == gid
+
+
+# ----------------------------------------------------------------------------- 9
+def test_step9_second_project_membership_isolates_first_projects_contractor(flow):
+    """ADR 0006 규칙 2·5·7: project_members 행이 접근권 그 자체다. 두 번째 프로젝트를 만들고 1단계 프로젝트의
+    contractor 를 일부러 멤버에서 뺀다 — 조회·업로드 모두 404(project_not_found), 403 이 아니다(프로젝트 존재를
+    흘리지 않는다). 반대로 그 프로젝트의 실제 멤버(cm/client)는 정상적으로 조회·행위할 수 있다. 대칭으로,
+    2번 프로젝트 전용 멤버(client)는 1번 프로젝트를 보지 못한다 — 같은 사람이 현장마다 다른 자격을 갖는다는
+    ADR 0006 의 핵심 주장을 흐름 전체에서 실제로 보여준다(bim_objects PK 가 (project_id, global_id) 라 같은
+    sample.ifc 를 다른 프로젝트에 다시 올려도 충돌하지 않는다 — ADR 0005)."""
+    a: Api = flow["api"]
+    uid = flow["user_ids"]
+    r = a.post("/projects", "admin", json={"name": "E2E 격리 확인 현장"})
+    assert r.status_code == 201, r.text
+    project2 = r.json()["project_id"]
+    # 1번 프로젝트의 contractor 는 여기서 뺀다. cm 은 여러 현장을 겸임할 수 있다는 가정으로 같이 넣어
+    # "자기 멤버는 행위(업로드)까지 된다" 를 보여주고, client 는 이 프로젝트 전용 멤버로 조회만 확인한다.
+    add_member(a, project2, uid["cm"], "cm")
+    add_member(a, project2, uid["client"], "client")
+
+    # contractor: project2 멤버가 아니므로 조회도 행위 시도도 404 — 열거 방지(403 이 아님)
+    r = a.get(f"/projects/{project2}", "contractor")
+    assert r.status_code == 404 and r.json()["code"] == "project_not_found", r.text
+    r = a.get(f"/projects/{project2}/objects", "contractor")
+    assert r.status_code == 404 and r.json()["code"] == "project_not_found", r.text
+    with open(FIXTURES / "sample.ifc", "rb") as fh:
+        r = a.post(f"/projects/{project2}/files", "contractor", files={"file": ("sample.ifc", fh)})
+    assert r.status_code == 404 and r.json()["code"] == "project_not_found", r.text
+
+    # project2 의 실제 멤버는 정상 동작: client 는 조회, cm 은 업로드(행위)까지 된다
+    r = a.get(f"/projects/{project2}", "client")
+    assert r.status_code == 200 and r.json()["project_id"] == project2, r.text
+    _, job = a.upload(project2, FIXTURES / "sample.ifc", role="cm")
+    assert job["status"] == "done", job
+
+    # 대칭: project2 전용 멤버(client)는 1번 프로젝트를 못 본다
+    r = a.get(f"/projects/{flow['project']}", "client")
+    assert r.status_code == 404 and r.json()["code"] == "project_not_found", r.text
+    # 1번 프로젝트의 contractor 는 자기 현장에서는 여전히 정상 — 격리가 전면 차단이 아니라 프로젝트 단위임을 재확인
+    assert a.get(f"/projects/{flow['project']}", "contractor").status_code == 200

@@ -3,7 +3,7 @@
  */
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { useResolveReview, useReviewRequests } from "../api/hooks";
+import { useProjectRole, useResolveReview, useReviewRequests } from "../api/hooks";
 import type { ConflictingSource, ReviewDecision, ReviewKind, ReviewRequest, ReviewStatus } from "../api/types";
 import { ConfidenceBadge } from "../components/ConfidenceBadge";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -19,7 +19,8 @@ export function ReviewsPage() {
   const { id: projectId = "" } = useParams();
   const [kind, setKind] = useState<ReviewKind | "">("");
   const [status, setStatus] = useState<ReviewStatus | "">("open");
-  const role = useStore((s) => s.auth.role);
+  // ADR 0006: 승인/반려/보류는 이 프로젝트에서의 역할(project role)로 가른다 — 전역 auth.role 이 아니다.
+  const { role } = useProjectRole(projectId);
   const list = useReviewRequests(projectId, kind, status);
   const resolve = useResolveReview(projectId);
   const [pending, setPending] = useState<{ r: ReviewRequest; decision: ReviewDecision } | null>(null);

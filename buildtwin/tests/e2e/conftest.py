@@ -128,6 +128,18 @@ class Api:
         up = r.json()
         return up, self.wait_job(up["job_id"], role)
 
+    def user_id(self, role: str) -> str:
+        r = self.get("/auth/me", role)
+        assert r.status_code == 200, r.text
+        return r.json()["user_id"]
+
+
+def add_member(a: Api, project_id: str, user_id: str, role: str) -> None:
+    """ADR 0006: 프로젝트 접근권은 project_members 행의 존재로 정의된다(멤버십 관리는 admin 전용).
+    tests/integration/conftest.py 의 add_member 와 같은 패턴."""
+    r = a.post(f"/projects/{project_id}/members", "admin", json={"user_id": user_id, "role": role})
+    assert r.status_code == 201, r.text
+
 
 # ----------------------------------------------------------------------------- real servers (Playwright)
 def _wait_http(url: str, timeout: float, proc: subprocess.Popen | None = None) -> None:
@@ -171,12 +183,15 @@ def api_server() -> Iterator[dict]:
 
 @pytest.fixture(scope="session")
 def seeded_project(api_server) -> dict:
-    """admin 이 프로젝트를 만들고 sample.ifc + sample.dxf(1F) 를 올린다(뷰어가 2D·3D 를 모두 그릴 수 있게)."""
+    """admin 이 프로젝트를 만들고 sample.ifc + sample.dxf(1F) 를 올린다(뷰어가 2D·3D 를 모두 그릴 수 있게).
+    ADR 0006: admin 은 멤버십 없이도 조회는 되지만 행위 역할이 없다(업로드 불가) — 스모크가 실제로 로그인해
+    쓰는 cm 에게 멤버십을 준다(그 프로젝트의 cm 로서 업로드도, 뷰어에서 조회도 가능해야 한다)."""
     with httpx.Client(timeout=120.0) as c:
         a = Api(c, prefix=api_server["base"])
         r = a.post("/projects", "admin", json={"name": "E2E 스모크 현장"})
         assert r.status_code == 201, r.text
         pid = r.json()["project_id"]
+        add_member(a, pid, a.user_id("cm"), "cm")
         _, ifc_job = a.upload(pid, FIXTURES / "sample.ifc")
         assert ifc_job["status"] == "done", ifc_job
         _, dxf_job = a.upload(pid, FIXTURES / "sample.dxf", level="1F")

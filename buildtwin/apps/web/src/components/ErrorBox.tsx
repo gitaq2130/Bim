@@ -23,6 +23,15 @@ const CODE_MESSAGES: Record<KnownApiErrorCode, string> = {
   object_not_found: "대상 객체를 찾을 수 없습니다. 삭제되었거나 아직 반영되지 않았을 수 있습니다.",
   // 역할 기반 접근 제어에 의해 거부되었을 때(404 forbidden 과 별개로 code 로 명확히 올 때).
   forbidden_role: "권한이 없습니다. 이 작업은 허용된 역할만 수행할 수 있습니다.",
+  // ADR 0006: 존재 여부와 무관하게, 호출자가 멤버가 아닌 프로젝트에 접근했을 때. 전용 안내 패널(RequireProjectAccess)이
+  // 보통 먼저 잡아내지만, 다른 화면에서 원인 코드로만 올 경우를 대비해 문구를 남겨둔다.
+  project_not_found: "이 프로젝트에 접근 권한이 없습니다.",
+  // 멤버 추가 시 대상 user_id 가 존재하지 않을 때.
+  user_not_found: "해당 사용자 ID를 찾을 수 없습니다.",
+  // 이미 멤버인 사용자를 다시 추가하려 할 때.
+  duplicate_member: "이미 이 프로젝트의 멤버입니다.",
+  // 존재하지 않는 멤버를 제거하려 할 때.
+  member_not_found: "해당 멤버를 찾을 수 없습니다.",
 };
 
 export function errorText(e: unknown): string {

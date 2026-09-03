@@ -27,6 +27,8 @@ export function AppLayout() {
                 {label}
               </NavLink>
             ))}
+            {/* ADR 0006 §4: 멤버십 관리는 전역 admin 만 — 프로젝트 역할과 무관하다. */}
+            {auth.role === "admin" && <NavLink to={`/projects/${id}/members`}>멤버</NavLink>}
           </nav>
         )}
         <div className="spacer" />

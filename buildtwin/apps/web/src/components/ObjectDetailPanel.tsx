@@ -4,9 +4,9 @@
  */
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useObjectDetail, useTransition } from "../api/hooks";
-import type { Evidence, NextAction, NextActionKind, ObjectDetail, StateTransition, UserRole } from "../api/types";
-import { ACTOR_LABELS, STATE_LABELS_KO } from "../domain/labels";
+import { useObjectDetail, useProjectRole, useTransition } from "../api/hooks";
+import type { Evidence, NextAction, NextActionKind, ObjectDetail, ProjectRole, StateTransition } from "../api/types";
+import { ACTOR_LABELS, ROLE_LABELS, STATE_LABELS_KO } from "../domain/labels";
 import { fmtDate, fmtNum } from "../lib/format";
 import { useStore } from "../store";
 import { ConfidenceBadge } from "./ConfidenceBadge";
@@ -284,7 +284,7 @@ const CM_ONLY_KINDS: ReadonlySet<NextActionKind> = new Set([
 const isConfirmAction = (a: NextAction) => a.kind === "confirm" || a.to_state === "CONFIRMED";
 
 /** 화면에서 직접 누른 전이의 근거. 확정(cm)은 cm_action, 그 외 수동 입력은 user_input. userId 없으면 호출하지 않는다. */
-function evidenceFor(role: UserRole, userId: string, action: NextAction, note: string): Evidence {
+function evidenceFor(role: ProjectRole, userId: string, action: NextAction, note: string): Evidence {
   return {
     source_type: role === "cm" && isConfirmAction(action) ? "cm_action" : "user_input",
     source_id: userId,
@@ -293,7 +293,9 @@ function evidenceFor(role: UserRole, userId: string, action: NextAction, note: s
 }
 
 function ActionsTab({ d, projectId }: { d: ObjectDetail; projectId?: string }) {
-  const role = useStore((s) => s.auth.role);
+  // ADR 0006: 행동 가능 여부는 이 프로젝트에서의 역할(project role)로 정한다 — 전역 auth.role 이 아니다.
+  // admin 은 my_role=null 이라 어떤 프로젝트에서도 행위 버튼이 뜨지 않는다(서버와 동일).
+  const { role, isLoading: roleLoading } = useProjectRole(projectId);
   const userId = useStore((s) => s.auth.userId);
   const transition = useTransition(projectId ?? "", d.basic.global_id);
   const [pending, setPending] = useState<NextAction | null>(null);
@@ -327,10 +329,13 @@ function ActionsTab({ d, projectId }: { d: ObjectDetail; projectId?: string }) {
     );
   };
 
+  // 프로젝트 역할 로딩 중에는 "행동 없음"을 먼저 그리지 않는다 — cm 인데 잠깐 빈 화면을 보여주는 깜빡임 방지.
+  if (roleLoading) return <p className="muted">불러오는 중…</p>;
+
   if (visible.length === 0)
     return (
       <div>
-        <p className="muted">현재 역할({role ?? "-"})로 수행 가능한 행동이 없습니다.</p>
+        <p className="muted">현재 프로젝트 역할({role ? ROLE_LABELS[role] : "-"})로 수행 가능한 행동이 없습니다.</p>
         {message && <p role="status">{message}</p>}
       </div>
     );

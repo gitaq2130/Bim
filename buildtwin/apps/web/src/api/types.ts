@@ -27,6 +27,11 @@ export const OBJECT_STATES: readonly ObjectState[] = [
 
 export type Actor = "system" | "contractor" | "cm";
 export type UserRole = "contractor" | "cm" | "client" | "admin";
+/**
+ * ADR 0006: 프로젝트 범위 인가는 이 값(project_members.role)으로 하지, 전역 UserRole로 하지 않는다.
+ * admin은 이 집합에 없다 — 멤버십 없이 조회만 가능하고 행위 역할이 없다(ProjectView.my_role=null로 표현).
+ */
+export type ProjectRole = "contractor" | "cm" | "client";
 
 // ---- coordinate.py ----
 export type CoordinateSource =
@@ -325,10 +330,26 @@ export interface Project {
   name: string;
   created_at?: string;
   description?: string | null;
+  /** ADR 0006 §3 규칙 4: 호출자의 이 프로젝트 역할. admin=null(행위 역할 없음). 화면은 이 값으로 버튼을 가린다. */
+  my_role?: ProjectRole | null;
 }
 export interface ProjectCreate {
   name: string;
   description?: string;
+}
+
+// ---- 멤버십 (ADR 0006 §4) ----
+export interface ProjectMember {
+  project_id: string;
+  user_id: string;
+  email?: string | null;
+  role: ProjectRole;
+  added_by?: string | null;
+  added_at?: string | null;
+}
+export interface ProjectMemberCreate {
+  user_id: string;
+  role: ProjectRole;
 }
 
 export interface UploadResponse {

@@ -21,7 +21,11 @@ export type KnownApiErrorCode =
   | "inspection_confirm_failed"
   | "duplicate_project"
   | "object_not_found"
-  | "forbidden_role";
+  | "forbidden_role"
+  | "project_not_found"
+  | "user_not_found"
+  | "duplicate_member"
+  | "member_not_found";
 
 /**
  * 서버 에러 바디의 안정적 원인 식별자. `detail` 은 사람이 읽는 문구(오늘의 동작 유지),
