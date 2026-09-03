@@ -1,8 +1,11 @@
 # ADR 0007 — 문서관리대장(Document Register) 연동과 `drawing_approval` 근거화
 
-- 상태: Accepted (개정 2: 2026-09-03 — 9차 리뷰: 코드가 앞서고 문서가 뒤따르지 못한 동작 4건 반영 — 문서 고아화 시
-  `document_mapping` 검토요청의 `on_hold` 자동 종료·복귀[§4 규칙 6], 매핑 재계산 시점[§4-3 신설], `DOCUMENT_UNMAPPED`
-  경고 등록[§8], `UnsafeConfigOverrideError`[§9 신설])
+- 상태: Accepted (개정 3: 2026-09-03 — 10차 리뷰: `document_mapping` 검토요청 생애주기에 ⑥ 반려 단계 반영
+  [§4-2 규칙 6], `reviewed_by` 재사용 설계와 그로 인한 두 누수·방어[§4-2 규칙 6 신설 항목], 반려의 영구성과
+  확정과의 비대칭[§4-2 규칙 6 신설 항목], `_drop_already_confirmed`가 확정·반려 공통 필터임을 명시[§4-2 규칙 6],
+  §5-2·§6-1의 "확정 매핑" 표현이 반려를 제외함을 정정. 개정 2: 2026-09-03 — 9차 리뷰: 코드가 앞서고 문서가
+  뒤따르지 못한 동작 4건 반영 — 문서 고아화 시 `document_mapping` 검토요청의 `on_hold` 자동 종료·복귀[§4 규칙 6],
+  매핑 재계산 시점[§4-3 신설], `DOCUMENT_UNMAPPED` 경고 등록[§8], `UnsafeConfigOverrideError`[§9 신설])
 - 작성: architect
 - 날짜: 2026-09-03
 - 관련: CLAUDE.md §0(핵심 원칙 — "AI는 추정까지, 확정은 사람" / 모든 판정에 confidence·evidence), §3 규칙 3·5·7·8·10·11,
@@ -273,8 +276,9 @@ class DocumentApprovalStatus(str, Enum):
 
    따라서 `MAPPING_REVIEW_THRESHOLD`(0.7)는 문서 매핑에 적용되지 않는다. confidence는 **검토 큐 정렬과 후보 하한**에만
    쓴다.
-6. **`document_mapping` 검토요청은 다섯 단계의 생애주기를 가진다**(개정 2 — 이 항목을 확장한다.
-   `services/progress/document_mapper.py`가 전체를 소유하며 API는 호출만 한다, CLAUDE.md §3 규칙 11):
+6. **`document_mapping` 검토요청은 여섯 단계의 생애주기를 가진다**(개정 3 — ⑥ 반려를 추가한다. 개정 2가
+   먼저 다섯 단계로 확장했다. `services/progress/document_mapper.py`가 전체를 소유하며 API는 호출만 한다,
+   CLAUDE.md §3 규칙 11):
 
    | 단계 | 트리거 | 구현 | 결과 |
    |---|---|---|---|
@@ -283,6 +287,7 @@ class DocumentApprovalStatus(str, Enum):
    | ③ 확정 시 종료 | CM이 매핑을 확정(`needs_review=False`, `reviewed_by=<user_id>`) | `close_document_mapping_review`(`services/api/usecases.confirm_document_mapping`이 매핑 저장 직후 호출) | `status="approved"`, `resolved_by=<user_id>`, `resolution_note="mapping confirmed by <user_id>"` |
    | ④ 고아화 시 종료 | 매핑이 가리키는 문서가 `is_orphaned=True`가 되거나(대장 재업로드에서 그 doc_type 안에 더 이상 없음, §2-2 규칙 2) 문서 행 자체가 없어짐 | `_close_reviews_for_orphaned_documents` | `status="on_hold"`, **`resolved_by`는 채우지 않는다**, `resolution_note`에 고아화 사유를 남긴다(아래 판단 근거) |
    | ⑤ 복귀(재생성) | ④로 닫힌 문서가 이후 대장에 다시 나타나 `is_orphaned=False`가 되고, 매핑 후보 조건(제목 유사도 등, §4-2)을 다시 만족 | `map_documents_to_activities` → ①이 같은 파이프라인을 다시 돈다 | **새** `ReviewRequest(status="open")`가 생긴다(과거 `on_hold` 행을 재사용하지 않는다 — `open_document_mapping_review`는 `status="open"`만 조회하므로) |
+   | ⑥ 반려(개정 3 — 10차 리뷰) | CM이 검토 큐에서 `document_mapping` 요청을 반려(`resolve_review`에 `decision="rejected"`) | `services/api/usecases.resolve_review`(공통 처리부) → `services/progress/document_mapper.reject_document_mapping` | 요청은 `status="rejected"`로 닫힌다(`resolved_by=<user_id>`, `resolution_note=<note>` — ③·④와 달리 사람의 판단이므로 `approved`/`rejected` 자리를 그대로 쓴다). **매핑 행은 삭제되지 않는다.** `reviewed_by=<user_id>`, `needs_review=False`, `evidence.extra.mapping_review_decision="rejected"`(+`rejected_by`/`rejected_at`/`rejection_note`)로 표시만 남는다. 재계산이 같은 `(activity_id, doc_id)` 후보를 다시 만들지 않는다(아래 `_drop_already_confirmed`) |
 
    **④의 `on_hold`가 ADR 0001 §6과 맺는 관계 — architect 판단(개정 2).** ADR 0001 §6은 시스템이 만드는 `on_hold`를
    "대체된 요청(예: 도면 재정합으로 무의미해진 mapping 검토요청, `resolution_note`에 `superseded_by=<new id>`)"으로
@@ -317,6 +322,55 @@ class DocumentApprovalStatus(str, Enum):
    같은 구조 — 확정 이후는 사람만 되돌릴 수 있다). 재생성 대상은 **확정된 적 없이** 고아가 된(고아가 되는 순간까지
    `needs_review=True`였던) 매핑뿐이다.
 
+   **⑥의 설계 — `reviewed_by` 재사용.** 반려를 위해 `ActivityDocumentMappingRow`에 컬럼을 늘리지 않고 기존
+   `reviewed_by`를 반려에도 쓴다. `ActivityDocumentMapping`(packages/core/models/document.py) 모델이
+   `needs_review = (reviewed_by is None)`을 검증기로 강제하므로(§4 규칙 5), `reviewed_by`를 채우는 것만으로
+   "사람이 이 `(activity_id, doc_id)` 쌍을 판단했다"(확정이든 반려든)가 그대로 표현되고, 바로 위 `_drop_already_confirmed`의
+   기존 필터(`existing.reviewed_by is not None`)가 코드 변경 없이 반려된 쌍도 걸러준다. 확정과 반려는
+   `evidence.extra.mapping_review_decision`(반려는 `"rejected"`, 확정은 이 키 자체가 없음)으로 구분하며,
+   `rejected_by`·`rejected_at`·`rejection_note`도 같은 `extra`에 남는다. `evidence.source_type`/`.method`는
+   시스템이 제안했을 때의 값(`document`/`document_title_match`)을 반려 시에도 보존한다 — 확정 시 evidence를
+   덮어쓰지 않는 아래 규칙 7과 같은 원칙이다. **매핑 행을 삭제하지 않는 이유**는 규칙 7과 동일하다 — "왜
+   반려됐는가"를 나중에 감사할 수 있어야 한다.
+
+   **⑥이 만드는 두 누수와 그 방어(반드시 지킬 것).** `reviewed_by` 재사용은 `needs_review=False`를 함께
+   만들기 때문에, 방어가 없으면 기존 코드 두 곳이 "반려된 매핑"을 "확정된 매핑"으로 잘못 읽는다.
+
+   - **누수 A — readiness/검증 증거 오염.** `confirmed_required_documents`(§5-2·§6-1이 공유하는 집계 함수)는
+     `not m.needs_review`로 "확정 문서"를 걸렀는데, 반려된 매핑도 `needs_review=False`라 방어가 없으면
+     **반려한 문서가 도면 승인 AND 조건(§5-1)과 3중 검증 `logic` 축(§6-1)의 증거로 그대로 들어간다.**
+   - **누수 B — 죽은 반려의 부활.** 바로 위 문단의 `_reopen_reviews_for_invalidated_confirmations`(9차 리뷰가
+     추가한 재확인 로직)는 `reviewed_by is not None`인 행을 전부 확정 매핑으로 보고 Activity가 바뀌면 재확인
+     요청을 다시 여는데, 방어가 없으면 **반려된 매핑도 Activity가 바뀔 때마다 "재확인 필요"로 되살아난다**
+     — ⑥이 고치려는 문제(반려한 매핑이 되살아난다)를 검토요청 쪽에서 그대로 재현하는 셈이다.
+
+     두 곳 모두 `evidence.extra.mapping_review_decision`으로 걸러 막았다(`confirmed_required_documents`는
+     반려된 매핑을 확정 목록에서 빼고, `_reopen_reviews_for_invalidated_confirmations`는 반려된 행을 순회에서
+     건너뛴다). **이 저장소에 남는 불변식**: `reviewed_by`는 확정과 반려 둘 다를 뜻하므로, 이 필드만으로
+     "확정됐다"를 판별하는 모든 코드는 `evidence.extra.mapping_review_decision`을 함께 봐야 한다. 앞으로
+     `reviewed_by is not None`을 확정의 근거로 쓰는 새 코드를 추가할 때는 이 규칙을 반드시 따를 것.
+
+   **반려는 영구하다 — 확정과의 비대칭.** 확정 매핑은 Activity가 바뀌면 재확인 요청이 다시 열리지만(바로 위
+   `_reopen_reviews_for_invalidated_confirmations`가 하는 일), 반려는 그러지 않는다(위 누수 B 방어). 근거는
+   비대칭적이다:
+
+   - 확정 매핑은 readiness·3중 검증의 **증거로 실제 사용된다**(누수 A 방어가 반려를 걸러내는 바로 그 자리에
+     확정은 그대로 남는다). 그 근거가 흔들리는데(Activity 이름·층·구역이 바뀌어 더는 판별 토큰이 맞지 않는
+     경우 등) 침묵하면 낡은 증거가 착수 가능 판단을 계속 오염시킨다 — 안전 문제이므로 CM에게 다시 넘긴다.
+   - 반려된 매핑은 누수 A 방어로 **애초에 증거로 쓰이지 않으므로** 같은 위험이 없다. "이 문서는 이 작업과
+     무관하다"는 CM의 판단이 Activity 표기가 바뀌었다는 이유로 뒤집힐 근거도 없다 — 되살리면 CM이 이미 내린
+     결정을 시스템이 스스로 무시하는 것과 같다.
+   - **문서 쪽의 대칭은 별도 코드 없이 공짜로 성립한다.** `doc_id`는 title(및 sender·seq)을 재료로 한 결정적
+     해시다(§2-1). 문서 제목이 바뀌면 `doc_id`가 바뀌어 **다른 문서**가 되고, 반려는 옛 `(activity_id, doc_id)`
+     쌍에 매달려 있으므로 새 `doc_id`는 반려 표시가 전혀 없는 새 후보로 취급된다 — 키 설계가 이미 그렇게
+     동작하므로 Activity 쪽처럼 별도 재확인 로직을 둘 필요가 없다.
+
+   **`_drop_already_confirmed`는 이제 확정·반려 공통 필터다.** 이 함수명은 "확정만 거른다"는 인상을 주지만,
+   ⑥ 이후로는 `existing.reviewed_by is not None`(확정이든 반려든)이면 재계산 후보를 버린다 — 함수 이름이
+   실제 역할보다 좁다. `progress-engine`이 이 이름을 직접 인용하는 이 규칙과 문서·코드 명칭이 어긋나는 것을
+   피하려 일부러 개명하지 않았다. 다음에 이 함수를 고치는 사람은 이름만 보고 "확정된 매핑만 다룬다"고 오해하지
+   말 것.
+
    새 kind의 해소는 `services/progress`가 소유한다(CLAUDE.md §3 규칙 11: API는 호출만).
 7. 매핑 `evidence`: `Evidence(source_type="document", source_id=<doc_id>, method="document_title_match",
    note=<title 원문>, extra={"title_similarity": ..., "matched_rules": [...], "excluded_by": [...],
@@ -345,9 +399,10 @@ class DocumentApprovalStatus(str, Enum):
 | 공정표 업로드 시 | `services/api/jobs.run_schedule` | **회복 경로.** 대장이 공정표보다 먼저 올라오는 순서(현장에서 흔하다 — 대장은 매주, 공정표는 가끔 갱신)에서는 대장 적재 시점에 매핑할 Activity 가 하나도 없어 매핑이 0건으로 남는다. 공정표가 뒤늦게 들어오면 그 자리에서 한 번 더 돌려 회복시킨다 |
 | 수동 요청 시 | `services/api/usecases.generate_document_mappings`(cm만, §7) | 운영자가 명시적으로 재계산을 트리거하는 경로. 자동 두 경로 중 아무것도 아직 안 돌았거나, 설정(`title_matching`·`mapping_weights`)을 바꾼 뒤 다시 확인하고 싶을 때 쓴다 |
 
-세 경로 모두 **같은 함수를 그대로 호출**하므로 §4-2 규칙 6의 다섯 단계(생성/중복 방지/확정 시 종료/고아화 시
-종료/복귀)는 호출 시점과 무관하게 동일하게 적용된다 — 대장 업로드가 만든 검토요청을 공정표 업로드가 다시 돌며
-중복 생성하지 않는 것도, 공정표 업로드가 방금 고아 처리된 문서의 요청을 닫는 것도 같은 코드 경로다.
+세 경로 모두 **같은 함수를 그대로 호출**하므로 §4-2 규칙 6의 여섯 단계(생성/중복 방지/확정 시 종료/고아화 시
+종료/복귀/반려)는 호출 시점과 무관하게 동일하게 적용된다 — 대장 업로드가 만든 검토요청을 공정표 업로드가 다시 돌며
+중복 생성하지 않는 것도, 공정표 업로드가 방금 고아 처리된 문서의 요청을 닫는 것도, 재계산이 CM이 반려한
+`(activity_id, doc_id)` 쌍을 되살리지 않는 것도(⑥) 같은 코드 경로다.
 
 **부가 회복이 본 작업을 인질로 잡지 않는다.** `run_schedule`의 존재 이유는 공정표를
 적재하는 것이고, 문서 매핑 재계산은 **그 김에 하는 부가 회복**이다. 따라서 문서 매핑 쪽에서 나는 실패(예:
@@ -370,7 +425,8 @@ job 을 `"done"`으로 끝낸다(`services/api/jobs.py`, `run_scan_upload`의 `P
 
 #### 5-1. 값 산출: 비율이 아니라 논리곱(AND)
 
-**매핑·확정된 필수 문서가 전부 승인이면 1.0, 하나라도 아니면 0.0.** 비율을 쓰지 않는다.
+**매핑·확정된(반려는 제외 — §4-2 규칙 6 ⑥) 필수 문서가 전부 승인이면 1.0, 하나라도 아니면 0.0.** 비율을
+쓰지 않는다.
 
 근거: 도면 승인은 착수의 **AND 조건**이다. 10장 중 9장 승인은 "0.9만큼 착수 가능"이 아니라 착수 불가다. 비율을 쓰면
 9/10 = 0.9가 되어 가중합에서 `start_threshold: 0.75`를 넘겨 **착수 가능으로 뜬다** — 실무적으로 틀린 답이다.
@@ -385,7 +441,7 @@ job 을 `"done"`으로 끝낸다(`services/api/jobs.py`, `run_scan_upload`의 `P
 
 | 순위 | 조건 | `value` | `missing` | 비고 |
 |---|---|---|---|---|
-| 1 | **확정된**(`needs_review=False`) 매핑 중 `required_doc_types`에 속하고 `is_orphaned=False`인 문서가 1건 이상 | 전부 `approved_statuses`면 `1.0`, 아니면 `0.0` | 규칙 5 참조 | 문서 근거 |
+| 1 | **확정되고 반려되지 않은**(`needs_review=False` 이고 `evidence.extra.mapping_review_decision != "rejected"` — §4-2 규칙 6 ⑥) 매핑 중 `required_doc_types`에 속하고 `is_orphaned=False`인 문서가 1건 이상 | 전부 `approved_statuses`면 `1.0`, 아니면 `0.0` | 규칙 5 참조 | 문서 근거 |
 | 2 | 위가 0건 & `resources.drawing_approved`가 존재 | `>= 1.0`이면 `1.0`, 아니면 `0.0` | `False` | **기존 동작 그대로** |
 | 3 | 둘 다 없음 | `component_defaults.drawing_approval_unknown`(0.5) | `True` | **기존 동작 그대로** |
 
@@ -393,8 +449,15 @@ job 을 `"done"`으로 끝낸다(`services/api/jobs.py`, `run_scan_upload`의 `P
    플래그는 누군가 넣은 **주장**이다. 사실이 주장을 이긴다.
 2. 두 근거가 충돌할 때(문서=미승인인데 플래그=1) 값은 `0.0`이고 `evidence.extra`에
    `manual_flag_overridden: true`를 남긴다. 조용히 무시하지 않는다.
-3. **미확정(`needs_review=True`) 매핑은 순위 1에 들어가지 않는다**(§4 규칙 5). 사람 확정 없이 AI 매핑이 착수 가능
-   판단을 바꾸면 CLAUDE.md §0 핵심 원칙 위반이다.
+3. **미확정(`needs_review=True`) 매핑과 반려된 매핑은 순위 1에 들어가지 않는다**(§4 규칙 5, §4-2 규칙 6 ⑥).
+   미확정은 사람 확인 전이므로 근거가 아니고, 반려는 CM이 "이 문서는 이 Activity와 무관하다"고 이미 판단한
+   것이므로 애초에 도면 승인 근거가 아니다 — 사람 확정 없이 AI 매핑이, 또는 CM이 무관하다고 반려한 매핑이
+   착수 가능 판단을 바꾸면 CLAUDE.md §0 핵심 원칙 위반이다. 반려도 `needs_review=False`이므로(§4-2 규칙 6 ⑥의
+   `reviewed_by` 재사용) `confirmed_required_documents`가 `evidence.extra.mapping_review_decision`으로 별도로
+   걸러낸다 — `not m.needs_review` 하나만으로는 반려를 걸러낼 수 없다(누수 A, §4-2 규칙 6).
+   **부수 효과**: 어떤 Activity의 문서 매핑 후보가 전부 반려되고 확정된 것이 하나도 없으면, 그 Activity는
+   순위 2·3으로 떨어진다 — 반려된 매핑만 있는 상태는 "문서 근거가 아예 없는 상태"와 같게 취급된다(대기
+   매핑도 아니므로 `missing`도 그 반려로는 켜지지 않는다).
 4. **`UNKNOWN` 상태 문서는 "승인 아님"으로 계산된다**(§3-2 규칙 2). 값은 `0.0`이 되고, 그것이 "모른다"임을
    `missing`과 `reason`이 구분해 알린다 — 미승인(REJECTED)과 모름(UNKNOWN)은 blocker 문구에서 구분된다.
 5. **`missing`(→ readiness `confidence` 감점) 규칙**:
@@ -403,8 +466,8 @@ job 을 `"done"`으로 끝낸다(`services/api/jobs.py`, `run_scan_upload`의 `P
    **confidence**에 반영한다. 기존 `confidence = 1 - 결측 구성요소 비율` 식을 그대로 쓴다.
 6. `is_orphaned=True` 문서(최근 대장에서 사라진 행)는 순위 1의 분모·분자 어디에도 넣지 않는다.
 7. **어떤 문서를 "필수"로 볼지**는 `document_approval.required_doc_types`(기본 `[TFA]`)로 정한다. 필수는
-   **"그 Activity에 확정 매핑된 문서 중 이 종류에 속하는 것"**이다 — 문서가 없는데 요구사항을 발명하지 않는다.
-   TFR/FI/RFI 등은 저장·조회는 되지만 readiness를 움직이지 않는다.
+   **"그 Activity에 확정되고 반려되지 않은 매핑 문서 중 이 종류에 속하는 것"**이다 — 문서가 없는데 요구사항을
+   발명하지 않는다. TFR/FI/RFI 등은 저장·조회는 되지만 readiness를 움직이지 않는다.
 8. `document_approval.enabled: false`면 순위 1을 건너뛰어 완전히 기존 동작으로 되돌린다(킬 스위치).
 
 #### 5-3. Blocker 표현 — 기존 구조 안에서
@@ -470,12 +533,12 @@ job 을 `"done"`으로 끝낸다(`services/api/jobs.py`, `run_scan_upload`의 `P
 
 | 필드 | 타입 | 의미 |
 |---|---|---|
-| `logic.document_evidence_available` | `bool` | 그 객체 귀속 Activity들에 **확정 매핑된 필수 문서**가 1건 이상 있는가 |
+| `logic.document_evidence_available` | `bool` | 그 객체 귀속 Activity들에 **확정되고 반려되지 않은 매핑 필수 문서**(§5-2 규칙 3·7과 같은 정의 — `confirmed_required_documents`를 그대로 공유)가 1건 이상 있는가 |
 | `logic.drawing_approval_status` | `"approved" \| "not_approved" \| "unknown"` | 위가 `False`면 언제나 `"unknown"`. `True`면 전부 승인 시 `"approved"`, 아니면 `"not_approved"` |
 | `logic.unapproved_document_count` | `int` | 미승인(승인 아님) 필수 문서 수. 근거가 없으면 `0` |
 | `logic.unapproved_document_numbers` | `list[str]` | 위 문서들의 `doc_number`(표시용). 검토요청 문구에 쓴다 |
 | `logic.pending_document_mappings` | `int` | `needs_review=True` 문서 매핑 수 |
-| `logic.rejected_document_count` | `int` | 확정 매핑된 필수 문서 중 `approval_status == REJECTED`(반려)인 것의 수. `document_evidence_available`이 `False`면 언제나 `0`. **개정 1** — 아래 설명 참고 |
+| `logic.rejected_document_count` | `int` | 확정되고 반려되지 않은 매핑 필수 문서 중 `approval_status == REJECTED`(**문서 반려** — 발주처가 대장에 명시적으로 거부라고 적은 것)인 것의 수. `document_evidence_available`이 `False`면 언제나 `0`. **개정 1** — 아래 설명 참고. **개정 3 주의**: 이름이 같은 "반려"라도 이 필드의 반려는 §4-2 규칙 6 ⑥의 "**매핑** 반려"(CM이 문서↔Activity 매핑 후보가 무관하다고 반려)와 다른 개념이다 — 전자는 `documents.approval_status`(대장의 처리결과), 후자는 `activity_document_mappings.evidence.extra.mapping_review_decision`(매핑의 검토 결과)에 남는다. 매핑이 반려되면 그 문서는 애초에 이 카운트의 분모(확정되고 반려되지 않은 매핑)에서 빠지므로, 매핑 반려는 이 필드를 절대 늘리지 않는다 |
 
 **개정 1 — `logic.rejected_document_count` 신설.** 초판 표에는 이 필드가 없었다. `knowledge`가
 `rules/verification.yaml`을 구현하며 VER-008/009를 가르는 조건으로 신설했고(`services/progress/verification.py`
@@ -645,6 +708,14 @@ VER-008(반려, confidence 0.9)과 VER-009(그 외 미승인, confidence 0.6)를
 
 ## Consequences
 
+- **(개정 3) CM이 잘못된 매핑 후보를 영구히 치울 수 있지만, `reviewed_by` 하나로 확정과 반려를 함께 표현하는
+  선택은 "확정됨"을 판별하는 모든 코드에 새 의무를 지운다.** `document_mapping` 검토요청을 반려하면 매핑 행은
+  지워지지 않고 `reviewed_by`/`evidence.extra.mapping_review_decision="rejected"`로 표시만 남아 재계산이 다시
+  만들지 않는다(§4-2 규칙 6 ⑥) — CM이 같은 후보를 대장 재업로드마다 매번 다시 반려할 필요가 없다. 그 대가로
+  `reviewed_by is not None`을 "확정됐다"의 증거로 쓰던 기존 코드(readiness·3중 검증의 문서 증거 집계, Activity
+  변경 시 재확인 요청을 다시 여는 로직) 둘 다 반려도 함께 걸려들 뻔했고, `evidence.extra.mapping_review_decision`
+  로 걸러 막았다(누수 A·B, §4-2 규칙 6). 다음에 이 필드를 확정의 근거로 삼는 코드를 추가할 때는 같은 실수를
+  반복하지 않도록 이 두 사례를 참고할 것.
 - **(개정 2) 문서 고아화가 검토 큐를 스스로 청소하지만, config 오타 하나가 넓은 반경을 멈출 수 있다.**
   `document_mapping` 검토요청은 문서가 고아가 되면 자동으로 `on_hold`로 닫히고 문서가 돌아오면 자동으로 다시
   열린다(§4-2 규칙 6) — CM이 죽은 요청을 손으로 정리할 필요가 없다. 그 대가로 `readiness.yaml`/

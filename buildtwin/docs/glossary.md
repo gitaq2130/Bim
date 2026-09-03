@@ -274,7 +274,21 @@ reviewer 4차 지적 1: 동일 상태코드(특히 409)가 서로 무관한 여�
 
 | 한국어 | 영어(식별자) | 정의 |
 |---|---|---|
-| 검토요청 복귀 | `review revival` | `document_mapping` 검토요청이 `on_hold`(고아화)로 닫힌 뒤, 그 문서가 대장에 다시 나타나면 **새** `ReviewRequest`가 자동으로 다시 열리는 것(옛 `on_hold` 행을 재사용하지 않음 — `open_document_mapping_review`는 `status="open"`만 조회). 이미 확정된(`reviewed_by is not None`) 매핑은 복귀 대상이 아니다(ADR 0007 §4-2 규칙 6 개정 2) |
+| 검토요청 복귀 | `review revival` | `document_mapping` 검토요청이 `on_hold`(고아화)로 닫힌 뒤, 그 문서가 대장에 다시 나타나면 **새** `ReviewRequest`가 자동으로 다시 열리는 것(옛 `on_hold` 행을 재사용하지 않음 — `open_document_mapping_review`는 `status="open"`만 조회). 이미 사람이 판단한(확정이든 반려든, `reviewed_by is not None`) 매핑은 복귀 대상이 아니다(ADR 0007 §4-2 규칙 6 개정 2·개정 3) |
 | 매핑 재계산 시점 | `mapping resync triggers` | `map_project_documents`가 다시 도는 세 지점 — 대장 업로드 시(정상 경로) / 공정표 업로드 시(대장이 먼저 올라온 순서를 회복하는 부가 경로) / 수동 요청 시(`generate_document_mappings`, cm만). 부가 경로(공정표 업로드)의 실패는 본 작업(공정표 적재)을 롤백시키지 않아야 한다는 원칙이 딸려 있다 — "부가 회복이 본 작업을 인질로 잡지 않는다"(ADR 0007 §4-3) |
 | 매핑되지 않은 문서 경고 | `DOCUMENT_UNMAPPED` | 어떤 Activity 에도 매핑 후보가 없는 문서가 있을 때 `JobRow.warnings`에 실리는 경고 code(`services/progress/document_mapper`). 대장이 공정표보다 먼저 올라왔거나 제목 유사도가 임계값 미만인 경우 등을 알린다. 발화 조건은 `progress-engine`이 소유하며 이 ADR은 고정하지 않는다(ADR 0007 §8 규칙 6). `config/document_register.yaml`의 `import_warnings` 카탈로그(snake_case)와 대소문자 스타일이 다르다는 점도 등록해 둔다 |
 | 설정 불변식 위반 예외 | `UnsafeConfigOverrideError` (`services/progress/config_loader`, `ValueError` 서브클래스) | `readiness.yaml`/`document_register.yaml`의 특정 키(§9-2, 4개)가 코드에 하드코딩된 안전 불변식과 다른 값으로 바뀌면 로딩 시점에 던지는 예외. 조용히 무시하지 않는 이유는 "설정했으니 됐다"는 잘못된 믿음이 가장 위험하기 때문(ADR 0007 §9-1). **폭발 반경**(ADR 0007 §9-3): `readiness.yaml` 오염은 readiness·startable API 요청을 500으로(요청 단위) 만들고, 3중 검증 `logic` 축을 만드는 verdict job도 함께 `failed`로 만든다(job 단위 — `build_logic_context`가 무조건 호출). `document_register.yaml` 오염은 대장 업로드 job을 `failed`로 만들며 오늘 코드 기준으로는 공정표 업로드 job도 함께 `failed`가 된다(§4-3의 "부가 회복이 본 작업을 인질로 잡지 않는다" 원칙을 아직 못 지키는 상태 — api가 수정 중). 어느 경우도 프로세스는 안 죽는다 |
+
+## ADR 0007 개정 3 추가 항목 (architect, 2026-09-03) — 10차 리뷰: 매핑 반려
+
+`document_mapping` 검토요청 생애주기에 ⑥ 반려가 더해지며 도입된 개념(ADR 0007 §4-2 규칙 6). **핵심은
+`reviewed_by`를 확정과 반려가 공유한다는 것**이다 — 이 필드 하나로 "확정됐다"를 판별하던 기존 코드는 이제
+`mapping_review_decision`을 함께 봐야 한다.
+
+| 한국어 | 영어(식별자) | 정의 |
+|---|---|---|
+| 매핑 반려 | `mapping rejection` (`reject_document_mapping`, `services/progress/document_mapper`) | CM이 `document_mapping` 검토요청을 검토 큐에서 반려(`resolve_review`에 `decision="rejected"`)하면 대응 `ActivityDocumentMappingRow`에 남는 영구 표시. **매핑 행을 삭제하지 않는다** — 감사를 위해 남긴다(ADR 0007 §4-2 규칙 7과 같은 원칙). 확정과 달리 Activity가 바뀌어도 되살아나지 않는다(§4-2 규칙 6 ⑥) — 확정은 readiness·3중 검증의 증거로 쓰이므로 근거가 흔들리면 재확인이 필요하지만, 반려는 애초에 증거로 쓰이지 않으므로 같은 위험이 없다. `doc_id`가 title의 해시라 문서 제목이 바뀌면 자동으로 새 후보가 되는 것과 대칭이다(별도 코드 불필요) |
+| 매핑 검토 결정 | `mapping_review_decision` (`ActivityDocumentMapping.evidence.extra.mapping_review_decision`) | 매핑 반려의 표시값. 값은 `"rejected"` 하나뿐 — 확정된 매핑에는 이 키 자체가 없다. `reviewed_by is not None`을 "확정됐다"의 근거로 쓰는 모든 코드는 이 값도 함께 확인해야 확정과 반려를 구분할 수 있다(§4-2 규칙 6 ⑥의 "누수 A·B" 방어가 이 원칙의 실제 적용 사례) |
+| 반려 근거 필드 | `Evidence.extra` 의 `rejected_by` / `rejected_at` / `rejection_note` | 매핑 반려 시 `mapping_review_decision`과 함께 남는 부가 필드 — 누가·언제·왜 반려했는지. `evidence.source_type`/`.method`는 시스템이 제안했을 때의 값(`document`/`document_title_match`)을 그대로 두고 `note`만 반려 코멘트로 갱신한다(확정 시 evidence를 보존하는 §4-2 규칙 7과 같은 관례) |
+| 확정·반려 공통 필터 | `_drop_already_confirmed` (`services/progress/document_mapper`) | 이름은 "확정만 거른다"는 인상을 주지만 ⑥ 이후로는 `reviewed_by is not None`이면(확정이든 반려든) 재계산 후보에서 제외하는 함수다 — 이름이 실제 역할보다 좁다. ADR 0007 §4-2 규칙 6이 이 이름을 직접 인용하므로 문서·코드 명칭을 맞추기 위해 개명하지 않았다 |
+| 문서 반려 / 매핑 반려 구분 | `documents.approval_status == REJECTED` ≠ `mapping_review_decision == "rejected"` | 같은 한국어 "반려"를 쓰지만 서로 다른 축이다. **문서 반려**는 발주처가 대장 처리결과에 명시적으로 거부라고 적은 것(`logic.rejected_document_count`, ADR 0007 §6-1)이고, **매핑 반려**는 CM이 "이 문서는 이 Activity와 무관하다"고 문서↔Activity 매핑 후보를 반려한 것(위 `mapping rejection`)이다. 매핑이 반려되면 그 문서는 `confirmed_required_documents`의 확정 목록에서 아예 빠지므로, 매핑 반려는 `logic.rejected_document_count`를 절대 늘리지 않는다 |
