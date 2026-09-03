@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from packages.core.models import EntityObjectMapping, Evidence
+from services.sync.errors import DrawingNotFoundError
 from services.sync.persistence import load_alignment, load_mappings, save_alignment, save_mappings
 from services.sync.transform import DrawingAlignment, alignment_to_transform
 
@@ -46,5 +47,5 @@ def test_save_and_load_alignment(session):
     b = load_alignment(session, "d1")
     assert b == a
     assert load_alignment(session, "missing") is None
-    with pytest.raises(LookupError):
+    with pytest.raises(DrawingNotFoundError):
         save_alignment(session, "missing", a)

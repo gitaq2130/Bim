@@ -3,6 +3,7 @@
 계약: (drawing_id, entities, objects, DrawingAlignment?) → EntityObjectMapping[]{confidence, evidence, needs_review}.
 """
 from .config import SyncConfig, load_sync_config
+from .errors import DrawingNotFoundError, MalformedReviewDataError, MappingTargetNotFoundError
 from .matcher import build_mappings, entity_bbox_model, entity_geometry, typical_member_width
 from .persistence import (
     RebuildResult,
@@ -35,6 +36,7 @@ from .transform import (
 
 __all__ = [
     "SyncConfig", "load_sync_config",
+    "DrawingNotFoundError", "MalformedReviewDataError", "MappingTargetNotFoundError",
     "build_mappings", "entity_bbox_model", "entity_geometry", "typical_member_width",
     "RebuildResult", "load_alignment", "load_mappings", "open_mapping_reviews", "rebuild_mappings", "save_alignment", "save_mappings",
     "level_elevation", "plan_section_from_objects",

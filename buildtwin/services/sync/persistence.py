@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from packages.core.models import EntityObjectMapping, Evidence, ReviewRequest
 from packages.core.models.orm import DrawingRow, EntityObjectMappingRow, ReviewRequestRow
 
+from .errors import DrawingNotFoundError
 from .transform import DrawingAlignment, alignment_to_transform
 
 ALIGNMENT_KEY = "alignment"
@@ -45,7 +46,7 @@ def row_to_mapping(r: EntityObjectMappingRow) -> EntityObjectMapping:
 def _project_id_of_drawing(session: Session, drawing_id: str) -> str:
     row = session.get(DrawingRow, drawing_id)
     if row is None:
-        raise LookupError(f"drawing not found: {drawing_id}")
+        raise DrawingNotFoundError(f"drawing not found: {drawing_id}")
     return row.project_id
 
 
@@ -92,7 +93,7 @@ def save_alignment(session: Session, drawing_id: str, alignment: DrawingAlignmen
     """DrawingRow.alignment = {alignment, transform(4x4 → model)}; coordinate_system 도 정합된 좌표계로 갱신."""
     row = session.get(DrawingRow, drawing_id)
     if row is None:
-        raise LookupError(f"drawing not found: {drawing_id}")
+        raise DrawingNotFoundError(f"drawing not found: {drawing_id}")
     row.alignment = {ALIGNMENT_KEY: alignment.model_dump(mode="json"),
                      TRANSFORM_KEY: alignment_to_transform(alignment).model_dump(mode="json")}
     row.coordinate_system = alignment.to_coordinate_system().model_dump(mode="json")

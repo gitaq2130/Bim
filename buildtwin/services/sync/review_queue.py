@@ -15,6 +15,7 @@ from packages.core.models import EntityObjectMapping, Evidence, ReviewRequest
 from packages.core.models.orm import BimObjectRow, EntityObjectMappingRow, ReviewRequestRow
 
 from .config import SyncConfig, load_sync_config
+from .errors import MalformedReviewDataError, MappingTargetNotFoundError
 from .persistence import _project_id_of_drawing, open_mapping_reviews, row_to_mapping, save_mappings
 
 ReviewDecision = Literal["approved", "rejected"]
@@ -92,8 +93,8 @@ def confirm_mapping_row(session: Session, drawing_id: str, entity_handle: str, g
     _require_user(user_id)
     project_id = _project_id_of_drawing(session, drawing_id)
     if session.get(BimObjectRow, (project_id, global_id)) is None:
-        raise ValueError(f"object not found: global_id={global_id!r} in project={project_id!r} "
-                         f"(drawing={drawing_id!r})")
+        raise MappingTargetNotFoundError(f"object not found: global_id={global_id!r} in project={project_id!r} "
+                                         f"(drawing={drawing_id!r})")
     row = session.scalars(select(EntityObjectMappingRow).where(
         EntityObjectMappingRow.drawing_id == drawing_id, EntityObjectMappingRow.entity_handle == entity_handle)).first()
     if row is not None:
@@ -130,11 +131,16 @@ def resolve_mapping_review(session: Session, row: ReviewRequestRow, decision: Re
     row 가 mapping 검토요청이 아니거나 `conflicting_sources` 에 drawing_id/entity_handle 이 없으면 ValueError.
     """
     if row.kind != "mapping":
+        # 이건 저장된 데이터의 손상이 아니라 호출자(api)가 이 함수에 맞지 않는 row 를 넘긴 것 —
+        # api 는 review_request_id 로 조회한 kind 를 보고 mapping 경로로만 여기 들어와야 한다(사전조건 위반).
+        # 그래서 MalformedReviewDataError 로 묶지 않고 평범한 ValueError 로 남겨, api 의 타입 기반 처리에서
+        # 4xx/5xx 어느 쪽으로도 흡수되지 않고 처리되지 않은 예외로 드러나게 한다(호출자 버그는 감춰서는 안 됨).
         raise ValueError(f"resolve_mapping_review requires a kind='mapping' row, got kind={row.kind!r}")
     cs = row.conflicting_sources or {}
     drawing_id, entity_handle = cs.get("drawing_id"), cs.get("entity_handle")
     if not drawing_id or not entity_handle:
-        raise ValueError(f"malformed mapping review conflicting_sources (missing drawing_id/entity_handle): {cs!r}")
+        raise MalformedReviewDataError(
+            f"malformed mapping review conflicting_sources (missing drawing_id/entity_handle): {cs!r}")
     drawing_id, entity_handle = str(drawing_id), str(entity_handle)
 
     mapping: EntityObjectMapping | None = None

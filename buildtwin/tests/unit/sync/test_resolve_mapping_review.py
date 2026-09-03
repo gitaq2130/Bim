@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from packages.core.models import EntityObjectMapping, Evidence
 from packages.core.models.orm import EntityObjectMappingRow, ReviewRequestRow
+from services.sync.errors import MalformedReviewDataError, MappingTargetNotFoundError
 from services.sync.persistence import open_mapping_reviews, rebuild_mappings
 from services.sync.review_queue import MappingReviewResolution, resolve_mapping_review
 
@@ -76,7 +77,7 @@ def test_approved_rejects_nonexistent_candidate_object(session):
                            confidence=0.3, evidence={"source_type": "mapping", "source_id": D}, status="open")
     s.add(row)
     s.commit()
-    with pytest.raises(ValueError, match="object not found"):
+    with pytest.raises(MappingTargetNotFoundError, match="object not found"):
         resolve_mapping_review(s, row, "approved", user_id="cm-01")
     assert s.scalars(select(EntityObjectMappingRow).where(EntityObjectMappingRow.entity_handle == "C")).first() is None
 
@@ -99,5 +100,5 @@ def test_rejects_malformed_conflicting_sources(session):
                            confidence=0.3, evidence={"source_type": "mapping", "source_id": D}, status="open")
     s.add(row)
     s.commit()
-    with pytest.raises(ValueError, match="malformed"):
+    with pytest.raises(MalformedReviewDataError, match="malformed"):
         resolve_mapping_review(s, row, "approved", user_id="cm-01")

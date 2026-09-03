@@ -7,6 +7,7 @@ from sqlalchemy import select
 from packages.core.models import MAPPING_REVIEW_THRESHOLD, EntityObjectMapping, Evidence
 from packages.core.models.orm import EntityObjectMappingRow, ReviewRequestRow
 from services.sync.config import load_sync_config
+from services.sync.errors import MappingTargetNotFoundError
 from services.sync.persistence import RebuildResult, load_mappings, open_mapping_reviews, rebuild_mappings
 from services.sync.review_queue import confirm_mapping_row, resolve_mapping_reviews
 from services.sync.rules import layer_rule_score, load_layer_rules
@@ -108,7 +109,7 @@ def test_rebuild_keeps_confirmed_rows_and_manual_mappings(session):
 def test_confirm_mapping_row_rejects_nonexistent_object(session):
     """reviewer round-3 observation 7: confirm_mapping_row 은 (project_id, global_id) 가 실제로 존재하는지 확인해야 한다."""
     s = session
-    with pytest.raises(ValueError, match="object not found") as exc_info:
+    with pytest.raises(MappingTargetNotFoundError, match="object not found") as exc_info:
         confirm_mapping_row(s, D, "A", "G-GHOST", user_id="cm-01")
     msg = str(exc_info.value)
     assert "G-GHOST" in msg and P in msg and D in msg   # 메시지에 project/global_id/drawing 모두 명시
@@ -124,7 +125,7 @@ def test_confirm_mapping_row_rejects_object_from_other_project(session):
     make_bim_object(s, P2, "G-OTHER", model_id="m2")
     s.commit()
 
-    with pytest.raises(ValueError, match="object not found"):
+    with pytest.raises(MappingTargetNotFoundError, match="object not found"):
         confirm_mapping_row(s, D, "A", "G-OTHER", user_id="cm-01")   # D 는 P 소속, G-OTHER 는 P2 소속
     assert s.scalars(select(EntityObjectMappingRow).where(EntityObjectMappingRow.entity_handle == "A")).first() is None
 
