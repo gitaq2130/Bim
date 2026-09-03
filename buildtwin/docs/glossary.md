@@ -36,7 +36,7 @@
 | 발주처 | `client` | 조회 전용 |
 | 관리자 | `admin` | 프로젝트·사용자 관리. **시스템 역할 전용**이며 actor로 매핑되지 않는다 — 프로젝트 멤버가 될 수 없고, 남아 있는 멤버 행도 인가·actor 결정에서 무시된다(ADR 0006 §2-1) |
 
-> **역할의 두 층(ADR 0006 §2)**: 위 표의 `contractor`/`cm`/`client`는 이제 **프로젝트 역할**(`project_members.role`)에서 나온다. actor 결정과 모든 프로젝트 범위 인가는 전역 **시스템 역할**(`users.role`)이 아니라 프로젝트 역할을 본다. 문서·코드·응답에서 "역할"이라고만 쓰지 말고 두 용어를 구분해 쓴다 — 아래 "ADR 0006 추가 항목" 참조.
+> **역할의 두 층(ADR 0006 §2)**: 위 표의 `contractor`/`cm`/`client`는 이제 **프로젝트 역할**(`project_members.role`)에서 나온다. actor 결정과 모든 프로젝트 범위 인가는 전역 **시스템 역할**(`users.role`)이 아니라 프로젝트 역할을 본다(예외: 멤버십 관리 라우트 — ADR 0006 §4). 문서·코드·응답에서 "역할"이라고만 쓰지 말고 두 용어를 구분해 쓴다 — 아래 "ADR 0006 추가 항목" 참조.
 
 ## 핵심 개념
 
@@ -135,7 +135,7 @@
 | 한국어 | 영어 | 정의 |
 |---|---|---|
 | 프로젝트 멤버십 | `ProjectMember` (`project_members`) | 프로젝트 접근권을 정의하는 `(project_id, user_id)` 행. **행의 존재가 곧 접근권**이며, 행이 없으면 그 프로젝트는 존재하지 않는 것처럼 취급한다(ADR 0006 §1, 규칙 2 → 404 `project_not_found`) |
-| 프로젝트 역할 | `project role` (`project_members.role`) = `contractor` / `cm` / `client` | 그 프로젝트에서 이 사람이 무엇인가. **모든 프로젝트 범위 인가와 `actor` 결정의 유일한 근거**(ADR 0006 §2·규칙 1·7). 전역 `users.role`(시스템 역할)과 **다른 개념**이므로 그냥 "역할"로 부르지 않는다. `admin`은 이 집합에 없다 |
+| 프로젝트 역할 | `project role` (`project_members.role`) = `contractor` / `cm` / `client` | 그 프로젝트에서 이 사람이 무엇인가. **모든 프로젝트 범위 인가와 `actor` 결정의 유일한 근거**(ADR 0006 §2·규칙 1·7). 유일한 예외는 멤버십 관리 라우트 자체로, 시스템 역할 `admin`으로 검사한다(ADR 0006 §4). 전역 `users.role`(시스템 역할)과 **다른 개념**이므로 그냥 "역할"로 부르지 않는다. `admin`은 이 집합에 없다 |
 | 시스템 역할 | `system role` (`users.role`) = `contractor` / `cm` / `client` / `admin` | 계정의 전역 속성. 이 중 **`admin`만 인가에 쓰이며 용도는 전 프로젝트 조회와 멤버십 관리뿐**이다 — 행위 역할이 아니고 actor로 매핑되지 않으며, admin 계정은 어떤 프로젝트의 멤버도 될 수 없고, 규칙 도입 이전에 남은 멤버 행이 있어도 읽기측에서 무시된다(ADR 0006 §2-1의 쓰기·읽기 두 겹). 나머지 값(`contractor`/`cm`/`client`)은 **인가 판단에 쓰지 않는다** — `users.role`을 읽는 인가 검사는 `require_role("admin")`뿐이다. 이 값을 멤버십 생성 시 기본 역할로 제안하는 UX는 **미구현(Deferred, ADR 0006 §4)** |
 | 내 프로젝트 역할 | `my_role` (`ProjectView.my_role`) | 응답을 받는 사용자의 그 프로젝트에서의 프로젝트 역할. 화면의 버튼 게이팅은 이 값만 본다(전역 역할로 가리면 안 된다). **admin은 `null`** — 조회는 되지만 행위 역할이 없다는 뜻(ADR 0006 규칙 4) |
 | 멤버 뷰 | `MemberView` | 멤버십 행의 응답 표현: `project_id` / `user_id` / `email` / `role`(프로젝트 역할) / `added_by` / `added_at` |
