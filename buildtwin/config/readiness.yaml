@@ -19,3 +19,31 @@ component_defaults:
 blocker_severity:
   high_below: 0.5
   medium_below: 1.0
+
+# drawing_approval 구성요소가 문서관리대장(ADR 0007)에서 값을 받는 방식.
+# 가중치는 바꾸지 않는다 — 같은 자리에 더 나은 입력을 꽂는 것뿐이다(합 1.0 불변).
+document_approval:
+  enabled: true                  # false 면 문서 근거를 건너뛰고 기존 동작(수동 플래그 → 기본값)으로 되돌아간다
+
+  # 착수 가능 판단을 좌우하는 문서 종류. "필수"란 이 종류에 속하면서 그 Activity 에
+  # 확정 매핑된(needs_review=False) 문서를 뜻한다 — 문서가 없는데 요구사항을 발명하지 않는다.
+  required_doc_types: ["TFA"]
+
+  # 무엇을 "승인"으로 볼 것인가. 조건부승인(APPROVED_WITH_COMMENTS)은 기본적으로 제외한다:
+  # 조건 충족 여부가 대장에 없어 착수 가능 여부를 알 수 없기 때문(ADR 0007 §3-3).
+  # 현장 운영이 다르면 여기에 APPROVED_WITH_COMMENTS 를 추가한다. 코드에 상태 목록을 박지 않는다.
+  approved_statuses: ["APPROVED"]
+
+  # 확정된 매핑만 점수에 반영한다. 미확정(needs_review=True) 매핑은 점수가 아니라
+  # confidence 감점(missing)과 blocker 문구로만 나타난다(ADR 0007 §4 규칙 5, §5-2 규칙 3·5).
+  use_confirmed_mappings_only: true
+
+  # 최근 대장에서 사라진 문서(is_orphaned=True)는 계산에서 제외한다.
+  ignore_orphaned_documents: true
+
+  # 값 산출은 논리곱(AND): 필수 문서 전부 승인 → 1.0, 하나라도 아니면 0.0.
+  # 비율은 점수가 아니라 blocker/evidence 로만 보고한다(ADR 0007 §5-1).
+  scoring: all_or_nothing
+
+  # Blocker.reason 에 문서번호+제목을 나열할 최대 개수. 초과분은 "외 k건"으로 접는다.
+  blocker_document_limit: 5

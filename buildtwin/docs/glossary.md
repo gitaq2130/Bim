@@ -58,7 +58,7 @@
 | 가림 | `occlusion` | 스캐너 시점에서 객체가 다른 물체에 가려진 비율 |
 | 변화량 | `ObjectDiff` | 직전 스캔 대비 상태·밀도·부피 변화 |
 | 3중 검증 | `triple verification` | 신고(daily report) / 물리 증거(scan) / 시스템 논리(BIM·선후행·자재) 대조 |
-| 검토요청 | `ReviewRequest` | 자동 확정을 막고 CM 확인을 요구하는 항목. kind: `mapping` / `verification` / `inspection` |
+| 검토요청 | `ReviewRequest` | 자동 확정을 막고 CM 확인을 요구하는 항목. kind: `mapping` / `verification` / `inspection` / `document_mapping`(ADR 0007) |
 | 작업일보 | `DailyReport` | 시공사가 입력하는 일일 작업 기록(구역·인원·장비·수량·사진) |
 | 상태 전이 | `StateTransition` | 객체 상태 변경 기록. actor·evidence 필수 |
 | 신뢰도 | `confidence` | 판정·매핑의 확신도 0~1 |
@@ -83,6 +83,7 @@
 | RVT | `rvt` | 직접 파싱 불가. APS Model Derivative → IFC, 또는 IFC 내보내기 안내 |
 | 포인트클라우드 | `e57` / `las` / `ply` | Open3D 정합 |
 | 공정표 | `csv` / MS Project `xml` / P6 `xer` | progress-engine importer |
+| 문서관리대장 | `xlsx` | progress-engine `document_register` importer(ADR 0007). 확장자 우선, 확장자가 없으면 ZIP 시그니처 + 아카이브 내 `xl/workbook.xml` 존재로 판별(`.ifczip`과 구분). 대장 CSV는 지원하지 않는다(`csv`가 공정표로 예약됨) |
 
 ## 지식 엔진 (knowledge) — services/knowledge, rules/
 
@@ -105,18 +106,18 @@
 |---|---|---|
 | 검토요청 상태 | `ReviewStatus` = `open` / `approved` / `rejected` / `on_hold` | 해소(approved/rejected)는 cm만. 시스템은 on_hold(대체)만 |
 | 신고 상태 | `claimed_state` = `started` / `in_progress` / `completed` | 작업일보 항목의 시공사 주장 |
-| 작업 종류 | Job `kind` = `ingest` / `scan_upload` / `schedule` / `mapping` / `verdict` | 비동기 작업 분류. `scan_upload`는 스캔 파일 등록(정합 입력 대기), `verdict`가 정합+판정 수행 |
+| 작업 종류 | Job `kind` = `ingest` / `scan_upload` / `schedule` / `mapping` / `verdict` / `document_register` | 비동기 작업 분류. `scan_upload`는 스캔 파일 등록(정합 입력 대기), `verdict`가 정합+판정 수행, `document_register`는 문서관리대장(xlsx) 적재+문서↔Activity 매핑 후보 생성(ADR 0007) |
 | 작업 상태 | Job `status` = `queued` / `running` / `done` / `failed` | |
 | 정합 상태 | `RegistrationStatus` = `ok` / `needs_alignment_input` / `registration_failed` | |
 | 도면 정합 | `DrawingAlignment` (`source`: `user_input` / `grid_auto_align`) | DXF 좌표계 → 모델 좌표계 파라미터(origin·rotation_deg·scale) |
 | 좌표계 출처 | `CoordinateSource` += `dxf_local`, `scan_local` | 원본 파일 로컬 좌표계 |
-| 근거 출처 | `Evidence.source_type` = scan / daily_report / cm_action / rule / ingest / mapping / schedule / material / system_logic / user_input | ADR 0001 §5 |
+| 근거 출처 | `Evidence.source_type` = scan / daily_report / cm_action / rule / ingest / mapping / schedule / material / system_logic / user_input / **document** | ADR 0001 §5. `document`는 문서관리대장에서 온 근거(ADR 0007 §3-2 규칙 4) — 기존 어느 축에도 속하지 않아 감사에서 구분되어야 하므로 별도 값으로 둔다 |
 | 다음 행동 종류 | NextAction `kind` = `confirm` / `request_inspection` / `reject_inspection` / `report_progress` / `accept_rework` / `order_rework` / `revoke_confirmation` / `flag_mismatch` / `resolve_review` / `align_scan` / `inspect` | 백엔드 `state_machine.next_actions`가 정의, 프론트는 이 집합만 사용 |
 | 준비도 구성요소 | `predecessor_completion` / `inspection` / `material_delivery` / `drawing_approval` / `open_clashes` / `crew_assigned` | `config/readiness.yaml` 가중치 키 |
 | 차단 구성요소 | `Blocker.component` = 위 6개 + `predecessor` / `readiness` / `resource` | scheduler가 추가로 쓰는 값 |
 | 부재 그룹 | `group` (`IFC_TYPE_GROUP`) = `column` / `beam` / `slab` / `wall` / `duct` / `pipe` / `cable_tray` / `facade_panel` / `other` | IfcType을 화면·집계용으로 묶은 것. **공종(discipline)과 다른 개념** |
 | 공종 | `discipline` = `structure` / `architecture` / `mechanical` / `electrical` / `civil` / `finishing` | 규칙·공정표·사례에서 공통 사용. `mep`는 쓰지 않는다 |
-| 근거 방법 | `Evidence.method` | 자유 문자열이되 서비스별 규약값: sync `user_align|grid_align|bbox_iou|layer_rule`, scan `control_points+icp`, progress `wbs_rule|keyword_rule|level_zone|readiness_weighted_sum|triple_verification|daily_report_item`, knowledge `rule_engine`, scan `preregistered`, api/sync `manual_mapping|review_resolution|model_ingest` |
+| 근거 방법 | `Evidence.method` | 자유 문자열이되 서비스별 규약값: sync `user_align|grid_align|bbox_iou|layer_rule`, scan `control_points+icp`, progress `wbs_rule|keyword_rule|level_zone|readiness_weighted_sum|triple_verification|daily_report_item`, knowledge `rule_engine`, scan `preregistered`, api/sync `manual_mapping|review_resolution|model_ingest`, progress(문서, ADR 0007) `register_status_rule|register_status_blank|register_status_unmatched|document_title_match|document_manual_mapping` |
 
 ## ADR 0005 추가 항목 (architect, 2026-09-02)
 

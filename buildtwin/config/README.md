@@ -1,6 +1,7 @@
 # config/
 
-- `readiness.yaml` — Work Readiness Score 가중치·착수 임계값·기본 구성값·차단 심각도 (담당: `progress-engine`)
+- `readiness.yaml` — Work Readiness Score 가중치·착수 임계값·기본 구성값·차단 심각도·`document_approval`(ADR 0007) (담당: `progress-engine`)
+- `document_register.yaml` — 문서관리대장 레이아웃(헤더 탐색·컬럼 별칭·시트→문서종류), 처리결과→승인상태 정규화 규칙, 제목 대조·문서↔Activity 매핑 가중치 (담당: `progress-engine`, ADR 0007)
 - `resources.yaml` — 착수 가능 집합(CP-SAT) 자원 한도 (담당: `progress-engine`)
 - `wbs_mapping.yaml` — WBS 코드 → IFC 타입/공종/층 표 (담당: `progress-engine`, 선택)
 - `activity_mapping.yaml` — Activity↔객체 매핑 규칙 가중치, 작업명 키워드, 층/구역 정규화 패턴 (담당: `progress-engine`)
