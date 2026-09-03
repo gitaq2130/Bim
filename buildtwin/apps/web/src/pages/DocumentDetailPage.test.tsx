@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Route, Routes } from "react-router-dom";
 import type { ActivityDocumentMapping, Document, DocumentDetail } from "../api/types";
@@ -293,5 +293,83 @@ describe("DocumentDetailPage", () => {
     renderRejected("cm");
     const row = await screen.findByTestId("mapping-row");
     expect(within(row).queryByRole("button", { name: "확정" })).not.toBeInTheDocument();
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 13차 리뷰 — 뮤테이션이 **자기 화면의 쿼리를 무효화하지 않아** 화면이 조용히 낡던 결함.
+  // 12차와 같은 구조다(그때는 검토 큐 반려, 여기는 문서 상세의 매핑 재생성·확정).
+  // 운영 staleTime 이 10초라 컴포넌트가 마운트된 채로는 사실상 무기한 낡는다.
+  // ══════════════════════════════════════════════════════════════════════════
+  it("매핑 재생성 후 문서 상세와 검토요청이 재조회돼 새 매핑이 화면에 나타난다", async () => {
+    resetStore();
+    loginAs("cm");
+    let generated = false;
+    let docFetches = 0;
+    let reviewFetches = 0;
+    const second: ActivityDocumentMapping = { ...PENDING_MAPPING, activity_id: "ACT-200" };
+    mockFetch((url, init) => {
+      if (url.includes("/documents/mappings") && init?.method === "POST") {
+        generated = true;
+        return { body: [PENDING_MAPPING, second] };
+      }
+      if (url.includes("/api/documents/doc-aaa")) {
+        docFetches += 1;
+        return { body: detail(generated ? [PENDING_MAPPING, second] : [PENDING_MAPPING]) };
+      }
+      if (url.includes("/api/projects/p1/review-requests")) {
+        reviewFetches += 1;
+        return { body: [] };
+      }
+      return mockProjectRole("cm")(url);
+    });
+    renderPage();
+    const user = userEvent.setup();
+
+    await screen.findByTestId("mapping-row");
+    expect(screen.getAllByTestId("mapping-row")).toHaveLength(1);
+    const docBefore = docFetches;
+    const reviewBefore = reviewFetches;
+
+    await user.click(screen.getByRole("button", { name: "매핑 후보 다시 생성" }));
+
+    // 서버가 2건을 돌려줬으면 화면도 2건이어야 한다 — 목록 키(끝이 `{}`)로만 무효화하면
+    // 상세 키(`[..., docId]`)가 부분 일치에 걸리지 않아 1건 그대로 남는다.
+    await waitFor(() => expect(screen.getAllByTestId("mapping-row")).toHaveLength(2));
+    expect(docFetches).toBeGreaterThan(docBefore);
+    // 서버 map_project_documents 는 document_mapping 검토요청도 만든다 — 그 목록도 갱신돼야 한다.
+    expect(reviewFetches).toBeGreaterThan(reviewBefore);
+  });
+
+  it("문서 상세에서 확정하면 검토요청 목록도 재조회된다 — 서버가 그 요청을 닫기 때문", async () => {
+    // 확정은 서버에서 close_document_mapping_review 로 해당 검토요청을 approved 로 닫는다.
+    // 무효화하지 않으면 staleTime 안에 검토 큐로 갔을 때 이미 닫힌 요청이 열림 + 승인/반려 버튼으로
+    // 남고, 누르면 409 review_already_resolved 가 난다.
+    resetStore();
+    loginAs("cm");
+    let confirmed = false;
+    let reviewFetches = 0;
+    mockFetch((url, init) => {
+      if (url.includes("/confirm") && init?.method === "POST") {
+        confirmed = true;
+        return { body: { ...PENDING_MAPPING, needs_review: false, reviewed_by: "user-cm" } };
+      }
+      if (url.includes("/api/documents/doc-aaa"))
+        return { body: detail([confirmed ? { ...PENDING_MAPPING, needs_review: false, reviewed_by: "user-cm" } : PENDING_MAPPING]) };
+      if (url.includes("/api/projects/p1/review-requests")) {
+        reviewFetches += 1;
+        return { body: [] };
+      }
+      return mockProjectRole("cm")(url);
+    });
+    renderPage();
+    const user = userEvent.setup();
+
+    await screen.findByTestId("mapping-row");
+    const before = reviewFetches;
+
+    await user.click(screen.getByRole("button", { name: "확정" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "확정" }));
+
+    await waitFor(() => expect(reviewFetches).toBeGreaterThan(before));
   });
 });

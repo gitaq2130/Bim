@@ -64,6 +64,13 @@ export const queryKeys = {
   /** ADR 0007 §2-3: 문서는 (project_id, doc_id) 복합 키 — 캐시 키도 항상 둘 다 담는다 */
   documents: (pid: string, q?: DocumentsQuery) => ["projects", pid, "documents", q ?? {}] as const,
   document: (pid: string, docId: string) => ["projects", pid, "documents", docId] as const,
+  /**
+   * 목록과 상세를 **함께** 무효화하기 위한 공통 접두사(13차 리뷰). `documents(pid)` 는 4번째 원소가
+   * 질의 객체 `{}` 라, TanStack 의 부분 일치가 그것을 상세 키의 `docId`(문자열)와 비교해 실패한다 —
+   * 즉 목록 키로 무효화해도 상세는 갱신되지 않는다. 문서 전체를 뒤집는 뮤테이션(매핑 재생성 등)은
+   * 이 접두사를 쓴다.
+   */
+  documentsRoot: (pid: string) => ["projects", pid, "documents"] as const,
   readiness: (aid: string) => ["activities", aid, "readiness"] as const,
   startable: (pid: string) => ["projects", pid, "startable"] as const,
   weeklySummary: (pid: string) => ["projects", pid, "weekly-summary"] as const,
@@ -451,15 +458,33 @@ export function useConfirmDocumentMapping(projectId: string, docId: string) {
       qc.invalidateQueries({ queryKey: queryKeys.document(projectId, docId) });
       qc.invalidateQueries({ queryKey: queryKeys.weeklySummary(projectId) });
       qc.invalidateQueries({ queryKey: queryKeys.startable(projectId) });
+      // 확정은 서버에서 close_document_mapping_review 로 그 검토요청을 approved 로 닫는다(13차 리뷰).
+      // 빠뜨리면 staleTime 안에 검토 큐로 갔을 때 이미 닫힌 요청이 열림+버튼으로 남고, 누르면
+      // 409 review_already_resolved 가 난다. useResolveReview 와 범위가 같아야 한다는 선언이
+      // 이 훅 쪽에서 지켜지지 않고 있었다.
+      qc.invalidateQueries({ queryKey: ["projects", projectId, "review-requests"] });
+      qc.invalidateQueries({ queryKey: ["activities"] });   // readiness 키가 ["activities", aid, "readiness"]
     },
   });
 }
 
-/** 문서↔Activity 매핑 후보 (재)생성 — cm만(ADR 0007 §7 규칙 2). 결과는 항상 needs_review=True. */
+/**
+ * 문서↔Activity 매핑 후보 (재)생성 — cm만(ADR 0007 §7 규칙 2). 결과는 항상 needs_review=True.
+ *
+ * 서버 `map_project_documents` 는 매핑 행과 `document_mapping` ReviewRequest 를 **둘 다** 만든다.
+ * 이 버튼은 DocumentDetailPage 안에 있고 그 화면은 매핑 목록을 `useDocument`, 재확인 배지를
+ * `useReviewRequests` 로 그린다 — 즉 버튼이 바꾸는 대상이 정확히 그 화면이다. 그런데 목록 키
+ * (`documents(pid)`, 끝이 `{}`)로만 무효화하고 있어 **자기 화면이 갱신되지 않았다**(13차 리뷰):
+ * `staleTime: 10_000` 이라 컴포넌트가 마운트된 채로는 사실상 무기한 낡는다. 12차가 잡은 결함과
+ * 같은 구조이므로 접두사 키로 목록·상세를 함께 뒤집고 검토요청도 무효화한다.
+ */
 export function useGenerateDocumentMappings(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api.post<ActivityDocumentMapping[]>(`/projects/${projectId}/documents/mappings`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.documents(projectId) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.documentsRoot(projectId) });
+      qc.invalidateQueries({ queryKey: ["projects", projectId, "review-requests"] });
+    },
   });
 }

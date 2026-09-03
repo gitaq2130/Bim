@@ -38,7 +38,11 @@ function reviewDecisionMessage(kind: ReviewKind, decision: ReviewDecision): stri
         : "반려하면 검토요청만 닫히고 매핑은 확정되지 않습니다.";
     case "document_mapping":
       return decision === "approved"
-        ? "승인하면 이 문서 ↔ Activity 매핑이 확정됩니다(needs_review=False) — 도면 승인 근거(readiness)로 반영됩니다. 확정 이후에는 사람만 되돌릴 수 있습니다."
+        // "확정 이후에는 사람만 되돌릴 수 있습니다"라고 적혀 있었으나 **되돌리는 API 가 없다**(13차 리뷰).
+        // 문서 매핑 쓰기 경로는 generate 와 confirm 둘뿐이고 unconfirm/revoke/DELETE 는 존재하지 않는다.
+        // 반려 문구를 사실에 맞추면서 승인 쪽을 그대로 둔 자리다 — 화면이 지키지 못할 약속을 하는 것은
+        // 이 사이클이 이미 세 번 겪은 실패다. 시스템이 되돌리지 않는다는 사실만 말한다.
+        ? "승인하면 이 문서 ↔ Activity 매핑이 확정됩니다(needs_review=False) — 도면 승인 근거(readiness)로 반영됩니다. 확정을 취소하는 기능은 없습니다. Activity 정보가 바뀌면 매핑은 확정 상태로 두고 재확인 요청만 다시 열립니다."
         // ADR 0007 §4-2 규칙 6 ⑥: 반려는 (activity_id, doc_id) 쌍에 대해 영구하다. 되돌리는 경로가 없으므로
         // 문구가 그 사실을 정확히 말해야 한다 — 10차 리뷰가 잡은 결함은 이 자리가 정반대("아무것도 바뀌지
         // 않습니다")를 말하는데 실제로는 되돌릴 수 없는 반려가 실행되던 것이다.
