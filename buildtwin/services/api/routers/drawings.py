@@ -32,14 +32,14 @@ router = APIRouter(tags=["drawings"])
 def _drawing_or_404(session: Session, drawing_id: str) -> DrawingRow:
     row = session.get(DrawingRow, drawing_id)
     if row is None:
-        raise NotFound(f"drawing not found: {drawing_id}")
+        raise NotFound(f"drawing not found: {drawing_id}", code="drawing_not_found")
     return row
 
 
 def _model_or_404(session: Session, model_id: str) -> ModelRow:
     row = session.get(ModelRow, model_id)
     if row is None:
-        raise NotFound(f"model not found: {model_id}")
+        raise NotFound(f"model not found: {model_id}", code="model_not_found")
     return row
 
 
@@ -109,7 +109,7 @@ def model_mesh(model_id: str, session: Session = Depends(get_session), _: Curren
     m = _model_or_404(session, model_id)
     p = mesh_bundle_path(m.mesh_uri)
     if p is None:
-        raise NotFound(f"mesh bundle not available for model {model_id}")
+        raise NotFound(f"mesh bundle not available for model {model_id}", code="mesh_not_found")
     return FileResponse(p, media_type="application/json", filename=p.name)
 
 
@@ -118,5 +118,5 @@ def model_mesh_obj(model_id: str, session: Session = Depends(get_session), _: Cu
     m = _model_or_404(session, model_id)
     p = obj_path_for(m.mesh_uri)
     if p is None:
-        raise NotFound(f"OBJ not available for model {model_id}")
+        raise NotFound(f"OBJ not available for model {model_id}", code="model_obj_not_found")
     return FileResponse(p, media_type="text/plain", filename=p.name)

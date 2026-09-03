@@ -31,5 +31,5 @@ def job_view(row: JobRow) -> JobView:
 def get_job(job_id: str, session: Session = Depends(get_session), _: CurrentUser = Depends(get_current_user)) -> JobView:
     row = session.get(JobRow, job_id)
     if row is None:
-        raise NotFound(f"job not found: {job_id}")
+        raise NotFound(f"job not found: {job_id}", code="job_not_found")
     return job_view(row)

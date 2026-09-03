@@ -56,5 +56,5 @@ def request_transition(global_id: str, body: TransitionRequest, project_id: str 
     상태기계(actor=cm) 이중 검사. 응답에 생성/종료된 검측 ReviewRequest id 포함.
     ADR 0005 §3: global_id 가 여러 프로젝트에 걸쳐 있으면 409 — `?project_id=` 로 직접 지정해 해소한다."""
     if body.to_state == ObjectState.CONFIRMED and user.role != usecases.CONFIRM_ROLE:
-        raise Forbidden("CONFIRMED transition requires role cm")
+        raise Forbidden("CONFIRMED transition requires role cm", code="forbidden_role")
     return usecases.transition_object(session, global_id, body, user, project_id=project_id)

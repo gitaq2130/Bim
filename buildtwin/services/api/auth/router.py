@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from packages.core.models.orm import UserRow
 
 from ..deps import CurrentUser, get_current_user, get_optional_user, get_session
+from ..errors import Conflict, Forbidden
 from ..schemas.auth import LoginRequest, LoginResponse, RegisterRequest, UserView
 from .security import create_access_token, hash_password, verify_password
 from .seed import users_count
@@ -32,10 +33,10 @@ def register(body: RegisterRequest, session: Session = Depends(get_session),
     """admin 전용. 단, users 테이블이 비어 있으면 누구나 호출 가능하고 첫 사용자는 admin 이 된다(부트스트랩)."""
     bootstrap = users_count(session) == 0
     if not bootstrap and (user is None or user.role != "admin"):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="admin role required to register users")
+        raise Forbidden("admin role required to register users", code="forbidden_role")
     email = str(body.email).lower()
     if session.scalars(select(UserRow).where(func.lower(UserRow.email) == email)).first() is not None:
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="email already registered")
+        raise Conflict("email already registered", code="duplicate_user_email")
     role = "admin" if bootstrap else body.role
     row = UserRow(user_id=f"u-{uuid.uuid4().hex[:12]}", email=email, password_hash=hash_password(body.password), role=role,
                   name=body.name)

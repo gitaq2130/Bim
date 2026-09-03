@@ -91,15 +91,15 @@ def resolve_object(session: Session, global_id: str, project_id: str | None = No
     if project_id is not None:
         row = session.get(BimObjectRow, (project_id, global_id))
         if row is None:
-            raise NotFound(f"object not found: {global_id} (project {project_id})")
+            raise NotFound(f"object not found: {global_id} (project {project_id})", code="object_not_found")
         return row
     candidates = list(session.scalars(select(BimObjectRow).where(BimObjectRow.global_id == global_id)))
     if not candidates:
-        raise NotFound(f"object not found: {global_id}")
+        raise NotFound(f"object not found: {global_id}", code="object_not_found")
     if len(candidates) > 1:
         project_ids = sorted(r.project_id for r in candidates)
         raise Conflict(f"global_id {global_id} exists in multiple projects ({', '.join(project_ids)}); "
-                       f"pass ?project_id= to disambiguate")
+                       f"pass ?project_id= to disambiguate", code="ambiguous_global_id")
     return candidates[0]
 
 
@@ -157,9 +157,9 @@ def transition_object(session: Session, global_id: str, req: TransitionRequest, 
     try:
         actor = actor_for_role(user.role)
     except RoleNotAllowedError as exc:
-        raise Forbidden(str(exc))
+        raise Forbidden(str(exc), code="forbidden_role")
     if req.to_state == ObjectState.CONFIRMED and user.role != CONFIRM_ROLE:
-        raise Forbidden("CONFIRMED requires role cm")
+        raise Forbidden("CONFIRMED requires role cm", code="forbidden_role")
     row = resolve_object(session, global_id, project_id)
     project_id = row.project_id
     from_state = ObjectState(row.state)
@@ -168,9 +168,12 @@ def transition_object(session: Session, global_id: str, req: TransitionRequest, 
     try:
         result = sm.transition_with_effects(session, project_id, global_id, req.to_state, actor, evidence, actor_id=user.user_id,
                                             confidence=req.confidence, review_request_id=req.review_request_id)
-    except (InvalidTransitionError, TransitionBlockedByReviewError) as exc:
+    except InvalidTransitionError as exc:
         session.rollback()
-        raise Conflict(str(exc))
+        raise Conflict(str(exc), code="invalid_transition")
+    except TransitionBlockedByReviewError as exc:
+        session.rollback()
+        raise Conflict(str(exc), code="transition_blocked_by_review")
     t = result.transition
     if t.to_state == ObjectState.CONFIRMED:
         last_system = next((h for h in reversed(sm.history(session, project_id, global_id)) if h.actor == Actor.SYSTEM), None)
@@ -212,7 +215,7 @@ def confirm_entity_mapping(session: Session, drawing_id: str, handle: str, globa
                            note: str | None = None) -> EntityObjectMapping:
     drawing = session.get(DrawingRow, drawing_id)
     if drawing is None:
-        raise NotFound(f"drawing not found: {drawing_id}")
+        raise NotFound(f"drawing not found: {drawing_id}", code="drawing_not_found")
     prev_row = queries.entity_mapping(session, drawing_id, handle)
     proposal: dict[str, Any] = (row_to_mapping(prev_row).model_dump(mode="json") if prev_row is not None
                                 else {"drawing_id": drawing_id, "entity_handle": handle, "global_id": None, "confidence": None})
@@ -220,7 +223,7 @@ def confirm_entity_mapping(session: Session, drawing_id: str, handle: str, globa
         # 대상 객체 존재 확인은 confirm_mapping_row(services.sync) 소유 — ValueError 를 여기서만 404 로 옮긴다.
         new = confirm_mapping_row(session, drawing_id, handle, global_id, user.user_id, note)
     except ValueError as exc:
-        raise NotFound(str(exc))
+        raise NotFound(str(exc), code="mapping_target_not_found")
     record_expert_review(session, "entity_object_mapping", f"{drawing_id}:{handle}", proposal, new.model_dump(mode="json"),
                          user.user_id)
     session.commit()
@@ -249,7 +252,7 @@ def plan_section(session: Session, model: ModelRow, level: str | None, offset: f
     objects: list[BimObjectDraft] = list(queries.as_models(queries.model_objects(session, model.model_id)))
     res = plan_section_from_objects(objects, level, offset)
     if res["elevation"] is None:
-        raise NotFound(f"no objects with geometry for level {level!r} in model {model.model_id}")
+        raise NotFound(f"no objects with geometry for level {level!r} in model {model.model_id}", code="plan_section_not_found")
     return PlanSectionView(level=res["level"], elevation=res["elevation"], offset=res["cut_elevation"] - res["elevation"],
                            cut_elevation=res["cut_elevation"], coordinate_system=CoordinateSystem.model_validate(model.coordinate_system),
                            polylines=[PlanSectionPolyline(global_id=p["global_id"], ifc_type=p.get("ifc_type"), points=p["points"],
@@ -260,12 +263,12 @@ def plan_section(session: Session, model: ModelRow, level: str | None, offset: f
 def resolve_review(session: Session, review_request_id: str, decision: str, note: str | None, user: CurrentUser) -> ReviewRequestRow:
     """cm 의 검토요청 처리. inspection → 상태기계 전이가 요청을 닫고, mapping → sync 가 닫는다. 그 외(verification/on_hold)는 상태만 갱신."""
     if user.role != CONFIRM_ROLE:
-        raise Forbidden("review request resolution requires role cm")
+        raise Forbidden("review request resolution requires role cm", code="forbidden_role")
     row = session.get(ReviewRequestRow, review_request_id)
     if row is None:
-        raise NotFound(f"review request not found: {review_request_id}")
+        raise NotFound(f"review request not found: {review_request_id}", code="review_request_not_found")
     if row.status != "open":
-        raise Conflict(f"review request already {row.status}")
+        raise Conflict(f"review request already {row.status}", code="review_already_resolved")
     before = db.review_row_to_model(row).model_dump(mode="json")
     evidence = Evidence(source_type="cm_action", source_id=user.user_id, method="review_resolution", note=note,
                         extra={"review_request_id": review_request_id, "review_kind": row.kind, "decision": decision,
@@ -280,12 +283,12 @@ def resolve_review(session: Session, review_request_id: str, decision: str, note
         except InvalidTransitionError as exc:
             if decision == "approved":
                 session.rollback()
-                raise Conflict(f"cannot confirm object on approval: {exc}")
+                raise Conflict(f"cannot confirm object on approval: {exc}", code="inspection_confirm_failed")
             log.info("inspection rejected but no rework transition: %s", exc)
         except ObjectNotFoundError as exc:
             # ReviewRequestRow 가 가리키는 객체가 이후 삭제/재업로드로 사라진 경우(orphan) — 500 대신 404
             session.rollback()
-            raise NotFound(f"review request {review_request_id}: object not found: {exc}")
+            raise NotFound(f"review request {review_request_id}: object not found: {exc}", code="review_object_not_found")
     elif row.kind == "mapping" and decision in ("approved", "rejected"):
         try:
             # candidate_global_id 가 그 사이 삭제/재업로드로 사라진 경우 confirm_mapping_row(services.sync) 가
@@ -293,7 +296,7 @@ def resolve_review(session: Session, review_request_id: str, decision: str, note
             resolve_mapping_review(session, row, decision, user.user_id, note)  # type: ignore[arg-type]
         except ValueError as exc:
             session.rollback()
-            raise NotFound(f"review request {review_request_id}: {exc}")
+            raise NotFound(f"review request {review_request_id}: {exc}", code="mapping_target_not_found")
     session.refresh(row)
     if row.status == "open":   # verification / on_hold / 위에서 닫히지 않은 경우: 사람의 결정을 그대로 기록
         row.status, row.resolution_note, row.resolved_by, row.resolved_at = decision, note, user.user_id, datetime.now(UTC)
@@ -356,7 +359,7 @@ def list_rules() -> list[Rule]:
 def evaluate_rules(session: Session, project_id: str, global_id: str, persist: bool = True) -> RuleEvaluateResponse:
     row = session.get(BimObjectRow, (project_id, global_id))
     if row is None:
-        raise NotFound(f"object not found in project: {global_id}")
+        raise NotFound(f"object not found in project: {global_id}", code="object_not_found")
     scan = queries.latest_scan_verdict(session, project_id, global_id)
     item = queries.latest_report_item(session, project_id, global_id)
     logic = build_logic_context(session, project_id, global_id, quantity_unit=item.quantity_unit if item else None)

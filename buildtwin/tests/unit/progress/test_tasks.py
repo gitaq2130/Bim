@@ -13,8 +13,8 @@ def test_celery_tasks_run_eagerly_and_persist(session, sample_objects, monkeypat
     # 태스크는 session_scope() 를 쓰므로 테스트 엔진(인메모리)을 그대로 쓰게 한다
     monkeypatch.setattr(core_db, "database_url", lambda: "sqlite:///:memory:")
     db.ensure_project(session, "P-TASK")
-    ensure_model_chain(session, "P-TASK", "M")
-    db.save_objects(session, "P-TASK", "M", sample_objects)
+    model = ensure_model_chain(session, "P-TASK", "M")
+    db.save_objects(session, "P-TASK", "M", sample_objects, model.file_id)
     session.add(JobRow(job_id="job-1", project_id="P-TASK", kind="schedule"))
     session.commit()
 

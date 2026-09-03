@@ -108,11 +108,11 @@ def build_logic_context(session: Session, project_id: str, global_id: str, quant
         if verdict_row.state != ScanState.UNVERIFIABLE.value:
             break
         consecutive_unverifiable += 1
-    open_verification = db.open_reviews(session, [global_id], kind="verification", project_id=project_id)
+    open_verification = db.open_reviews(session, project_id, [global_id], kind="verification")
     state = ObjectState(obj[0].state) if obj else None
     if state == ObjectState.CONFIRMED:
         inspection_passed: bool | None = True
-    elif state == ObjectState.INSPECTION_REQUESTED or db.open_reviews(session, [global_id], kind="inspection", project_id=project_id):
+    elif state == ObjectState.INSPECTION_REQUESTED or db.open_reviews(session, project_id, [global_id], kind="inspection"):
         inspection_passed = False
     else:
         inspection_passed = None
@@ -131,7 +131,7 @@ def run_verification(session: Session, project_id: str, global_id: str, report_i
                      scan_verdict: ScanVerdict | None, logic: dict[str, Any]) -> list[ReviewRequest]:
     context = {"report": _report_context(report_item), "scan": _scan_context(scan_verdict), "logic": dict(logic)}
     created: list[ReviewRequest] = []
-    existing_open = {r.rule_id for r in db.open_reviews(session, [global_id], kind="verification", project_id=project_id)}
+    existing_open = {r.rule_id for r in db.open_reviews(session, project_id, [global_id], kind="verification")}
     for pattern in load_patterns():
         try:
             hit = bool(pattern["_eval"](context))

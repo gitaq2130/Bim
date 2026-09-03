@@ -17,7 +17,6 @@ from packages.core.models.orm import (
     ActivityRow,
     BimObjectRow,
     DailyReportRow,
-    FileRow,
     MaterialMovementRow,
     ModelRow,
     ProjectRow,
@@ -41,33 +40,39 @@ def ensure_project(session: Session, project_id: str, name: str | None = None) -
     return row
 
 
-def ensure_model(session: Session, project_id: str, model_id: str) -> ModelRow:
-    """model_id 가 아직 없으면 자리표시(placeholder) ModelRow 를 만든다.
+def ensure_model(session: Session, project_id: str, model_id: str, file_id: str) -> ModelRow:
+    """model_id 가 아직 없으면 새 ModelRow 를 만든다.
 
-    ModelRow.file_id 는 files.file_id 를 참조하는 non-nullable FK 이므로, 실제 업로드 파일이
-    없는 자리표시 모델도 자기 몫의 자리표시 FileRow 를 함께 가져야 행이 합법적이다(FK 강제 하
-    회귀 — 이 함수가 file_id 만 채우고 그 행은 만들지 않아 실패했었다).
+    ModelRow.file_id 는 files.file_id 를 참조하는 non-nullable FK 다. 이전에는 이 함수가 실제
+    업로드 파일이 없으면 `kind="model_placeholder"` 자리표시 FileRow 를 스스로 만들어 채웠지만,
+    라운드4 리뷰 지적: (a) `save_objects`/`ensure_model` 은 현재 프로덕션 호출자가 없는 테스트 전용
+    헬퍼라 "프로덕션 버그"로 부르는 건 과장이었고, (b) 그 자리표시 FileRow 가 그대로
+    `GET /projects/{id}/files` 목록에 노출되어 사용자에게 업로드한 적 없는 0바이트 IFC 파일이
+    보이고 `/content` 는 404 가 나는 유령 파일 문제를 낳았다.
+
+    프로덕션 호출자가 없는 지금이 비용 없이 바로잡을 시점이므로, 파일을 대신 지어내는 대신
+    호출자가 실제 FileRow.file_id 를 넘기도록 필수 인자로 승격했다(자리표시 생성 로직은 제거).
+    존재하지 않는 file_id 를 넘기면 FK 위반으로 즉시 실패한다(SQLite 도 PRAGMA foreign_keys=ON
+    으로 이를 강제한다 — packages/core/db.py).
     """
     row = session.get(ModelRow, model_id)
     if row is None:
         ensure_project(session, project_id)
-        file_id = f"{model_id}:file"
-        if session.get(FileRow, file_id) is None:
-            session.add(FileRow(file_id=file_id, project_id=project_id, kind="model_placeholder",
-                                filename=f"{model_id}.ifc", uri=f"placeholder://{file_id}", sha256="", size=0))
-            session.flush()
         row = ModelRow(model_id=model_id, project_id=project_id, file_id=file_id, coordinate_system={})
         session.add(row)
         session.flush()
     return row
 
 
-def save_objects(session: Session, project_id: str, model_id: str, drafts: list[BimObjectDraft]) -> list[BimObjectRow]:
+def save_objects(session: Session, project_id: str, model_id: str, drafts: list[BimObjectDraft],
+                 file_id: str) -> list[BimObjectRow]:
     """ingest 초안을 bim_objects 에 저장(상태는 PLANNED 로 초기화, 기존 행은 속성만 갱신).
 
     ADR 0005: 키는 (project_id, global_id) — 같은 global_id 라도 다른 프로젝트면 별개 행이다.
+    file_id 는 model_id 가 처음 등장할 때 ensure_model 이 ModelRow 를 만드는 데 쓰는 실제
+    FileRow.file_id 다(자리표시 대신 호출자가 실제 업로드 파일을 지정 — ensure_model 참고).
     """
-    ensure_model(session, project_id, model_id)
+    ensure_model(session, project_id, model_id, file_id)
     rows: list[BimObjectRow] = []
     for d in drafts:
         row = session.get(BimObjectRow, (project_id, d.global_id))

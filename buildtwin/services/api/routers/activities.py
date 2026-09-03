@@ -37,7 +37,7 @@ def activity_readiness(activity_id: str, session: Session = Depends(get_session)
     try:
         return compute_readiness(session, activity_id)
     except LookupError as exc:
-        raise NotFound(str(exc))
+        raise NotFound(str(exc), code="activity_not_found")
 
 
 @router.get("/projects/{project_id}/startable", response_model=StartableSet)

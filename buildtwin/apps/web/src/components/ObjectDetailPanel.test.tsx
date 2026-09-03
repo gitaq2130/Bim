@@ -137,8 +137,11 @@ describe("ObjectDetailPanel", () => {
   it("서버 409(같은 GlobalId 가 여러 프로젝트에 있음)를 바로 에러로 보여주지 않고 안내 문구로 표시한다", async () => {
     resetStore();
     loginAs("cm");
+    // api 에이전트가 병행 구현 중인 계약: 에러 바디에 detail(사람이 읽는 문구) + code(안정 식별자) 가 함께 온다.
+    // 아직 반영 전이라면 여기서 code 를 목으로 채워 프런트 분기를 검증한다.
     mockFetch((url) => {
-      if (url.includes(`/api/objects/${encodeURIComponent(GID)}`)) return { status: 409, body: { detail: "ambiguous" } };
+      if (url.includes(`/api/objects/${encodeURIComponent(GID)}`))
+        return { status: 409, body: { detail: "ambiguous", code: "ambiguous_global_id" } };
       return undefined;
     });
     renderWithProviders(<ObjectDetailPanel globalId={GID} projectId="p1" />);

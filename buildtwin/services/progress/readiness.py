@@ -86,7 +86,7 @@ def inspection_component(session: Session, project_id: str, predecessor_progress
         return ComponentResult(1.0, note="no predecessor objects")
     states = db.object_states(session, project_id, gids)
     awaiting = {g for g, s in states.items() if s == ObjectState.INSPECTION_REQUESTED}
-    awaiting.update(r.global_id for r in db.open_reviews(session, gids, kind="inspection", project_id=project_id) if r.global_id)
+    awaiting.update(r.global_id for r in db.open_reviews(session, project_id, gids, kind="inspection") if r.global_id)
     value = 1.0 - len(awaiting) / len(gids)
     reason = f"{len(awaiting)} predecessor objects awaiting inspection" if awaiting else None
     return ComponentResult(value, reason=reason, related_ids=sorted(awaiting))
@@ -119,7 +119,7 @@ def drawing_component(resources: dict[str, float], defaults: dict[str, float]) -
 def clashes_component(session: Session, project_id: str, global_ids: list[str]) -> ComponentResult:
     if not global_ids:
         return ComponentResult(1.0, note="no mapped objects")
-    reviews = db.open_reviews(session, global_ids, kind="verification", project_id=project_id)
+    reviews = db.open_reviews(session, project_id, global_ids, kind="verification")
     flagged = sorted({r.global_id for r in reviews if r.global_id})
     value = 1.0 - len(flagged) / len(global_ids)
     reason = f"{len(reviews)} open verification review(s)" if reviews else None

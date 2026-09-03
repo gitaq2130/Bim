@@ -13,6 +13,7 @@ from packages.core.models.orm import UserRow
 from packages.core.models.state import UserRole
 
 from .auth.security import JWTError, decode_token
+from .errors import Forbidden
 
 ALL_ROLES: tuple[str, ...] = ("contractor", "cm", "client", "admin")
 _bearer = HTTPBearer(auto_error=False)
@@ -64,8 +65,7 @@ def require_role(*roles: UserRole | str):
 
     def _dep(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
         if user.role not in allowed:
-            raise HTTPException(status.HTTP_403_FORBIDDEN,
-                                detail=f"role '{user.role}' not allowed; requires one of {sorted(allowed)}")
+            raise Forbidden(f"role '{user.role}' not allowed; requires one of {sorted(allowed)}", code="forbidden_role")
         return user
 
     return _dep

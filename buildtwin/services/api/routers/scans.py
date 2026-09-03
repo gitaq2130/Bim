@@ -21,7 +21,7 @@ router = APIRouter(tags=["scans"])
 def _scan_or_404(session: Session, scan_id: str) -> ScanRow:
     row = session.get(ScanRow, scan_id)
     if row is None:
-        raise NotFound(f"scan not found: {scan_id}")
+        raise NotFound(f"scan not found: {scan_id}", code="scan_not_found")
     return row
 
 
@@ -55,7 +55,7 @@ def submit_alignment(scan_id: str, body: AlignmentInput, session: Session = Depe
     """기준점(≥3) 또는 마커(≥3) → verdict 작업 발행(정합 → 객체 판정 → 상태기계 → 3중 검증). 스캔은 CONFIRMED 를 만들지 않는다."""
     scan = _scan_or_404(session, scan_id)
     if not body.is_sufficient():
-        raise Unprocessable("alignment input insufficient: need ≥3 control points or ≥3 observed markers with definitions")
+        raise Unprocessable("alignment input insufficient: need ≥3 control points or ≥3 observed markers with definitions", code="alignment_input_insufficient")
     scan.alignment_input = body.model_dump(mode="json")
     job = JobRow(job_id=f"j-{uuid.uuid4().hex[:12]}", project_id=scan.project_id, kind="verdict", status="queued", progress=0.0,
                  file_id=scan.file_id, result_ref=scan_id, warnings=[])

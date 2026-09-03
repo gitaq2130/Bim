@@ -41,7 +41,7 @@ async def _parse_body(request: Request, project_id: str, session: Session, user:
             form = await request.form()
             raw = form.get("report")
             if not isinstance(raw, str):
-                raise Unprocessable("multipart body requires a 'report' JSON field")
+                raise Unprocessable("multipart body requires a 'report' JSON field", code="daily_report_missing_field")
             payload = DailyReportCreate.model_validate(json.loads(raw))
             for item in form.getlist("photos"):
                 if isinstance(item, UploadFile):
@@ -54,7 +54,7 @@ async def _parse_body(request: Request, project_id: str, session: Session, user:
         else:
             payload = DailyReportCreate.model_validate(await request.json())
     except (ValidationError, ValueError) as exc:
-        raise Unprocessable(f"invalid daily report: {exc}")
+        raise Unprocessable(f"invalid daily report: {exc}", code="daily_report_invalid")
     return payload, photo_uris
 
 

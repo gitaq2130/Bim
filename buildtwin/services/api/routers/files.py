@@ -45,12 +45,12 @@ def upload_file(project_id: str, file: UploadFile = File(...), kind: str | None 
     resolved: str = kind if kind in _VALID_KINDS else detected
     if resolved not in _VALID_KINDS:
         stored.path.unlink(missing_ok=True)
-        raise UnsupportedMedia(f"unsupported file kind for {filename!r} (detected: {detected})")
+        raise UnsupportedMedia(f"unsupported file kind for {filename!r} (detected: {detected})", code="unsupported_file_kind")
     try:
         job_kind = job_kind_for(resolved)
     except JobError as exc:
         stored.path.unlink(missing_ok=True)
-        raise UnsupportedMedia(str(exc))
+        raise UnsupportedMedia(str(exc), code="unsupported_file_kind")
     row = FileRow(file_id=file_id, project_id=project_id, kind=resolved, filename=filename, uri=stored.uri, sha256=stored.sha256,
                   size=stored.size, uploaded_by=user.user_id)
     job = JobRow(job_id=f"j-{uuid.uuid4().hex[:12]}", project_id=project_id, kind=job_kind, status="queued", progress=0.0,
@@ -72,7 +72,7 @@ def list_files(project_id: str, session: Session = Depends(get_session), _: Curr
 def get_file(file_id: str, session: Session = Depends(get_session), _: CurrentUser = Depends(get_current_user)) -> FileView:
     row = session.get(FileRow, file_id)
     if row is None:
-        raise NotFound(f"file not found: {file_id}")
+        raise NotFound(f"file not found: {file_id}", code="file_not_found")
     return file_view(row)
 
 
@@ -80,8 +80,8 @@ def get_file(file_id: str, session: Session = Depends(get_session), _: CurrentUs
 def file_content(file_id: str, session: Session = Depends(get_session), _: CurrentUser = Depends(get_current_user)) -> FileResponse:
     row = session.get(FileRow, file_id)
     if row is None:
-        raise NotFound(f"file not found: {file_id}")
+        raise NotFound(f"file not found: {file_id}", code="file_not_found")
     path = resolve_local_path(row.uri)
     if path is None:
-        raise NotFound(f"stored content missing for file {file_id}")
+        raise NotFound(f"stored content missing for file {file_id}", code="file_content_not_found")
     return FileResponse(path, filename=row.filename, media_type="application/octet-stream")

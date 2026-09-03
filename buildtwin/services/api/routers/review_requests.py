@@ -37,7 +37,7 @@ def get_review_request(review_request_id: str, session: Session = Depends(get_se
                        _: CurrentUser = Depends(require_role("cm", "admin"))) -> ReviewRequest:
     row = session.get(ReviewRequestRow, review_request_id)
     if row is None:
-        raise NotFound(f"review request not found: {review_request_id}")
+        raise NotFound(f"review request not found: {review_request_id}", code="review_request_not_found")
     return db.review_row_to_model(row)
 
 

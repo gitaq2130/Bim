@@ -22,10 +22,11 @@ __all__ = ["CATEGORY_TO_IFC", "FIXTURES", "PROJECT_ID", "MODEL_ID", "ensure_mode
 def ensure_model_chain(session, project_id: str, model_id: str, file_id: str | None = None) -> ModelRow:
     """ProjectRow -> FileRow -> ModelRow 부모 체인을 픽스처에서 미리 만든다.
 
-    db.ensure_model()(db.save_objects() 가 내부에서 호출)은 이제 자리표시 FileRow 도 스스로
-    만들어 FK 를 충족하므로(services/progress/persistence.py:ensure_model), 이 헬퍼가 없어도
-    save_objects() 자체는 더 이상 실패하지 않는다. 다만 테스트가 진짜 파일(모델 전용 file_id,
-    지정한 kind 등)이 딸린 ModelRow 를 원할 때는 여전히 이 헬퍼를 써서 직접 체인을 구성한다.
+    db.ensure_model()/db.save_objects() 는 자리표시(placeholder) FileRow 를 스스로 만들지 않고
+    실제 file_id 를 필수 인자로 요구한다(services/progress/persistence.py:ensure_model — 라운드4
+    리뷰: 자리표시 행이 GET /files 에 유령 파일로 노출되는 문제라 제거했다). 이 헬퍼가 그 실제
+    FileRow 를 미리 만들어두고, 반환하는 ModelRow.file_id 를 이후 save_objects() 호출에 그대로
+    넘기면 된다.
     """
     db.ensure_project(session, project_id)
     row = session.get(ModelRow, model_id)
@@ -85,8 +86,8 @@ def sample_objects() -> list[BimObjectDraft]:
 def seeded(session, sample_objects, schedule_expected) -> dict:
     """프로젝트 + 객체(PLANNED) + CSV 공정표 + Activity↔객체 매핑 저장."""
     db.ensure_project(session, PROJECT_ID)
-    ensure_model_chain(session, PROJECT_ID, MODEL_ID)
-    db.save_objects(session, PROJECT_ID, MODEL_ID, sample_objects)
+    model = ensure_model_chain(session, PROJECT_ID, MODEL_ID)
+    db.save_objects(session, PROJECT_ID, MODEL_ID, sample_objects, model.file_id)
     schedule = import_schedule(FIXTURES / "schedule.csv", PROJECT_ID)
     db.save_schedule(session, schedule)
     mappings = map_activities_to_objects(schedule, sample_objects)

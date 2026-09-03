@@ -23,7 +23,7 @@ router = APIRouter(tags=["projects"])
 def get_project_or_404(session: Session, project_id: str) -> ProjectRow:
     row = session.get(ProjectRow, project_id)
     if row is None:
-        raise NotFound(f"project not found: {project_id}")
+        raise NotFound(f"project not found: {project_id}", code="project_not_found")
     return row
 
 
@@ -38,7 +38,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(get_session),
     if session.get(ProjectRow, pid) is not None:
         from ..errors import Conflict
 
-        raise Conflict(f"project already exists: {pid}")
+        raise Conflict(f"project already exists: {pid}", code="duplicate_project")
     row = ProjectRow(project_id=pid, name=body.name)
     session.add(row)
     session.commit()

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import uuid
 
+import pytest
 from sqlalchemy import select
 
 from packages.core.db import new_session
@@ -16,8 +17,10 @@ from packages.core.models.orm import (
     StateTransitionRow,
 )
 
+from .conftest import FIXTURES, upload
+
 # (project_id, global_id) 를 FK 로 참조하는 모든 테이블(ADR 0005) — orphan 시나리오를 만들려면
-# bim_objects 행을 지우기 전에 이들도 함께 지웠다가 되돌려야 FK 위반 없이 복구된다.
+# bim_objects 행을 지우기 전에 이들도 함께 지워야 FK 위반이 나지 않는다.
 _FK_DEPENDENT_MODELS = (StateTransitionRow, EntityObjectMappingRow, ActivityObjectMappingRow, ScanVerdictRow)
 
 
@@ -30,26 +33,8 @@ def _logs(entity_type: str, entity_id: str) -> list[ExpertReviewLogRow]:
         s.close()
 
 
-def _row_snapshot(model: type, row: object) -> dict:
-    return {c.name: getattr(row, c.name) for c in model.__table__.columns}
-
-
-def _snapshot_object(project: str, gid: str) -> tuple[dict, list[tuple[type, dict]]]:
-    """(project, gid) 의 bim_objects 행과, 그것을 FK 로 참조하는 다른 테이블의 행들을 있는 그대로 캡처한다."""
-    s = new_session()
-    try:
-        obj = s.get(BimObjectRow, (project, gid))
-        assert obj is not None, f"object not found: {gid}"
-        obj_snapshot = _row_snapshot(BimObjectRow, obj)
-        deps = [(model, _row_snapshot(model, row)) for model in _FK_DEPENDENT_MODELS
-               for row in s.scalars(select(model).where(model.project_id == project, model.global_id == gid))]
-        return obj_snapshot, deps
-    finally:
-        s.close()
-
-
 def _delete_object_and_dependents(project: str, gid: str) -> None:
-    """(project, gid) 를 참조하는 FK 의존 행을 모두 지운 뒤 bim_objects 행 자체를 지운다."""
+    """(project, gid) 를 참조하는 FK 의존 행을 모두 지운 뒤 bim_objects 행 자체를 지운다(orphan 재현용)."""
     s = new_session()
     try:
         for model in _FK_DEPENDENT_MODELS:
@@ -64,27 +49,31 @@ def _delete_object_and_dependents(project: str, gid: str) -> None:
         s.close()
 
 
-def _restore_object(project: str, gid: str, obj_snapshot: dict, dep_snapshots: list[tuple[type, dict]]) -> None:
-    """`_snapshot_object` 로 찍어둔 원래 상태로 정확히 되돌린다(테스트 도중 새로 생긴 행까지 지우고 복구)."""
-    _delete_object_and_dependents(project, gid)
-    s = new_session()
-    try:
-        s.merge(BimObjectRow(**obj_snapshot))
-        s.flush()
-        for model, snap in dep_snapshots:
-            s.merge(model(**snap))
-        s.commit()
-    finally:
-        s.close()
+@pytest.fixture
+def isolated_project(client, auth) -> str:
+    """이 테스트 함수만을 위한 새 프로젝트. 세션 스코프 `project` 픽스처(다른 파일도 공유, 예: test_02 의
+    object_total == 42)는 절대 건드리지 않는다 — orphan 을 만들려고 뭔가를 지워야 하는 테스트는 이 픽스처로
+    자기 소유의 프로젝트를 받아 그 안에서만 지운다. 함수 스코프라 테스트 실행 순서·재실행 여부에 영향받지 않는다."""
+    r = client.post("/api/projects", headers=auth("admin"), json={"name": f"검토요청 격리 테스트 {uuid.uuid4().hex[:8]}"})
+    assert r.status_code == 201, r.text
+    return r.json()["project_id"]
 
 
-def _delete_review_request(review_request_id: str) -> None:
-    s = new_session()
-    try:
-        s.query(ReviewRequestRow).filter_by(review_request_id=review_request_id).delete()
-        s.commit()
-    finally:
-        s.close()
+@pytest.fixture
+def isolated_ifc_project(client, auth, isolated_project) -> str:
+    """`isolated_project` 에 sample.ifc 를 새로 올린다. project_id 가 다르므로 세션 픽스처 `ifc_job` 이 이미
+    올린 것과 global_id 가 겹쳐도(ADR 0005: PK 는 (project_id, global_id)) 서로 격리된다."""
+    up, job = upload(client, auth("contractor"), isolated_project, FIXTURES / "sample.ifc")
+    assert up["kind"] == "ifc" and job["status"] == "done", job
+    return isolated_project
+
+
+@pytest.fixture
+def isolated_dxf_project(client, auth, isolated_ifc_project) -> dict:
+    """`isolated_ifc_project` 에 sample.dxf 까지 올려 project_id 와 drawing_id 를 함께 돌려준다."""
+    up, job = upload(client, auth("cm"), isolated_ifc_project, FIXTURES / "sample.dxf", level="1F")
+    assert up["kind"] == "dxf" and job["status"] == "done", job
+    return {"project_id": isolated_ifc_project, "drawing_id": job["result"]["drawing_id"]}
 
 
 def test_resolve_verification_review_records_log(client, auth, project, ifc_job):
@@ -149,59 +138,60 @@ def test_inspection_rejection_returns_to_in_progress(client, auth, project, ifc_
     assert client.get(f"/api/objects/{gid}", headers=auth("cm")).json()["current_state"]["state"] == "IN_PROGRESS"
 
 
-def test_resolve_review_with_orphaned_object_returns_404(client, auth, project, ifc_job):
+def test_resolve_review_with_orphaned_object_returns_404(client, auth, isolated_ifc_project):
     """ReviewRequestRow 의 (project_id, global_id) 가 이후 삭제로 더 이상 객체를 가리키지 못하면 500 이 아니라 404.
 
-    `project` 는 세션 스코프 픽스처(다른 테스트 파일도 42개 객체를 전제)라, 객체와 그 FK 의존 행을
-    스냅샷 후 지웠다가 테스트가 끝나면 정확히 원상복구한다.
+    orphan 을 만들려면 객체를 실제로 지워야 하므로, 세션 스코프 `project` 픽스처(다른 테스트 파일도 42개
+    객체·PLANNED 상태를 전제, 예: test_02 의 object_total == 42)는 절대 쓰지 않는다 — `isolated_ifc_project`
+    로 이 테스트만의 프로젝트를 새로 만들어 그 안에서만 지우고 끝낸다(복구 불필요, 다른 테스트에 영향 없음).
     """
-    items = client.get(f"/api/projects/{project}/objects", headers=auth("client"),
+    proj = isolated_ifc_project
+    items = client.get(f"/api/projects/{proj}/objects", headers=auth("client"),
                        params={"state": "PLANNED"}).json()["items"]
-    assert items, "no PLANNED object left to orphan"
+    assert items, "no PLANNED object to orphan"
     gid = items[0]["global_id"]
-    obj_snapshot, dep_snapshots = _snapshot_object(project, gid)   # 아직 전이 전(PLANNED)의 원본 상태
 
-    rv = None
-    try:
-        assert client.post(f"/api/objects/{gid}/transitions", headers=auth("contractor"), json={"to_state": "REPORTED"}).status_code == 201
-        assert client.post(f"/api/objects/{gid}/transitions", headers=auth("contractor"),
-                           json={"to_state": "INSPECTION_REQUESTED"}).status_code == 201
-        rv = client.get(f"/api/projects/{project}/review-requests", headers=auth("cm"),
-                        params={"kind": "inspection", "status": "open", "global_id": gid}).json()[0]
+    # global_id 는 sample.ifc 를 공유하는 다른 프로젝트(세션 픽스처 `project` 등)와 겹칠 수 있으므로
+    # (project_id, global_id) 가 PK 인 ADR 0005 에 따라 project_id 로 명시 disambiguate 한다.
+    assert client.post(f"/api/objects/{gid}/transitions", headers=auth("contractor"), params={"project_id": proj},
+                       json={"to_state": "REPORTED"}).status_code == 201
+    assert client.post(f"/api/objects/{gid}/transitions", headers=auth("contractor"), params={"project_id": proj},
+                       json={"to_state": "INSPECTION_REQUESTED"}).status_code == 201
+    rv = client.get(f"/api/projects/{proj}/review-requests", headers=auth("cm"),
+                    params={"kind": "inspection", "status": "open", "global_id": gid}).json()[0]
 
-        _delete_object_and_dependents(project, gid)   # 객체가 삭제/재업로드로 사라진 상황을 재현
+    _delete_object_and_dependents(proj, gid)   # 객체가 삭제/재업로드로 사라진 상황을 재현
 
-        r = client.post(f"/api/review-requests/{rv['review_request_id']}/resolve", headers=auth("cm"),
-                        json={"decision": "approved", "note": "객체가 삭제된 뒤 처리 시도"})
-        assert r.status_code == 404, r.text
-        detail = r.json()["detail"]
-        assert rv["review_request_id"] in detail
-        assert gid in detail
-        # 검토요청 자체는 여전히 open 으로 남는다(상태기계가 처리하지 못했으므로)
-        assert client.get(f"/api/review-requests/{rv['review_request_id']}", headers=auth("cm")).json()["status"] == "open"
-    finally:
-        _restore_object(project, gid, obj_snapshot, dep_snapshots)
-        if rv is not None:
-            _delete_review_request(rv["review_request_id"])
+    r = client.post(f"/api/review-requests/{rv['review_request_id']}/resolve", headers=auth("cm"),
+                    json={"decision": "approved", "note": "객체가 삭제된 뒤 처리 시도"})
+    assert r.status_code == 404, r.text
+    detail = r.json()["detail"]
+    assert rv["review_request_id"] in detail
+    assert gid in detail
+    # 검토요청 자체는 여전히 open 으로 남는다(상태기계가 처리하지 못했으므로)
+    assert client.get(f"/api/review-requests/{rv['review_request_id']}", headers=auth("cm")).json()["status"] == "open"
 
 
-def test_resolve_mapping_review_with_deleted_candidate_returns_4xx(client, auth, project, dxf_job):
+def test_resolve_mapping_review_with_deleted_candidate_returns_4xx(client, auth, isolated_dxf_project):
     """kind=mapping 검토요청의 candidate_global_id 가 처리 시점에 이미 삭제돼 있으면(sync.confirm_mapping_row 가
-    ValueError) 500 이 아니라 4xx 여야 한다. 실제 저신뢰 매핑을 기다리지 않고, 곧 지울 후보 객체로 요청을 직접 구성한다."""
-    did = dxf_job["result"]["drawing_id"]
+    ValueError) 500 이 아니라 4xx 여야 한다. 실제 저신뢰 매핑을 기다리지 않고, 곧 지울 후보 객체로 요청을 직접 구성한다.
+
+    `isolated_dxf_project` 는 이 테스트 전용 프로젝트라, 후보 객체를 지워도 세션 스코프 `project` 픽스처가
+    다른 테스트 파일에 남겨야 하는 상태(예: test_02 의 object_total == 42)를 건드리지 않는다."""
+    proj = isolated_dxf_project["project_id"]
+    did = isolated_dxf_project["drawing_id"]
     mappings = client.get(f"/api/drawings/{did}/mappings", headers=auth("client")).json()
     m = mappings[0]
     entity_handle = m["entity_handle"]
 
-    items = client.get(f"/api/projects/{project}/objects", headers=auth("client"), params={"state": "PLANNED"}).json()["items"]
+    items = client.get(f"/api/projects/{proj}/objects", headers=auth("client"), params={"state": "PLANNED"}).json()["items"]
     candidate = next(o["global_id"] for o in items if o["global_id"] != m["global_id"])
-    obj_snapshot, dep_snapshots = _snapshot_object(project, candidate)
 
     review_request_id = str(uuid.uuid4())
     s = new_session()
     try:
         s.add(ReviewRequestRow(
-            review_request_id=review_request_id, project_id=project, kind="mapping", global_id=m["global_id"],
+            review_request_id=review_request_id, project_id=proj, kind="mapping", global_id=m["global_id"],
             title="테스트: 삭제된 후보 객체로의 매핑 확인", confidence=0.5,
             evidence={"source_type": "mapping", "source_id": entity_handle, "method": "test_setup", "extra": {}},
             conflicting_sources={"drawing_id": did, "entity_handle": entity_handle, "candidate_global_id": candidate,
@@ -211,16 +201,12 @@ def test_resolve_mapping_review_with_deleted_candidate_returns_4xx(client, auth,
     finally:
         s.close()
 
-    try:
-        _delete_object_and_dependents(project, candidate)   # 후보 객체가 삭제/재업로드로 사라진 상황을 재현
+    _delete_object_and_dependents(proj, candidate)   # 후보 객체가 삭제/재업로드로 사라진 상황을 재현
 
-        r = client.post(f"/api/review-requests/{review_request_id}/resolve", headers=auth("cm"),
-                        json={"decision": "approved", "note": "후보 객체가 삭제된 뒤 처리 시도"})
-        assert r.status_code in (404, 409), r.text
-        assert review_request_id in r.json()["detail"]
-        # 실제 엔티티 매핑은 건드리지 않았어야 한다(확정이 실패했으므로)
-        after = {x["entity_handle"]: x for x in client.get(f"/api/drawings/{did}/mappings", headers=auth("client")).json()}
-        assert after[entity_handle]["global_id"] == m["global_id"]
-    finally:
-        _restore_object(project, candidate, obj_snapshot, dep_snapshots)
-        _delete_review_request(review_request_id)
+    r = client.post(f"/api/review-requests/{review_request_id}/resolve", headers=auth("cm"),
+                    json={"decision": "approved", "note": "후보 객체가 삭제된 뒤 처리 시도"})
+    assert r.status_code in (404, 409), r.text
+    assert review_request_id in r.json()["detail"]
+    # 실제 엔티티 매핑은 건드리지 않았어야 한다(확정이 실패했으므로)
+    after = {x["entity_handle"]: x for x in client.get(f"/api/drawings/{did}/mappings", headers=auth("client")).json()}
+    assert after[entity_handle]["global_id"] == m["global_id"]

@@ -97,7 +97,7 @@ def ensure_inspection_review(session: Session, project_id: str, global_id: str, 
     """INSPECTION_REQUESTED 진입 시 미결 inspection 검토요청이 없으면 하나 만든다. 생성된 id 목록을 돌려준다."""
     if transition.to_state != ObjectState.INSPECTION_REQUESTED:
         return []
-    if db.open_reviews(session, [global_id], kind="inspection", project_id=project_id):
+    if db.open_reviews(session, project_id, [global_id], kind="inspection"):
         return []
     row = session.get(BimObjectRow, (project_id, global_id))
     if row is None:
@@ -122,7 +122,7 @@ def close_inspection_reviews(session: Session, project_id: str, global_id: str, 
     if status is None:
         return []
     closed: list[str] = []
-    for review in db.open_reviews(session, [global_id], kind="inspection", project_id=project_id):
+    for review in db.open_reviews(session, project_id, [global_id], kind="inspection"):
         review.status = status
         review.resolved_by = transition.actor_id
         review.resolved_at = datetime.now(UTC)
@@ -158,7 +158,7 @@ class ObjectStateMachine:
         from_state, to_state, actor = ObjectState(row.state), ObjectState(to_state), Actor(actor)
         validate_transition(from_state, to_state, actor)
         if actor == Actor.SYSTEM:
-            open_reviews = db.open_reviews(session, [global_id], kind="verification", project_id=project_id)
+            open_reviews = db.open_reviews(session, project_id, [global_id], kind="verification")
             if open_reviews:
                 raise TransitionBlockedByReviewError(global_id, [r.review_request_id for r in open_reviews])
         rid = UUID(str(review_request_id)) if review_request_id else None
@@ -277,7 +277,7 @@ class ObjectStateMachine:
             assert kind in NEXT_ACTION_KINDS
             actions.append({"kind": kind, "to_state": target.value, "actor": actor.value, "allowed_roles": ACTOR_TO_ROLES[actor]})
         if actor == Actor.CM:
-            for review in db.open_reviews(session, [global_id], project_id=project_id):
+            for review in db.open_reviews(session, project_id, [global_id]):
                 actions.append({"kind": "resolve_review", "to_state": None, "actor": actor.value,
                                 "allowed_roles": ACTOR_TO_ROLES[Actor.CM], "review_request_id": review.review_request_id,
                                 "review_kind": review.kind, "rule_id": review.rule_id})

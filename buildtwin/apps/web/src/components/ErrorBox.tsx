@@ -25,12 +25,12 @@ const CODE_MESSAGES: Record<ApiErrorCode, string> = {
 
 export function errorText(e: unknown): string {
   if (e instanceof ApiError) {
+    // 1) code 가 있으면 원인별 한국어 문구로 분기한다 (status 코드만으로는 원인을 고르지 않는다).
     if (e.code && e.code in CODE_MESSAGES) return CODE_MESSAGES[e.code];
-    if (e.status === 403) return "권한이 없습니다 (403). 이 작업은 허용된 역할만 수행할 수 있습니다.";
+    // 2) code 가 없는(구버전/알 수 없는) 에러: 로그인/권한처럼 흔한 두 상태만 문구를 보정하고,
     if (e.status === 401) return "로그인이 필요합니다 (401).";
-    // code 가 없는(구버전/알 수 없는) 에러는 서버가 준 detail 문구를 그대로 보여준다 —
-    // status 만으로 원인을 지어내지 않는다.
-    if (e.message) return e.message;
+    if (e.status === 403) return "권한이 없습니다 (403). 이 작업은 허용된 역할만 수행할 수 있습니다.";
+    // 3) 그 외에는 서버가 준 detail(e.message)을 상태코드와 함께 그대로 보여준다 — 원인을 지어내지 않는다.
     return `${e.message} (${e.status})`;
   }
   if (e instanceof Error) return e.message;
