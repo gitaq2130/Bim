@@ -210,7 +210,9 @@ def _apply_document(row: DocumentRow, d: Document, imported_at: datetime) -> Non
     row.approval_evidence = d.approval_evidence.model_dump(mode="json")
     row.file_id, row.sheet_name, row.source_row = d.file_id, d.sheet_name, d.source_row
     row.needs_review = d.needs_review
-    row.is_orphaned = False   # 규칙 5: 이번 대장에 나타난 문서는(신규든 기존이든) 고아가 아니다
+    # ADR 0007 §2-2 규칙 2 의 뒷면: 고아 표시는 "이번 업로드에 없는 문서"에 붙으므로, 다시 나타난 문서는
+    # 표시를 거둔다. 대장에서 실수로 지웠다 되살리는 일이 실제로 있다. (§2-2 에 규칙 5 는 없다 — 참조 정정)
+    row.is_orphaned = False
     row.imported_at = imported_at
 
 
