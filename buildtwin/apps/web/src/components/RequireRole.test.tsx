@@ -2,8 +2,10 @@ import { screen } from "@testing-library/react";
 import { Route, Routes } from "react-router-dom";
 import { ReviewsPage } from "../pages/ReviewsPage";
 import { DailyReportPage } from "../pages/DailyReportPage";
+import { UploadPage } from "../pages/UploadPage";
 import { loginAs, mockFetch, renderWithProviders, resetStore } from "../test/utils";
 import { RequireRole } from "./RequireRole";
+import { PROJECT_ROUTE_ROLES } from "../domain/projectRoutes";
 
 /** GET /api/projects/p1 목 — ADR 0006: RequireRole 이 이 응답의 my_role 로 라우트를 가른다. */
 function mockProject(myRole: "contractor" | "cm" | "client" | null) {
@@ -12,6 +14,17 @@ function mockProject(myRole: "contractor" | "cm" | "client" | null) {
     if (url.endsWith("/api/projects/p1")) return { body: { project_id: "p1", name: "P1", my_role: myRole } };
     return undefined;
   });
+}
+
+function renderUploadRoute() {
+  return renderWithProviders(
+    <Routes>
+      <Route path="/projects/:id/upload" element={<RequireRole roles={PROJECT_ROUTE_ROLES.upload} />}>
+        <Route index element={<UploadPage />} />
+      </Route>
+    </Routes>,
+    { route: "/projects/p1/upload" },
+  );
 }
 
 function renderReviewsRoute() {
@@ -130,5 +143,43 @@ describe("RequireRole", () => {
 
     expect(await screen.findByTestId("require-role-denied")).toBeInTheDocument();
     expect(screen.queryByText("작업일보")).not.toBeInTheDocument();
+  });
+
+  // 리뷰 6차 지적 3: POST /projects/{pid}/files 는 서버에서 contractor·cm 만 허용한다
+  // (services/api/routers/files.py). 업로드 라우트도 daily-report/reviews 와 같은 RequireRole 패턴을 쓴다.
+  it("client 프로젝트 역할이 업로드 라우트에 접근하면 '권한 없음' 패널을 보고 드롭존은 렌더되지 않는다", async () => {
+    mockProject("client");
+    loginAs("client");
+    renderUploadRoute();
+
+    expect(await screen.findByTestId("require-role-denied")).toBeInTheDocument();
+    expect(screen.queryByTestId("dropzone")).not.toBeInTheDocument();
+  });
+
+  it("admin(my_role=null) 은 업로드 라우트에 접근할 수 없다", async () => {
+    mockProject(null);
+    loginAs("admin");
+    renderUploadRoute();
+
+    expect(await screen.findByTestId("require-role-denied")).toBeInTheDocument();
+    expect(screen.queryByTestId("dropzone")).not.toBeInTheDocument();
+  });
+
+  it("contractor 프로젝트 역할은 업로드 라우트에 정상 접근한다", async () => {
+    mockProject("contractor");
+    loginAs("contractor");
+    renderUploadRoute();
+
+    expect(await screen.findByTestId("dropzone")).toBeInTheDocument();
+    expect(screen.queryByTestId("require-role-denied")).not.toBeInTheDocument();
+  });
+
+  it("cm 프로젝트 역할은 업로드 라우트에 정상 접근한다", async () => {
+    mockProject("cm");
+    loginAs("cm");
+    renderUploadRoute();
+
+    expect(await screen.findByTestId("dropzone")).toBeInTheDocument();
+    expect(screen.queryByTestId("require-role-denied")).not.toBeInTheDocument();
   });
 });
