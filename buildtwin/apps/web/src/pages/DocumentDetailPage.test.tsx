@@ -1,4 +1,5 @@
 import { screen, waitFor, within } from "@testing-library/react";
+import { vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { Route, Routes } from "react-router-dom";
 import type { ActivityDocumentMapping, Document, DocumentDetail } from "../api/types";
@@ -371,5 +372,37 @@ describe("DocumentDetailPage", () => {
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "확정" }));
 
     await waitFor(() => expect(reviewFetches).toBeGreaterThan(before));
+  });
+
+  it("문서 상세에서 확정하면 주간요약·착수가능·readiness 도 함께 무효화한다", async () => {
+    // 14차 리뷰 후속: 이 무효화 줄들(weeklySummary/startable/activities)을 지워도 178건이 전부
+    // 통과했다. 코드는 옳은데 방어가 고정돼 있지 않은 상태 — 이 사이클이 세 번 연속 REJECT 당한
+    // 실패 유형 그대로다. 확정은 서버에서 drawing_approval 을 바꾸므로 파생 화면이 낡으면 안 된다.
+    //
+    // 이 화면은 세 쿼리를 직접 구독하지 않으므로(다른 화면 소유) 재조회 요청 수로는 잴 수 없고,
+    // 테스트 QueryClient 는 gcTime:0 이라 관찰자 없는 캐시 항목이 즉시 수거돼 상태로도 못 본다.
+    // 그래서 무효화 호출 자체를 확인한다.
+    resetStore();
+    loginAs("cm");
+    mockFetch((url, init) => {
+      if (url.includes("/confirm") && init?.method === "POST")
+        return { body: { ...PENDING_MAPPING, needs_review: false, reviewed_by: "user-cm" } };
+      if (url.includes("/api/documents/doc-aaa")) return { body: detail([PENDING_MAPPING]) };
+      if (url.includes("/api/projects/p1/review-requests")) return { body: [] };
+      return mockProjectRole("cm")(url);
+    });
+    const { qc } = renderPage();
+    const spy = vi.spyOn(qc, "invalidateQueries");
+    const user = userEvent.setup();
+
+    await screen.findByTestId("mapping-row");
+    await user.click(screen.getByRole("button", { name: "확정" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "확정" }));
+
+    const keys = () => spy.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey));
+    await waitFor(() => expect(keys()).toContain(JSON.stringify(["projects", "p1", "weekly-summary"])));
+    expect(keys()).toContain(JSON.stringify(["projects", "p1", "startable"]));
+    expect(keys()).toContain(JSON.stringify(["activities"]));
+    spy.mockRestore();
   });
 });

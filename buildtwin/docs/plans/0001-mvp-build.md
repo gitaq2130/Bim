@@ -89,3 +89,13 @@ CLAUDE.md §0의 MVP 5기능을 실제 동작 코드로 구현한다. 벤치마�
 - Job 진행률이 SQLite에서 작업 종료 시점에만 보임(락 회피). PostgreSQL에서는 중간 진행률 노출 가능
 - `queries.latest_model`과 `ingest.persistence.latest_model` 중복(읽기 전용 헬퍼)
 - `services/progress/state_machine.py:82` `actor_for_role` docstring이 아직 "UserRole → Actor"로 적혀 있다. ADR 0006 규칙 7·ADR 0001 §4-1(개정 2) 이후 이 함수의 입력은 **프로젝트 역할**(`project_members.role`)이며 `usecases.caller_project_role`이 그 값을 넘긴다. 값 집합이 겹쳐 동작은 정상이나 용어가 어긋난다 — docstring만 "프로젝트 역할 → Actor"로 정정 필요(담당: progress-engine, 문서 문자열 변경뿐)
+
+### 리뷰 14차 APPROVE 후 남긴 후속 (2026-09-03)
+
+14차가 APPROVE 하며 minor 4건을 후속으로 분류했다. 그중 **방어를 붙드는 테스트 부재 2건은 그 자리에서 닫았다** — 이 사이클이 세 번 연속 REJECT 당한 실패 유형("코드는 옳은데 방어가 고정 안 됨")이라 미루면 같은 사고가 반복된다. 남은 2건:
+
+- **`useResolveReview` 가 객체 목록을 무효화하지 않는다.** `hooks.ts` 의 `["objects"]` 는 런타임 부분 일치상 `objectDetail`(`["objects", pid, gid]`)만 잡고 목록 키 `["projects", pid, "objects", {}]` 는 잡지 못한다 — `documents(pid)` 가 `{}` 로 끝나 상세를 못 잡던 것과 **같은 함정의 두 번째 사례**다. 같은 상태 전이를 하는 `useTransition` 은 `["projects"]` 로 넓게 걸어 비대칭이다. 목록은 다른 화면이라 `staleTime` 10초 + 재마운트 refetch 로 유계라 major 는 아니지만, 키 함정 자체는 `documentsRoot` 처럼 접두사 팩토리를 두어 정리하는 것이 맞다 (담당: frontend)
+- **`ObjectDetailPanel.tsx:385` "되돌리려면 사유가 필요합니다"** — `revoke_confirmation` 전이는 실재하지만 `TransitionRequest.note` 가 optional 이고 이 화면의 `ConfirmDialog` 에 `requireNote` 를 넘기지 않아 사유 없이도 통과한다. 화면이 지키지 않는 규칙을 말하는 (C) 계열 잔여 1건. 문구를 사실에 맞추거나 `requireNote` 를 넘기거나 둘 중 하나 (담당: frontend). 선존재 결함(494dd94)이며 ADR 0007 범위 밖
+
+**로그인/로그아웃이 Query 캐시를 비우지 않는다**(범위 밖 관찰, 14차). `staleTime: 10_000` 이라 같은 브라우저에서 사용자를 바꾸면 10초 동안 이전 사용자의 프로젝트·문서·검토요청이 캐시에서 그려질 수 있다. 인가 자체는 서버가 막지만 화면에 남는 것은 별개 문제다 — ADR 0006 소유라 별도로 다룬다 (담당: architect / frontend)
+

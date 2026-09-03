@@ -1,4 +1,5 @@
 import { screen, waitFor, within } from "@testing-library/react";
+import { vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { Route, Routes } from "react-router-dom";
 import type { ReviewRequest } from "../api/types";
@@ -154,8 +155,14 @@ describe("ReviewsPage — document_mapping (ADR 0007)", () => {
     await user.click(screen.getByRole("button", { name: "승인" }));
 
     const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByText(/이 문서 ↔ Activity 매핑이 확정됩니다/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/needs_review=False/)).toBeInTheDocument();
+    const text = within(dialog).getByText(/이 문서 ↔ Activity 매핑이 확정됩니다/).textContent ?? "";
+    expect(text).toMatch(/needs_review=False/);
+    // 13차 리뷰: 이 자리는 "확정 이후에는 사람만 되돌릴 수 있습니다"라고 약속했는데 **되돌리는 API 가
+    // 없다**(문서 매핑 쓰기 경로는 generate 와 confirm 둘뿐). 그 거짓 절을 되돌려도 178건이 전부
+    // 통과했으므로(14차 뮤테이션 확인) 문구가 아니라 **약속의 내용**을 고정한다 — 없는 기능을 약속하지
+    // 않고, 시스템이 무엇을 하는지만 말해야 한다.
+    expect(text).toMatch(/확정을 취소하는 기능은 없습니다/);
+    expect(text).not.toMatch(/되돌릴 수 있습니다/);
   });
 
   // 10차 리뷰: 이 테스트는 원래 "매핑 행은 아직 바뀌지 않습니다"라는 **거짓 문구를 계약으로 고정**하고
@@ -402,5 +409,33 @@ describe("ReviewsPage — document_mapping (ADR 0007)", () => {
     const card = await screen.findByTestId("document-mapping-card");
     await within(card).findByText(/문서번호/);          // 문서 조회 완료 후에 판정한다(12차 리뷰)
     expect(within(card).queryByTestId("reopened-notice")).not.toBeInTheDocument();
+  });
+
+  it("큐에서 해소하면 주간요약·착수가능·readiness 도 함께 무효화한다 — 전용 확정 훅과 같은 범위", async () => {
+    // 12차가 "무효화 범위는 useConfirmDocumentMapping 과 같아야 한다"고 선언했는데, 14차 뮤테이션에서
+    // 이 세 줄을 지워도 178건이 전부 통과했다. 두 확정 경로의 범위가 같다는 것은 이 사이클이 서버에서
+    // 공유 본체로 강제한 불변식이므로, 화면 쪽도 고정한다.
+    resetStore();
+    loginAs("cm");
+    mockFetch((url, init) => {
+      if (url.endsWith("/resolve") && init?.method === "POST") return { body: { ...MAPPING_REVIEW, status: "approved" } };
+      if (url.includes("/api/documents/doc-aaa")) return { body: docDetail(confirmedMapping()) };
+      if (url.includes("/api/projects/p1/review-requests")) return { body: [MAPPING_REVIEW] };
+      if (url.endsWith("/api/projects/p1")) return { body: { project_id: "p1", name: "P", my_role: "cm" } };
+      return undefined;
+    });
+    const { qc } = renderPage();
+    const spy = vi.spyOn(qc, "invalidateQueries");
+    const user = userEvent.setup();
+
+    await screen.findByTestId("document-mapping-card");
+    await user.click(screen.getByRole("button", { name: "승인" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "승인" }));
+
+    const keys = () => spy.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey));
+    await waitFor(() => expect(keys()).toContain(JSON.stringify(["projects", "p1", "weekly-summary"])));
+    expect(keys()).toContain(JSON.stringify(["projects", "p1", "startable"]));
+    expect(keys()).toContain(JSON.stringify(["activities"]));
+    spy.mockRestore();
   });
 });
