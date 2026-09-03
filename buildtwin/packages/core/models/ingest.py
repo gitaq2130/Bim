@@ -9,7 +9,9 @@ from .coordinate import CoordinateSystem
 from .identity import BimObjectDraft, DrawingEntityDraft
 
 IngestStatus = Literal["ok", "partial", "failed", "needs_ifc_export"]
-FileKind = Literal["ifc", "dxf", "dwg", "rvt", "e57", "las", "ply", "csv", "xml", "xer", "unknown"]
+# xlsx: 문서관리대장(ADR 0007 §8 규칙 1). 대장 CSV 는 받지 않는다 — csv 는 이미 공정표로 예약되어
+# 있어 같은 확장자로 두 파이프라인을 구분할 수 없다(§8 규칙 3).
+FileKind = Literal["ifc", "dxf", "dwg", "rvt", "e57", "las", "ply", "csv", "xml", "xer", "xlsx", "unknown"]
 
 
 class IngestWarning(BaseModel):
