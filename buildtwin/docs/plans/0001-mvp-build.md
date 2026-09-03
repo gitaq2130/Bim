@@ -78,8 +78,13 @@ CLAUDE.md §0의 MVP 5기능을 실제 동작 코드로 구현한다. 벤치마�
 - [x] [frontend] 오류 코드 타입 분리(알려진 코드 union + 미지 코드 허용), 캐스트 제거
 - [x] [qa] 픽스처 파일 종류 어휘 정정, 중복 프로젝트 테스트가 남기던 영구 행 정리
 
+### ADR 0006 프로젝트 멤버십·인가 (2026-09-03)
+- [x] [architect] ADR 0006 + `project_members` 테이블. 역할을 전역/프로젝트 두 층으로 분리, 비멤버는 404(존재 은닉)
+- [x] [api] `require_project_role` 의존성, 프로젝트 범위 라우트 전면 적용, 대리키 라우트는 행을 먼저 읽어 멤버십 검사(리뷰어가 3회 지적한 구멍), `resolve_object`를 멤버 프로젝트로 한정(ADR 0005 §3 전제 이행), 멤버 관리 엔드포인트, admin의 행위 권한 제거
+- [x] [frontend] `useProjectRole`로 프로젝트별 역할 게이팅(전역 역할 사용 중단), 비멤버 접근 안내 패널, admin 전용 멤버 화면
+- [x] [qa] e2e 멤버십 픽스처 + 프로젝트 격리 검증 단계(타 현장 404, 자기 현장 정상, 같은 IFC 두 현장 공존)
+
 ### 관측된 개선 후보 (미착수)
 - **ORM에 `relationship()`이 없다.** 순수 FK 컬럼만 있어 SQLAlchemy가 한 flush 안에서 테이블 간 INSERT 순서를 보장하지 못한다. 운영 코드는 부모마다 `flush()`를 호출해 우회하고 있으나, 새 코드가 이 규칙을 모르면 외래키 위반이 난다. `relationship()` 도입은 cascade 영향 검토가 필요해 별도 사이클로 (담당: architect)
-- 프로젝트 멤버십·인가가 없다. 도입 시 `resolve_object`의 후보 조회와 명시 `project_id` 경로 양쪽에 필터 필요(ADR 0005 §3 전제)
 - Job 진행률이 SQLite에서 작업 종료 시점에만 보임(락 회피). PostgreSQL에서는 중간 진행률 노출 가능
 - `queries.latest_model`과 `ingest.persistence.latest_model` 중복(읽기 전용 헬퍼)
