@@ -12,7 +12,7 @@ from packages.core.models.orm import FileRow, ProjectMemberRow, ProjectRow, User
 
 from .. import queries
 from ..deps import CurrentUser, ProjectContext, get_current_user, get_session, require_project_role, require_role
-from ..errors import Conflict, NotFound
+from ..errors import Conflict, NotFound, Unprocessable
 from ..schemas.drawings import ModelSummary
 from ..schemas.objects import LevelView
 from ..schemas.projects import MemberCreate, MemberView, ProjectCreate, ProjectView
@@ -110,8 +110,19 @@ def list_members(project_id: str, session: Session = Depends(get_session), _: Cu
 def add_member(project_id: str, body: MemberCreate, session: Session = Depends(get_session),
                user: CurrentUser = Depends(require_role("admin"))) -> MemberView:
     get_project_or_404(session, project_id)
-    if session.get(UserRow, body.user_id) is None:
+    target = session.get(UserRow, body.user_id)
+    if target is None:
         raise NotFound(f"user not found: {body.user_id}", code="user_not_found")
+    if target.role == "admin":
+        # ADR 0006 §2/§4 + 리뷰어 6차 지적 2: 전역 admin 계정은 어떤 프로젝트의 멤버도 될 수 없다.
+        # 멤버십을 주면 project_role() 이 멤버 분기(admin 분기보다 먼저)를 타서 caller_project_role() 이
+        # 그 역할(예: "cm")을 그대로 돌려주고, actor_for_role() 이 이를 거부하지 못해 CONFIRMED 전이·
+        # 검측 승인·검토요청 해소가 admin 계정으로 통과해버린다. 현장 판단이 필요하면 별도 cm 계정을 발급한다.
+        raise Unprocessable(
+            f"admin account cannot become a project member: {body.user_id}. "
+            "admin 계정은 프로젝트 멤버가 될 수 없습니다. 현장 판단이 필요하면 별도의 cm 계정을 발급하세요.",
+            code="admin_cannot_be_member",
+        )
     if session.get(ProjectMemberRow, (project_id, body.user_id)) is not None:
         raise Conflict(f"user already a member of project {project_id}: {body.user_id}", code="duplicate_member")
     row = ProjectMemberRow(project_id=project_id, user_id=body.user_id, role=body.role, added_by=user.user_id)

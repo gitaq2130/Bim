@@ -4,6 +4,7 @@ import { RequireAdmin } from "./components/RequireAdmin";
 import { RequireAuth } from "./components/RequireAuth";
 import { RequireProjectAccess } from "./components/RequireProjectAccess";
 import { RequireRole } from "./components/RequireRole";
+import { PROJECT_ROUTE_ROLES } from "./domain/projectRoutes";
 import { DailyReportPage } from "./pages/DailyReportPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProjectMembersPage } from "./pages/ProjectMembersPage";
@@ -24,12 +25,14 @@ export function App() {
           {/* ADR 0006 §3 규칙 2: 비멤버는 404(project_not_found) — RequireProjectAccess 가 이 아래 전부를 감싼다. */}
           <Route path="/projects/:id" element={<RequireProjectAccess />}>
             <Route index element={<Navigate to="viewer" replace />} />
-            <Route path="upload" element={<UploadPage />} />
+            <Route path="upload" element={<RequireRole roles={PROJECT_ROUTE_ROLES.upload} />}>
+              <Route index element={<UploadPage />} />
+            </Route>
             <Route path="viewer" element={<ViewerPage />} />
-            <Route path="daily-report" element={<RequireRole roles={["contractor"]} />}>
+            <Route path="daily-report" element={<RequireRole roles={PROJECT_ROUTE_ROLES["daily-report"]} />}>
               <Route index element={<DailyReportPage />} />
             </Route>
-            <Route path="reviews" element={<RequireRole roles={["cm"]} />}>
+            <Route path="reviews" element={<RequireRole roles={PROJECT_ROUTE_ROLES.reviews} />}>
               <Route index element={<ReviewsPage />} />
             </Route>
             <Route path="summary" element={<SummaryPage />} />
