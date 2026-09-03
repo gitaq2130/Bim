@@ -14,8 +14,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import uuid
+import zipfile
+from datetime import datetime
 from pathlib import Path
 
 import ezdxf
@@ -23,6 +26,8 @@ import ifcopenshell
 import ifcopenshell.api
 import ifcopenshell.guid
 import numpy as np
+from openpyxl import Workbook
+from openpyxl.styles import Border, Side
 
 OUT = Path(__file__).resolve().parents[1]
 rng = np.random.default_rng(42)
@@ -368,6 +373,157 @@ def build_schedules(ids: dict) -> None:
     }, indent=2))
 
 
+# --------------------------------------------------------------------------- 문서관리대장 (ADR 0007)
+# 실제 현장(고창CDC) 대장 형식을 그대로 재현한다. 깨끗한 대장으로 테스트하면 실물에서 무너지므로,
+# 현장에서 실제로 관찰된 지저분함을 의도적으로 심는다 — 아래 MESS-1..7 주석 참고.
+REGISTER_TITLE = "(고창 CDC 물류센터 신축공사)"
+
+# 시트마다 컬럼 위치가 다르다(실제 대장에서 TFA는 제목이 H열, TFR은 G열). 열 위치를 상수로 박으면 안 되고
+# 3행 헤더를 읽어 찾아야 한다는 것을 이 픽스처가 강제한다.
+REGISTER_SHEETS = {
+    "TFA": {"title": "승인/검토/참조 요청서(TFA)",
+            "headers": ["No", "문서발생일", "발신", "공종", "번호", "문서번호", "회신요청일", "제목", "처리결과", "처리완료일"]},
+    "TFR": {"title": "자료제출서(TFR)",
+            "headers": ["No", "문서발생일", "발신", "공종", "번호", "문서번호", "제목", "처리결과", "처리완료일"]},
+}
+
+# (발생일, 발신, 공종열, 번호, 문서번호원문, 제목, 처리결과, 처리완료일)
+TFA_ROWS = [
+    ("26-09-01", "동부", "구조", "26049", "동부-HG-TFA-구조-26-049",
+     "시공상세도 승인요청 - 1F 기둥 배근도 (Z1)", "승인", "26-09-03"),
+    ("26-09-02", "동부", "구조", "26050", "동부-HG-TFA-구조-26-050",
+     "시공상세도 승인요청 - 1F 보 배근도 (Z1)", "조건부 승인", "26-09-05"),
+    # MESS-1: 처리결과가 공란. 실무에서 흔하다. UNKNOWN 이어야 하며 절대 승인으로 추측하면 안 된다.
+    ("26-09-04", "동부", "구조", "26051", "동부-HG-TFA-구조-26-051",
+     "시공상세도 승인요청 - 1F 슬래브 배근도 (Z1)", None, None),
+    # MESS-2: 문서번호의 공종 토큰(토목)과 공종 열(건축)이 어긋난다. 협력사 입력 편차 — 실제로 자주 발생.
+    #         문서번호의 공종을 신뢰해 매핑하면 여기서 틀린다(ADR 0007).
+    ("26-09-08", "동부", "건축", "26011", "동부-HG-TFA-토목-26-011",
+     "자재승인원 - 외벽 조적 벽돌 (1F Z1)", "반려", "26-09-11"),
+    # MESS-3: 처리결과에 앞뒤 공백. strip 안 하면 정규화 표에서 미스.
+    ("26-09-10", "중원", "기계", "26023", "중원-HG-TFA-기계-26023",
+     "시공상세도 승인요청 - 1F 덕트 경로도 (Z1)", "  검토중  ", None),
+    ("26-09-12", "동부", "구조", "26052", "동부-HG-TFA-구조-26-052",
+     "시공상세도 승인요청 - 2F 기둥 배근도 (Z1)", "승인", "26-09-15"),
+    # MESS-4: 제목이 위 1F 기둥 건과 ZONE 하나만 다르다. 제목 유사도는 0.9를 넘지만 별개 문서다.
+    #         "유사도 높으면 자동 확정" 을 하면 안 된다는 규칙(ADR 0007)을 이 행이 검증한다.
+    ("26-09-16", "동부", "구조", "26053", "동부-HG-TFA-구조-26-053",
+     "시공상세도 승인요청 - 1F 기둥 배근도 (Z2)", "승인", "26-09-18"),
+    # MESS-5: 공종이 두 토큰(통신-품질), 번호가 날짜형(제26-07-09호 → 260709). 자릿수를 재해석하면 안 된다.
+    ("26-09-18", "S1", "통신", "260709", "S1-HG-TFA-통신-품질-제26-07-09호",
+     "통신 배관 경로 검토요청 - 1F", "재제출 요청", "26-09-20"),
+]
+
+TFR_ROWS = [
+    ("26-09-05", "동부", "구조", "26007", "동부-HG-TFR-구조-26-007",
+     "1F 기둥 콘크리트 배합설계서 제출", "접수", "26-09-06"),
+    ("26-09-09", "중원", "기계", "26004", "중원-HG-TFR-기계-26004",
+     "덕트 자재 시험성적서 제출", None, None),
+]
+
+
+def _register_sheet(wb, key: str, rows: list) -> None:
+    spec = REGISTER_SHEETS[key]
+    ws = wb.create_sheet(key)
+    ncol = len(spec["headers"])
+    last = chr(ord("A") + ncol - 1)
+    # 1~2행: 병합된 제목. 실제 대장과 같게 두어 헤더 탐색이 3행을 찾아내는지 검증한다.
+    ws.merge_cells(f"A1:{last}1")
+    ws["A1"] = spec["title"]
+    ws.merge_cells(f"A2:{last}2")
+    ws["A2"] = REGISTER_TITLE
+    for col, name in enumerate(spec["headers"], start=1):
+        ws.cell(row=3, column=col, value=name)
+
+    idx = {name: i + 1 for i, name in enumerate(spec["headers"])}
+    for n, (issued, sender, discipline, number, docno, title, result, decided) in enumerate(rows, start=1):
+        r = 3 + n
+        ws.cell(row=r, column=idx["No"], value=n)
+        # MESS-6: 발생일이 어떤 행은 문자열, 어떤 행은 날짜값. 실제 대장에서 섞여 있다.
+        ws.cell(row=r, column=idx["문서발생일"],
+                value=datetime.strptime(issued, "%y-%m-%d") if n % 3 == 0 else issued)
+        ws.cell(row=r, column=idx["발신"], value=sender)
+        ws.cell(row=r, column=idx["공종"], value=discipline)
+        ws.cell(row=r, column=idx["번호"], value=number)
+        # 문서번호(F열)는 실제 대장에서 수식으로 만들어진다. 값이 아니라 수식이 들어 있는 경우를 재현한다.
+        ws.cell(row=r, column=idx["문서번호"], value=docno)
+        ws.cell(row=r, column=idx["제목"], value=title)
+        if result is not None:
+            ws.cell(row=r, column=idx["처리결과"], value=result)
+        if decided is not None:
+            ws.cell(row=r, column=idx["처리완료일"], value=decided)
+        if "회신요청일" in idx:
+            ws.cell(row=r, column=idx["회신요청일"], value=None)
+
+    # MESS-7: 데이터 끝난 뒤 서식만 있고 값은 없는 빈 행들. 마지막 데이터 행을 행 개수로 판단하면 틀린다.
+    for r in range(4 + len(rows), 4 + len(rows) + 12):
+        for col in range(1, ncol + 1):
+            ws.cell(row=r, column=col).border = Border(bottom=Side(style="thin"))
+
+
+def _normalize_xlsx(path: Path) -> None:
+    """xlsx 를 바이트 재현 가능하게 만든다.
+
+    openpyxl 은 zip 항목마다 현재 시각을 쓰므로 매 실행 파일이 달라진다. 다른 픽스처는 전부
+    바이트 동일하게 재생성되므로(모듈 상단 참고) 대장만 예외로 둘 수 없다. 항목 순서를 이름으로
+    정렬하고 타임스탬프를 고정해 다시 쓴다. 내용은 건드리지 않는다.
+    """
+    fixed = (2026, 1, 1, 0, 0, 0)
+    stamp = "2026-01-01T00:00:00Z"
+    with zipfile.ZipFile(path) as src:
+        items = sorted(src.infolist(), key=lambda i: i.filename)
+        payload = [(i.filename, src.read(i.filename)) for i in items]
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as dst:
+        for name, data in payload:
+            if name == "docProps/core.xml":
+                # openpyxl 은 wb.properties.modified 에 무엇을 넣든 저장 시점의 현재 시각으로 덮어쓴다.
+                data = re.sub(rb"(<dcterms:modified[^>]*>)[^<]*(</dcterms:modified>)",
+                              rb"\g<1>" + stamp.encode() + rb"\g<2>", data)
+            info = zipfile.ZipInfo(name, date_time=fixed)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o600 << 16
+            dst.writestr(info, data)
+
+
+def build_document_register() -> None:
+    wb = Workbook()
+    wb.remove(wb.active)
+    _register_sheet(wb, "TFA", TFA_ROWS)
+    _register_sheet(wb, "TFR", TFR_ROWS)
+    # 비어 있는 다른 종류 시트. 시트 탐색이 데이터 없는 시트에서 넘어지지 않는지 본다.
+    empty = wb.create_sheet("NCR")
+    empty["A1"] = "부적합 보고서(NCR)"
+    # 재현성: openpyxl 이 매번 현재 시각을 docProps 에 쓰므로 고정한다.
+    fixed = datetime(2026, 1, 1, 0, 0, 0)
+    wb.properties.created = fixed
+    wb.properties.modified = fixed
+    wb.properties.creator = "buildtwin-fixtures"
+    wb.properties.lastModifiedBy = "buildtwin-fixtures"
+    wb.save(OUT / "document_register.xlsx")
+    _normalize_xlsx(OUT / "document_register.xlsx")
+
+    (OUT / "document_register.expected.json").write_text(json.dumps({
+        "sheets": {"TFA": len(TFA_ROWS), "TFR": len(TFR_ROWS), "NCR": 0},
+        "header_row": 3,
+        "first_data_row": 4,
+        # 시트마다 제목·처리결과 열 위치가 다르다는 사실 자체가 기대값이다.
+        "title_column": {"TFA": "H", "TFR": "G"},
+        "result_column": {"TFA": "I", "TFR": "H"},
+        "trailing_formatted_blank_rows": 12,
+        "cases": {
+            "blank_result_is_unknown": "동부-HG-TFA-구조-26-051",
+            "discipline_token_conflicts_with_column": {
+                "doc_no": "동부-HG-TFA-토목-26-011", "token": "토목", "column": "건축"},
+            "result_needs_strip": "중원-HG-TFA-기계-26023",
+            "near_duplicate_title_different_zone": [
+                "동부-HG-TFA-구조-26-049", "동부-HG-TFA-구조-26-053"],
+            "two_token_discipline_and_date_number": {
+                "doc_no": "S1-HG-TFA-통신-품질-제26-07-09호", "discipline": "통신-품질", "number": "260709"},
+            "date_cell_types_mixed": True,
+        },
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 if __name__ == "__main__":
     # ifcopenshell/ezdxf 내부의 set 순회가 문자열 해시 랜덤화에 좌우되므로(파일 바이트 순서), 해시 시드를 고정해 재실행한다.
     if os.environ.get("PYTHONHASHSEED") != "0":
@@ -376,6 +532,7 @@ if __name__ == "__main__":
     build_dxf(ids)
     build_ply(ids)
     build_schedules(ids)
+    build_document_register()
     print("fixtures written to", OUT)
     print(json.dumps({k: len(v) for k, v in ids.items()}))
     sys.exit(0)

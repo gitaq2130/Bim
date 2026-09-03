@@ -6,7 +6,7 @@ dependencies = [
   "fastapi", "uvicorn[standard]", "sqlalchemy>=2.0", "pydantic>=2", "pydantic-settings",
   "python-multipart", "python-jose[cryptography]", "passlib[bcrypt]", "pyyaml",
   "celery", "redis", "ortools", "numpy", "scipy", "shapely",
-  "ifcopenshell", "ezdxf", "open3d", "laspy", "plyfile", "httpx",
+  "ifcopenshell", "ezdxf", "open3d", "laspy", "plyfile", "httpx", "openpyxl",
 ]
 
 [project.optional-dependencies]
