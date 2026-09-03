@@ -217,10 +217,13 @@ function DocumentMappingCard({ review, projectId }: { review: ReviewRequest; pro
         </div>
       )}
       <div className="source-title">매핑 근거</div>
+      {/* 제목 폴백으로 ev.note 를 쓰지 않는다(12차 리뷰): 확정 시 _confirm_document_mapping_row 가
+          evidence.note 를 CM 확정 메모로 덮으므로, 문서 조회가 실패하면 문서 제목 자리에 "확정합니다"
+          같은 메모가 뜬다. 모르면 doc_id 를 그대로 보여주는 편이 정직하다. */}
       <div>
         문서:{" "}
         {docId ? (
-          <Link to={`/projects/${projectId}/documents/${encodeURIComponent(docId)}`}>{docRow?.title ?? ev?.note ?? docId}</Link>
+          <Link to={`/projects/${projectId}/documents/${encodeURIComponent(docId)}`}>{docRow?.title ?? docId}</Link>
         ) : (
           <span className="muted">알 수 없음</span>
         )}

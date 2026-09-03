@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Route, Routes } from "react-router-dom";
 import type { ReviewRequest } from "../api/types";
@@ -82,6 +82,7 @@ describe("ReviewsPage — document_mapping (ADR 0007)", () => {
     resetStore();
     loginAs("cm");
     mockFetch((url) => {
+      if (url.includes("/api/documents/doc-aaa")) return { body: docDetail(confirmedMapping()) };
       if (url.includes("/api/projects/p1/review-requests")) return { body: [MAPPING_REVIEW] };
       if (url.endsWith("/api/projects/p1")) return { body: { project_id: "p1", name: "P", my_role: "cm" } };
       return undefined;
@@ -91,7 +92,9 @@ describe("ReviewsPage — document_mapping (ADR 0007)", () => {
     const card = await screen.findByTestId("document-mapping-card");
     expect(within(card).getByText(/제목 유사도: 42%/)).toBeInTheDocument();
     expect(within(card).getByText(/title_similarity, level_match/)).toBeInTheDocument();
-    const link = within(card).getByRole("link", { name: /1F 기둥 배근도 승인요청/ });
+    // 링크 라벨은 **문서 행의 제목**이다. evidence.note 는 폴백으로 쓰지 않는다(12차 리뷰) —
+    // 확정 시 그 필드가 CM 확정 메모로 덮여 문서 제목 자리에 메모가 뜬다.
+    const link = await within(card).findByRole("link", { name: /1F 기둥 배근도 승인요청/ });
     expect(link).toHaveAttribute("href", "/projects/p1/documents/doc-aaa");
   });
 
@@ -276,9 +279,84 @@ describe("ReviewsPage — document_mapping (ADR 0007)", () => {
     renderPage();
 
     const card = await screen.findByTestId("document-mapping-card");
+    await within(card).findByText(/문서번호/);          // 문서 조회 완료 후에 판정한다(12차 리뷰)
     expect(await within(card).findByTestId("rejected-notice")).toBeInTheDocument();
     expect(within(card).queryByTestId("reopened-notice")).not.toBeInTheDocument();
     expect(within(card).queryByText(/매핑 자체는 여전히 확정 상태입니다/)).not.toBeInTheDocument();
+  });
+
+  it("요청이 열려 있어도 매핑이 반려 상태면 재확인 배너를 띄우지 않는다", async () => {
+    // 두 게이트(`review.status === "open"`, `mappingState === "confirmed"`)를 **각각** 고정하기 위한
+    // 테스트다(12차 리뷰). 앞선 두 테스트는 요청 status 로 이미 걸러지므로 mappingState 게이트를
+    // 지워도 통과했다 — 방어를 넣고 그 방어를 고정하지 못하는 것도 이 사이클이 반복한 "통과하는데
+    // 죽어 있다"이다. 여기서는 status 게이트를 통과시킨 채(open) 매핑만 반려로 두어 그 게이트만 남긴다.
+    //
+    // 오늘 서버는 이 조합을 만들지 않는다(_reopen_reviews_for_invalidated_confirmations 가 반려된 행을
+    // 건너뛴다). 그래도 고정하는 이유는 서버의 공유 본체 가드와 같다 — 이 배너는 "확정 상태입니다"를
+    // 단언하므로, 어떤 경로로 이 조합이 오더라도 단언하지 않아야 한다.
+    resetStore();
+    loginAs("cm");
+    const OPEN_BUT_REJECTED: ReviewRequest = {
+      ...MAPPING_REVIEW,
+      status: "open",
+      evidence: {
+        ...MAPPING_REVIEW.evidence,
+        extra: { ...MAPPING_REVIEW.evidence.extra, invalidated_activity_signature: "sig-old" },
+      },
+    };
+    mockFetch((url) => {
+      if (url.includes("/api/documents/doc-aaa")) return { body: docDetail(rejectedMapping()) };
+      if (url.includes("/api/projects/p1/review-requests")) return { body: [OPEN_BUT_REJECTED] };
+      if (url.endsWith("/api/projects/p1")) return { body: { project_id: "p1", name: "P", my_role: "cm" } };
+      return undefined;
+    });
+    renderPage();
+
+    const card = await screen.findByTestId("document-mapping-card");
+    await within(card).findByText(/문서번호/);
+    expect(within(card).queryByTestId("reopened-notice")).not.toBeInTheDocument();
+    expect(within(card).getByTestId("rejected-notice")).toBeInTheDocument();
+  });
+
+  it("반려 직후 문서 쿼리가 무효화돼 카드가 곧바로 반려 상태로 갱신된다", async () => {
+    // 12차 리뷰: 이 카드를 useDocument 에 의존시켰는데 useResolveReview 가 그 쿼리를 무효화하지 않아,
+    // CM 이 반려한 **바로 그 순간·그 화면**에서 새 반려 안내가 뜨지 않았다(매핑 상태가 낡은 "확정"으로
+    // 남아 reopened 도 rejected 도 아닌 침묵 상태). 되돌릴 수 없는 행위의 결과가 안 보이는 것이므로
+    // 실제로 재조회가 일어나는지 요청 수로 고정한다.
+    resetStore();
+    loginAs("cm");
+    let resolved = false;
+    let docFetches = 0;
+    mockFetch((url) => {
+      if (url.includes("/api/documents/doc-aaa")) {
+        docFetches += 1;
+        return { body: docDetail(resolved ? rejectedMapping() : confirmedMapping()) };
+      }
+      if (url.includes("/resolve")) {
+        resolved = true;
+        return { body: { ...MAPPING_REVIEW, status: "rejected" } };
+      }
+      if (url.includes("/api/projects/p1/review-requests"))
+        return { body: [resolved ? { ...MAPPING_REVIEW, status: "rejected" } : MAPPING_REVIEW] };
+      if (url.endsWith("/api/projects/p1")) return { body: { project_id: "p1", name: "P", my_role: "cm" } };
+      return undefined;
+    });
+    renderPage();
+    const user = userEvent.setup();
+
+    const card = await screen.findByTestId("document-mapping-card");
+    await within(card).findByText(/문서번호/);          // 첫 문서 조회 완료
+    const before = docFetches;
+
+    await user.click(screen.getByRole("button", { name: "반려" }));
+    const dialog = screen.getByRole("dialog");
+    // 반려는 사유가 필수다(ConfirmDialog requireNote) — 입력해야 확정 버튼이 활성화된다.
+    await user.type(within(dialog).getByRole("textbox"), "재확인 결과 무관");
+    await user.click(within(dialog).getByRole("button", { name: "반려" }));
+
+    // 문서 쿼리가 실제로 재조회돼야 하고, 그 결과 반려 안내가 뜬다
+    await waitFor(() => expect(docFetches).toBeGreaterThan(before));
+    expect(await screen.findByTestId("rejected-notice")).toBeInTheDocument();
   });
 
   it("요청이 닫혀 있으면(승인 완료) 재오픈 배너를 띄우지 않는다 — 이미 처리된 재확인이다", async () => {
@@ -301,13 +379,20 @@ describe("ReviewsPage — document_mapping (ADR 0007)", () => {
     renderPage();
 
     const card = await screen.findByTestId("document-mapping-card");
+    // **문서 조회 완료를 기다린 뒤에** 검사한다(12차 리뷰). 그 전에는 mappingState 가 undefined 라
+    // 배너가 어차피 없어서, `review.status === "open"` 게이트를 지워도 이 테스트가 통과했다 —
+    // 방어를 넣고 그 방어를 고정하지 못하는 것도 이 사이클이 반복한 "통과하는데 죽어 있다"이다.
+    await within(card).findByText(/문서번호/);
     expect(within(card).queryByTestId("reopened-notice")).not.toBeInTheDocument();
   });
 
   it("재오픈 표식이 없는 보통의 신규 검토요청에는 재확인 배너를 보여주지 않는다", async () => {
     resetStore();
     loginAs("cm");
+    // 확정된 매핑을 목한다 — 매핑이 확정이어도 **재오픈 표식이 없으면** 배너가 없어야 한다는 것이
+    // 이 테스트의 주장이다. 문서를 목하지 않으면 mappingState 가 undefined 라 그 주장이 공허해진다.
     mockFetch((url) => {
+      if (url.includes("/api/documents/doc-aaa")) return { body: docDetail(confirmedMapping()) };
       if (url.includes("/api/projects/p1/review-requests")) return { body: [MAPPING_REVIEW] };
       if (url.endsWith("/api/projects/p1")) return { body: { project_id: "p1", name: "P", my_role: "cm" } };
       return undefined;
@@ -315,6 +400,7 @@ describe("ReviewsPage — document_mapping (ADR 0007)", () => {
     renderPage();
 
     const card = await screen.findByTestId("document-mapping-card");
+    await within(card).findByText(/문서번호/);          // 문서 조회 완료 후에 판정한다(12차 리뷰)
     expect(within(card).queryByTestId("reopened-notice")).not.toBeInTheDocument();
   });
 });

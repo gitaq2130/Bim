@@ -11,7 +11,7 @@
  * 지키지 않아** CM 이 자기가 반려한 매핑을 "확정됨 / 확정: 나"로 보게 되던 결함이다 — 판정을 이 한 곳으로
  * 모아 각 화면이 따로 분기하다 빠뜨리는 일을 막는다.
  *
- * 서버 쪽 대응은 `services/progress/document_mapper.py`의 `_is_rejected_mapping`이며 같은 키를 본다.
+ * 서버 쪽 대응은 `services/progress/document_mapper.py`의 `is_rejected_mapping`(공개 함수)이며 같은 키를 본다.
  */
 import type { ActivityDocumentMapping } from "../api/types";
 

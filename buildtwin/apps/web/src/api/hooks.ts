@@ -334,14 +334,33 @@ export function useReviewRequests(projectId: string | null | undefined, kind?: R
     enabled: !!projectId,
   });
 }
+/**
+ * 검토요청 해소(승인/반려/보류). **무효화 범위는 `useConfirmDocumentMapping` 과 같아야 한다**(12차 리뷰).
+ *
+ * `document_mapping` 승인은 서버에서 `_confirm_document_mapping_row` 를 실제로 실행하고(전용 확정
+ * 엔드포인트와 **같은 본체**), 반려는 매핑 행에 영구 반려 표시를 남긴다. 둘 다 문서 상세(`mappings`)와
+ * drawing_approval readiness 를 바꾼다. 그런데 이 훅은 review-requests 만 무효화하고 있었다:
+ * 반려 직후 화면의 매핑 상태가 낡은 "확정"으로 남아, ReviewsPage 카드가 반려 안내도 재확인 안내도
+ * 띄우지 못하고 **아무 말도 하지 않았다**. 되돌릴 수 없는 행위를 한 바로 그 순간·그 화면에서 그 결과가
+ * 보이지 않았다는 뜻이다 — 이 사이클이 반복한 "조용한 죽음"의 화면 쪽 형태다.
+ *
+ * 서버에서 두 확정 경로의 방어를 공유 본체로 합친 것과 같은 이유로, 화면에서도 두 경로의 무효화 범위를
+ * 맞춘다. doc_id 는 응답 evidence.source_id 에 실려 온다(ADR 0007 §4 규칙 7).
+ */
 export function useResolveReview(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ reviewRequestId, ...body }: ResolveReviewRequest & { reviewRequestId: string }) =>
       api.post<ReviewRequest>(`/review-requests/${reviewRequestId}/resolve`, body),
-    onSuccess: () => {
+    onSuccess: (review) => {
       qc.invalidateQueries({ queryKey: ["projects", projectId, "review-requests"] });
       qc.invalidateQueries({ queryKey: ["objects"] });
+      // document_mapping 해소는 문서 상세의 매핑 행과 readiness 를 바꾼다.
+      const docId = review?.evidence?.source_type === "document" ? review.evidence.source_id : undefined;
+      if (docId) qc.invalidateQueries({ queryKey: queryKeys.document(projectId, docId) });
+      qc.invalidateQueries({ queryKey: queryKeys.weeklySummary(projectId) });
+      qc.invalidateQueries({ queryKey: queryKeys.startable(projectId) });
+      qc.invalidateQueries({ queryKey: ["activities"] });   // readiness 키가 ["activities", aid, "readiness"] 라 접두사로 건다
     },
   });
 }
