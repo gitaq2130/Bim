@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import pytest
 
+from packages.core.db import new_session
+from packages.core.models.orm import ProjectRow
+
 
 def test_health(client):
     r = client.get("/api/health")
@@ -45,14 +48,30 @@ def test_create_project_role_matrix(client, auth, role, expected):
 
 def test_create_project_duplicate_id_returns_409_with_code(client, auth):
     """같은 project_id 로 두 번 생성하면 409 — code 는 "duplicate_project"(다른 409 원인과 구분,
-    reviewer round-4 obs. 1: 클라이언트가 409 를 원인별로 구분할 수 있어야 한다)."""
+    reviewer round-4 obs. 1: 클라이언트가 409 를 원인별로 구분할 수 있어야 한다).
+
+    `client` 픽스처는 세션 스코프(테스트 파일 전체가 같은 DB 를 공유)라 이 테스트가 만든
+    project_id 를 남겨두면 뒤에 도는, 프로젝트 목록 전체를 단정하는 테스트가 깨질 수 있다
+    (reviewer round-5 obs. 3). API 에 프로젝트 삭제 엔드포인트가 없으므로 테스트가 직접
+    DB 에서 정리한다 — 이 테스트는 dup 여부만 확인하므로 파일/모델 등 자식 행은 생기지 않는다.
+    """
     r1 = client.post("/api/projects", headers=auth("admin"), json={"name": "dup-project", "project_id": "p-dup-test"})
     assert r1.status_code == 201, r1.text
-    r2 = client.post("/api/projects", headers=auth("admin"), json={"name": "dup-project-again", "project_id": "p-dup-test"})
-    assert r2.status_code == 409, r2.text
-    body = r2.json()
-    assert body["code"] == "duplicate_project"
-    assert "p-dup-test" in body["detail"]
+    try:
+        r2 = client.post("/api/projects", headers=auth("admin"), json={"name": "dup-project-again", "project_id": "p-dup-test"})
+        assert r2.status_code == 409, r2.text
+        body = r2.json()
+        assert body["code"] == "duplicate_project"
+        assert "p-dup-test" in body["detail"]
+    finally:
+        s = new_session()
+        try:
+            row = s.get(ProjectRow, "p-dup-test")
+            if row is not None:
+                s.delete(row)
+                s.commit()
+        finally:
+            s.close()
 
 
 def test_projects_list_and_get(client, auth, project):

@@ -34,7 +34,7 @@ def ensure_model_chain(session, project_id: str, model_id: str, file_id: str | N
         return row
     file_id = file_id or f"FILE-{model_id}"
     if session.get(FileRow, file_id) is None:
-        session.add(FileRow(file_id=file_id, project_id=project_id, kind="model", filename=f"{model_id}.ifc",
+        session.add(FileRow(file_id=file_id, project_id=project_id, kind="ifc", filename=f"{model_id}.ifc",
                             uri=f"mem://{file_id}", sha256="0" * 64, size=0))
         session.flush()
     row = ModelRow(model_id=model_id, project_id=project_id, file_id=file_id, coordinate_system={})

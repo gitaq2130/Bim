@@ -1,10 +1,12 @@
-import { ApiError, type ApiErrorCode } from "../api/client";
+import { ApiError, type KnownApiErrorCode } from "../api/client";
 
 /**
  * 서버 에러 코드 → 한국어 안내 문구. 각 문구는 "무엇이 잘못됐는지" + "다음에 뭘 해야 하는지"를 담는다.
  * status 코드만 보고 원인을 추측하지 않는다 — 같은 409 라도 code 에 따라 원인이 다르다.
+ * `KnownApiErrorCode` 로 타이핑해 서버가 새 코드를 추가하면 이 표에도 추가하지 않는 한
+ * 컴파일이 실패한다(ApiError.code 자체는 알려지지 않은 코드도 표현할 수 있는 더 넓은 타입).
  */
-const CODE_MESSAGES: Record<ApiErrorCode, string> = {
+const CODE_MESSAGES: Record<KnownApiErrorCode, string> = {
   // ADR 0005: 같은 GlobalId 객체가 여러 프로젝트에 존재해 서버가 어느 프로젝트인지 특정할 수 없을 때.
   ambiguous_global_id: "이 객체(GlobalId)는 여러 프로젝트에 존재합니다. 프로젝트를 다시 선택한 뒤 시도하세요.",
   // 상태기계 상 허용되지 않는 전이를 시도했을 때.
@@ -26,7 +28,9 @@ const CODE_MESSAGES: Record<ApiErrorCode, string> = {
 export function errorText(e: unknown): string {
   if (e instanceof ApiError) {
     // 1) code 가 있으면 원인별 한국어 문구로 분기한다 (status 코드만으로는 원인을 고르지 않는다).
-    if (e.code && e.code in CODE_MESSAGES) return CODE_MESSAGES[e.code];
+    //    e.code 는 알려지지 않은 서버 코드도 표현할 수 있는 넓은 타입이라, in 체크로 런타임에
+    //    KnownApiErrorCode 멤버십을 확인한 뒤에만 표에서 찾는다(찾지 못하면 3번 분기로 폴백).
+    if (e.code && e.code in CODE_MESSAGES) return CODE_MESSAGES[e.code as KnownApiErrorCode];
     // 2) code 가 없는(구버전/알 수 없는) 에러: 로그인/권한처럼 흔한 두 상태만 문구를 보정하고,
     if (e.status === 401) return "로그인이 필요합니다 (401).";
     if (e.status === 403) return "권한이 없습니다 (403). 이 작업은 허용된 역할만 수행할 수 있습니다.";

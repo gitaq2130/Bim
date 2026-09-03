@@ -6,10 +6,14 @@ import { useStore } from "../store";
 export const API_BASE = "/api";
 
 /**
- * 서버 에러 바디의 안정적 원인 식별자. `detail` 은 사람이 읽는 문구(오늘의 동작 유지),
- * `code` 는 UI 가 원인별로 분기하기 위한 값이며 구버전/알 수 없는 에러에는 없을 수 있다.
+ * 서버가 오늘 알고 있는 안정적 원인 코드 목록. UI 가 이 값에 대해 exhaustive 하게(빠짐없이)
+ * 분기하고 싶을 때(예: ErrorBox 의 CODE_MESSAGES) 이 타입을 쓴다.
+ *
+ * TODO(round-6+): 이 목록은 서버의 에러 코드 테이블과 수작업으로 동기화된다. services/api 쪽에
+ * 코드 카탈로그가 단일 소스로 정리되면(예: OpenAPI enum, 또는 rules/ 의 YAML) 이 유니온은 그
+ * 소스에서 생성 스크립트로 뽑아내는 편이 낫다 — 지금은 그런 단일 소스가 없어 수동으로 유지한다.
  */
-export type ApiErrorCode =
+export type KnownApiErrorCode =
   | "ambiguous_global_id"
   | "invalid_transition"
   | "transition_blocked_by_review"
@@ -19,10 +23,22 @@ export type ApiErrorCode =
   | "object_not_found"
   | "forbidden_role";
 
+/**
+ * 서버 에러 바디의 안정적 원인 식별자. `detail` 은 사람이 읽는 문구(오늘의 동작 유지),
+ * `code` 는 UI 가 원인별로 분기하기 위한 값이며 구버전/알 수 없는 에러에는 없을 수 있다.
+ *
+ * `KnownApiErrorCode` 에 `(string & {})` 를 더해, 알려진 코드는 자동완성/리터럴 타입 검사를
+ * 그대로 받으면서도 서버가 아직 유니온에 없는 새 코드를 내려줘도 타입 에러 없이 표현할 수 있게
+ * 한다(런타임에서 온 문자열을 안전하지 않게 알려진 유니온으로 캐스팅하지 않는다). 원인별로
+ * exhaustive 하게 분기해야 하는 곳(ErrorBox)은 `KnownApiErrorCode` 를 따로 써서 컴파일 타임에
+ * 새 코드 추가를 강제한다.
+ */
+export type ApiErrorCode = KnownApiErrorCode | (string & {});
+
 function parseErrorCode(body: unknown): ApiErrorCode | undefined {
   if (body && typeof body === "object") {
     const b = body as { code?: unknown };
-    if (typeof b.code === "string") return b.code as ApiErrorCode;
+    if (typeof b.code === "string") return b.code;
   }
   return undefined;
 }

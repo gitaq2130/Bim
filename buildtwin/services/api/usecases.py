@@ -44,7 +44,7 @@ from services.sync.review_queue import confirm_mapping_row, resolve_mapping_revi
 
 from . import jobs, queries
 from .deps import CurrentUser
-from .errors import Conflict, Forbidden, NotFound
+from .errors import Conflict, Forbidden, NotFound, ServerError
 from .schemas.activities import StartableActivityView, StateDistributionRow, WeeklySummary
 from .schemas.drawings import AlignmentRequest, PlanSectionPolyline, PlanSectionView
 from .schemas.objects import (
@@ -168,12 +168,15 @@ def transition_object(session: Session, global_id: str, req: TransitionRequest, 
     try:
         result = sm.transition_with_effects(session, project_id, global_id, req.to_state, actor, evidence, actor_id=user.user_id,
                                             confidence=req.confidence, review_request_id=req.review_request_id)
-    except InvalidTransitionError as exc:
+    except InvalidTransitionError:
+        # errors.py 의 전용 핸들러가 code="invalid_transition"과 함께 from_state/to_state/actor 를 싣는다.
+        # 여기서 Conflict 로 다시 감싸면 그 필드들이 사라진다(reviewer 5차 지적 5) — 그대로 올려보낸다.
         session.rollback()
-        raise Conflict(str(exc), code="invalid_transition")
-    except TransitionBlockedByReviewError as exc:
+        raise
+    except TransitionBlockedByReviewError:
+        # 마찬가지로 errors.py 전용 핸들러가 review_request_ids 를 싣는다 — 감싸지 않는다.
         session.rollback()
-        raise Conflict(str(exc), code="transition_blocked_by_review")
+        raise
     t = result.transition
     if t.to_state == ObjectState.CONFIRMED:
         last_system = next((h for h in reversed(sm.history(session, project_id, global_id)) if h.actor == Actor.SYSTEM), None)
@@ -291,12 +294,25 @@ def resolve_review(session: Session, review_request_id: str, decision: str, note
             raise NotFound(f"review request {review_request_id}: object not found: {exc}", code="review_object_not_found")
     elif row.kind == "mapping" and decision in ("approved", "rejected"):
         try:
-            # candidate_global_id 가 그 사이 삭제/재업로드로 사라진 경우 confirm_mapping_row(services.sync) 가
-            # ValueError 를 던진다 — 500 대신 404 로 옮긴다(sync-2d3d 소유 로직, api 는 매핑만 한다).
+            # resolve_mapping_review(services.sync.review_queue)가 던지는 두 예외를 구분한다(reviewer 5차 지적 4):
+            # - LookupError: confirm_mapping_row 가 참조한 도면이 그 사이 삭제됨(services.sync.persistence.
+            #   _project_id_of_drawing) — drawing_not_found 로 옮긴다(confirm_entity_mapping 과 같은 code).
+            # - ValueError "malformed mapping review conflicting_sources...": candidate_global_id 가 없는 게
+            #   아니라 저장된 ReviewRequest.conflicting_sources 자체가 손상됨 — "대상 없음"(404)이 아니라
+            #   서버 데이터 손상(500)이다. 문자열 접두어로만 구분 가능한 건 services.sync 가 이 두 원인을
+            #   타입으로 구분해 던지지 않기 때문 — 아래 "필요한 타입 예외" 참고.
+            # - 그 외 ValueError: candidate_global_id 가 가리키는 객체가 사라짐(confirm_mapping_row) —
+            #   500 대신 404 로 옮긴다(sync-2d3d 소유 로직, api 는 매핑만 한다).
             resolve_mapping_review(session, row, decision, user.user_id, note)  # type: ignore[arg-type]
+        except LookupError as exc:
+            session.rollback()
+            raise NotFound(f"review request {review_request_id}: {exc}", code="drawing_not_found")
         except ValueError as exc:
             session.rollback()
-            raise NotFound(f"review request {review_request_id}: {exc}", code="mapping_target_not_found")
+            msg = str(exc)
+            if msg.startswith("malformed mapping review conflicting_sources"):
+                raise ServerError(f"review request {review_request_id}: {msg}", code="mapping_review_data_corrupt")
+            raise NotFound(f"review request {review_request_id}: {msg}", code="mapping_target_not_found")
     session.refresh(row)
     if row.status == "open":   # verification / on_hold / 위에서 닫히지 않은 경우: 사람의 결정을 그대로 기록
         row.status, row.resolution_note, row.resolved_by, row.resolved_at = decision, note, user.user_id, datetime.now(UTC)
