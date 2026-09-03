@@ -7,6 +7,7 @@ from typing import Literal
 from packages.core.models.progress import Schedule
 
 from .csv_importer import import_csv
+from .document_register import DocumentRegisterImportResult, RegisterWarning, import_document_register
 from .msproject_xml import import_msproject_xml
 from .p6_xer import import_p6_xer
 
@@ -33,4 +34,7 @@ def import_schedule(path: str | Path, project_id: str, fmt: str | None = None, s
     raise ValueError(f"unsupported schedule format: {fmt!r}")
 
 
-__all__ = ["ScheduleFormat", "detect_format", "import_csv", "import_msproject_xml", "import_p6_xer", "import_schedule"]
+__all__ = [
+    "ScheduleFormat", "detect_format", "import_csv", "import_msproject_xml", "import_p6_xer", "import_schedule",
+    "DocumentRegisterImportResult", "RegisterWarning", "import_document_register",
+]
