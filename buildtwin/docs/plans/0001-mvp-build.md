@@ -62,6 +62,14 @@ CLAUDE.md §0의 MVP 5기능을 실제 동작 코드로 구현한다. 벤치마�
 - [x] [architect] SQLite 외래키 강제(`PRAGMA foreign_keys=ON`) — 개발·테스트를 운영 PostgreSQL과 동일 제약으로
 - [x] [progress] 그 결과 드러난 실제 결함 수정 — `ensure_model()`이 존재하지 않는 파일을 참조하는 모델 행 생성
 
+### 리뷰 4차 지적 반영 (2026-09-03)
+- [x] [architect] ADR 0001 §1 키 표를 구현과 일치(복합 PK·복합 FK). 3차에는 산문만 고치고 표를 놓쳐 재지적됨
+- [x] [api] 모든 오류 응답에 기계 판독 `code` 추가 — 409가 쓰이던 원인 5종 이상을 구분. `detail`·상태코드는 그대로라 하위 호환
+- [x] [frontend] `code`별 한국어 안내로 분기. 코드가 없으면 서버 설명을 노출해 원인을 지어내지 않음. 이전에는 모든 409를 "여러 프로젝트에 존재"로 오안내
+- [x] [progress] `ensure_model`이 실제 `file_id`를 요구 — 자리표시 파일 행이 파일 목록에 0바이트 IFC로 보이던 문제 제거. `open_reviews`의 `project_id` 필수화
+- [x] [sync] 존재 검증의 근거 주석을 사실에 맞게 갱신(외래키 강제가 켜진 뒤에도 필요한 이유)
+- [x] [qa] 검토요청 통합 테스트를 자체 프로젝트로 격리 — 공유 픽스처를 지웠다 되돌리지 않음
+
 ### 관측된 개선 후보 (미착수)
 - **ORM에 `relationship()`이 없다.** 순수 FK 컬럼만 있어 SQLAlchemy가 한 flush 안에서 테이블 간 INSERT 순서를 보장하지 못한다. 운영 코드는 부모마다 `flush()`를 호출해 우회하고 있으나, 새 코드가 이 규칙을 모르면 외래키 위반이 난다. `relationship()` 도입은 cascade 영향 검토가 필요해 별도 사이클로 (담당: architect)
 - 프로젝트 멤버십·인가가 없다. 도입 시 `resolve_object`의 후보 조회와 명시 `project_id` 경로 양쪽에 필터 필요(ADR 0005 §3 전제)
