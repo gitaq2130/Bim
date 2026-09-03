@@ -285,6 +285,62 @@ def test_s4_only_predecessor_filter_keeps_each_projects_graph(client, auth, dive
         assert s["components"]["predecessor_completion"] == 1.0, (pid, s["components"])
 
 
+def test_s4_relations_do_not_leak_across_projects_in_the_scheduler(client, auth, divergent_twins):
+    """S4 형제 — **`load_relations` 전용**(14차 리뷰 후속).
+
+    앞 테스트는 `predecessors_of`(readiness 의 `predecessor_completion`)를 노린다. 착수 가능 계산은
+    **다른 경로**로 관계를 읽는다: `scheduler.compute_startable` -> `db.load_relations(project_id)` ->
+    FS 선후행 검사(`component: "predecessor"` blocker). ADR 0008 §3 은 "조용히 틀릴 수 있는 자리는
+    `predecessors_of` 하나"라고 단언했지만, 이 커밋이 `load_relations` 를 Schedule 서브쿼리에서
+    `ActivityRelationRow.project_id == project_id` 한 토큰짜리 필터로 다시 썼다 — 모양이 같아졌는데
+    전용 그물이 없었다(그 `where` 절만 지우면 전체 스위트가 그대로 녹색이었다).
+
+    q2 를 본다: q2 의 A110 선행은 A120(완료)뿐이라 착수 가능이어야 한다. 필터가 빠지면 q1 의
+    `A110 <- A100`(미완료) 관계까지 끌어와 q2 의 A110 이 조용히 차단된다.
+    """
+    q1, q2 = divergent_twins["q1"], divergent_twins["q2"]
+
+    r2 = client.get(f"/api/projects/{q2}/startable", headers=auth("cm"))
+    assert r2.status_code == 200, r2.text
+    body2 = r2.json()
+    assert "A110" in body2["startable"], body2            # q1 의 미완료 선행을 끌어오면 여기서 빠진다
+    assert body2["blocked"] == {}, body2["blocked"]
+
+    # q1 쪽 대조군: 선행 blocker 가 자기 프로젝트 관계(A100)만 가리킨다 — q2 의 A120 이 섞이면 안 된다
+    body1 = client.get(f"/api/projects/{q1}/startable", headers=auth("cm")).json()
+    assert body1["startable"] == ["A100"], body1
+    fs = [b for b in body1["blocked"]["A110"] if b["component"] == "predecessor"]
+    assert len(fs) == 1 and fs[0]["related_ids"] == ["A100"], fs
+
+
+def test_rule_context_actually_carries_activity_and_readiness(client, auth, twins):
+    """규칙 평가 컨텍스트의 `activity`·`readiness` 가 **실제로 채워지는지** 고정한다(14차 리뷰 후속).
+
+    `usecases.evaluate_rules` 는 `db.load_activity(session, project_id, …)` 가 `None` 이면 `activity` 와
+    `readiness` 를 조용히 `None` 으로 두고 200 을 돌려준다. 즉 그 `project_id` 가 틀리면 예외 없이
+    두 컨텍스트가 사라지고, `rules/risk/schedule.yaml`(`readiness.score < 0.5`) 과
+    `rules/risk/mechanical.yaml`(`activity.percent_complete == 0`) 이 **영구히 발화하지 않는다**.
+    기존 `test_09` 는 `"logic" in context` 만 보므로 이 상태를 통과시킨다(그 인자에 없는 project_id 를
+    넣어도 전체 스위트가 녹색이었다).
+
+    이 사이클이 여덟 번 겪은 "응답은 200 인데 조용히 아무것도 안 하는" 형태라 여기서 닫는다.
+    """
+    p1 = twins["p1"]
+    # Activity 에 매핑된 객체를 찾는다 — 매핑이 없으면 activity 가 None 인 것이 정상이라 검증이 성립하지 않는다
+    with session_scope() as session:
+        mapped = session.query(ActivityObjectMappingRow.global_id, ActivityObjectMappingRow.activity_id) \
+            .filter(ActivityObjectMappingRow.project_id == p1).first()
+    assert mapped is not None, "이 프로젝트에 Activity↔객체 매핑이 없다 — 픽스처 전제가 깨졌다"
+    global_id, activity_id = mapped
+
+    r = client.post(f"/api/projects/{p1}/rules/evaluate", headers=auth("cm"), json={"global_id": global_id})
+    assert r.status_code == 200, r.text
+    ctx = r.json()["context"]
+    assert ctx["activity_id"] == activity_id, ctx        # project_id 가 틀리면 None 이 된다
+    assert isinstance(ctx["readiness"], float), ctx      # 같은 이유로 None 이 된다
+    assert 0.0 <= ctx["readiness"] <= 1.0, ctx
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # S3 — 문서 매핑 독립성 (ADR 0007 §Deferred 해소 증거)
 # ═══════════════════════════════════════════════════════════════════════════
