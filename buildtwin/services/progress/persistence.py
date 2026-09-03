@@ -303,6 +303,12 @@ def document_mappings_for_activities(session: Session, project_id: str,
         ActivityDocumentMappingRow.activity_id.in_(activity_ids))))
 
 
+def document_mappings_for_project(session: Session, project_id: str) -> list[ActivityDocumentMappingRow]:
+    """프로젝트 전체의 문서 매핑(Activity 필터 없음). 과제 2: 매핑 후보가 0건인 문서 집계용."""
+    return list(session.scalars(select(ActivityDocumentMappingRow).where(
+        ActivityDocumentMappingRow.project_id == project_id)))
+
+
 def save_document_mapping(session: Session, mapping: ActivityDocumentMapping) -> ActivityDocumentMappingRow:
     """ADR 0005 규칙 1과 같은 패턴: project_id 는 호출자가 주입하지 않고 Activity 에서 유도한다."""
     activity = session.get(ActivityRow, mapping.activity_id)
@@ -359,6 +365,22 @@ def open_reviews(session: Session, project_id: str, global_ids: list[str] | None
 
 def has_open_verification_review(session: Session, project_id: str, global_id: str) -> bool:
     return bool(open_reviews(session, project_id, [global_id], kind="verification"))
+
+
+def open_document_mapping_review(session: Session, project_id: str, activity_id: str,
+                                 doc_id: str) -> ReviewRequestRow | None:
+    """열린 `kind="document_mapping"` 검토요청 중 이 (activity_id, doc_id) 매핑을 가리키는 것 하나
+    (ADR 0007 §4 규칙 6 — 중복 생성 금지의 조회 축). `doc_id`는 `conflicting_sources`에 담는다 —
+    `drawing_id`/`entity_handle`은 절대 쓰지 않는다(services/sync/review_queue.resolve_mapping_review가
+    그 키를 다른 구조로 기대하므로, ADR 0007 §4 규칙 6)."""
+    stmt = select(ReviewRequestRow).where(
+        ReviewRequestRow.status == "open", ReviewRequestRow.project_id == project_id,
+        ReviewRequestRow.kind == "document_mapping", ReviewRequestRow.activity_id == activity_id,
+    )
+    for row in session.scalars(stmt):
+        if (row.conflicting_sources or {}).get("doc_id") == doc_id:
+            return row
+    return None
 
 
 def save_review_request(session: Session, review: ReviewRequest) -> ReviewRequestRow:

@@ -39,7 +39,7 @@ from packages.core.models.progress import DailyReport
 from packages.core.models.state import Actor, InvalidTransitionError, ObjectState
 from services.knowledge import RuleEngine, load_rules, persist_verdicts, record_expert_review
 from services.progress import persistence as db
-from services.progress.document_mapper import map_project_documents
+from services.progress.document_mapper import close_document_mapping_review, map_project_documents
 from services.progress.readiness import compute_readiness
 from services.progress.scheduler import compute_startable
 from services.progress.state_machine import (
@@ -273,9 +273,9 @@ def generate_document_mappings(session: Session, project_id: str) -> list[Activi
     services.progress.document_mapper.map_project_documents 소유 — 여기서는 호출과 commit 만 한다
     (CLAUDE.md §3 규칙 11). 시스템이 만든 매핑은 confidence 와 무관하게 항상 needs_review=True 다
     (ADR 0007 §4 규칙 5) — 확정은 별도(`confirm_document_mapping`, cm 만)."""
-    mappings = map_project_documents(session, project_id)
+    sync = map_project_documents(session, project_id)
     session.commit()
-    return mappings
+    return sync.mappings
 
 
 def confirm_document_mapping(session: Session, activity_id: str, doc_id: str, user: CurrentUser,
@@ -297,6 +297,9 @@ def confirm_document_mapping(session: Session, activity_id: str, doc_id: str, us
     new = ActivityDocumentMapping(activity_id=activity_id, doc_id=doc_id, confidence=before.confidence,
                                   evidence=evidence, reviewed_by=user.user_id)
     db.save_document_mapping(session, new)
+    # 확정되면 그 매핑의 검토요청을 닫는다. 해소 로직은 services/progress 소유이고 여기서는 호출만 한다
+    # (CLAUDE.md §3 규칙 11, ADR 0007 §4 규칙 6).
+    close_document_mapping_review(session, row.project_id, activity_id, doc_id, user.user_id, note=note)
     record_expert_review(session, "activity_document_mapping", f"{activity_id}:{doc_id}",
                          before.model_dump(mode="json"), new.model_dump(mode="json"), user.user_id)
     session.commit()

@@ -29,9 +29,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 from packages.core.models.document import Document, DocumentApprovalStatus, DocumentType
 from packages.core.models.evidence import Evidence
 
-from ..config_loader import load_config
-
-_CONFIG_FILENAME = "document_register.yaml"
+from ..config_loader import load_document_register_config
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -80,7 +78,7 @@ class _StatusRule:
 # config 로딩
 # ─────────────────────────────────────────────────────────────────────────────
 def _load_register_config() -> dict[str, Any]:
-    return load_config(_CONFIG_FILENAME)
+    return load_document_register_config()
 
 
 def _compile_status_rules(rules_cfg: list[dict[str, Any]]) -> list[_StatusRule]:

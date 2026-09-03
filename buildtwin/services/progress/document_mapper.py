@@ -10,13 +10,17 @@
 
 `ActivityDocumentMapping` Pydantic 모델이 confidence 값과 무관하게 항상 `needs_review=True`를 강제한다
 (§4 규칙 5) — 이 모듈은 그 모델을 거쳐서만 매핑을 만들고 별도로 자동 확정 로직을 두지 않는다.
+
+`map_project_documents`는 매핑 저장에 더해 `document_mapping` ReviewRequest 생명주기 전체를 소유한다
+(§4 규칙 6, CLAUDE.md §3 규칙 11): 생성(중복 방지) / 확정 시 종료(`close_document_mapping_review`,
+api 가 호출) / 문서가 고아가 되면 자동 종료. api 는 이 함수들을 호출만 한다.
 """
 from __future__ import annotations
 
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import UTC, date, datetime
 from difflib import SequenceMatcher
 from typing import Any
 
@@ -24,17 +28,18 @@ from sqlalchemy.orm import Session
 
 from packages.core.models.document import ActivityDocumentMapping, Document
 from packages.core.models.evidence import Evidence
-from packages.core.models.orm import DocumentRow
+from packages.core.models.orm import ActivityDocumentMappingRow, DocumentRow
 from packages.core.models.progress import Activity
+from packages.core.models.review import ReviewRequest
 
 from . import persistence as db
-from .config_loader import load_config
+from .config_loader import load_document_register_config
 
-_CONFIG_FILENAME = "document_register.yaml"
+_UNMAPPED_WARNING_CODE = "DOCUMENT_UNMAPPED"
 
 
 def _load_document_register_config() -> dict[str, Any]:
-    return load_config(_CONFIG_FILENAME)
+    return load_document_register_config()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -212,13 +217,171 @@ def map_documents_to_activities(documents: Sequence[Document], activities: Seque
     return results
 
 
-def map_project_documents(session: Session, project_id: str) -> list[ActivityDocumentMapping]:
-    """DB 에서 문서·Activity 를 읽어 매핑을 산출하고 저장한다(항상 needs_review=True로 upsert)."""
+# ─────────────────────────────────────────────────────────────────────────────
+# document_mapping ReviewRequest 생명주기 (ADR 0007 §4 규칙 6, CLAUDE.md §3 규칙 11 — 생성·해소는
+# services/progress 소유. API 는 아래 공개 함수를 호출만 한다.)
+#
+# 8차 리뷰 REJECT 사유: needs_review=True 매핑이 쌓여도 이 kind 의 ReviewRequest 를 만드는 코드가
+# 저장소 어디에도 없었다 — CM 검토 큐가 영원히 비어 있었고 어떤 테스트도 실패하지 않았다.
+# ─────────────────────────────────────────────────────────────────────────────
+@dataclass
+class DocumentMappingSyncResult:
+    """`map_project_documents` 의 반환값. `ObjectStateMachine.TransitionResult`(state_machine.py)와 같은
+    패턴 — 무엇을 만들고 무엇을 닫았는지 호출자(api)에게 그대로 알린다."""
+    mappings: list[ActivityDocumentMapping]
+    created_review_ids: list[str] = field(default_factory=list)   # 새로 만든 document_mapping 검토요청
+    closed_review_ids: list[str] = field(default_factory=list)    # 문서가 고아가 되어 자동으로 닫힌 검토요청
+    warnings: list[dict[str, Any]] = field(default_factory=list)  # JobRow.warnings 에 그대로 append 가능(과제 2)
+
+
+def _document_mapping_review_title(mapping: ActivityDocumentMapping, doc: Document | None) -> str:
+    label = f"{doc.doc_number or doc.doc_id} «{doc.title}»" if doc is not None else mapping.doc_id
+    return f"문서 매핑 확인: Activity {mapping.activity_id} → {label} (confidence {mapping.confidence:.2f})"
+
+
+def _document_mapping_review(mapping: ActivityDocumentMapping, project_id: str, doc: Document | None) -> ReviewRequest:
+    """ADR 0007 §4 규칙 6·7. `conflicting_sources`에 `drawing_id`/`entity_handle`을 절대 넣지 않는다 —
+    `services/sync/review_queue.resolve_mapping_review`가 그 키를 다른 구조로 기대해 `mapping_review_data_corrupt`
+    로 깨진다. 여기서는 중복 생성 조회(§4 규칙 6 "중복 생성 금지")를 위한 `doc_id`만 싣는다. evidence 는
+    매핑이 이미 가진 것(source_type="document")을 그대로 쓴다 — CLAUDE.md §3 규칙 3."""
+    return ReviewRequest(
+        project_id=project_id, kind="document_mapping", activity_id=mapping.activity_id, global_id=None,
+        title=_document_mapping_review_title(mapping, doc), conflicting_sources={"doc_id": mapping.doc_id},
+        confidence=mapping.confidence, evidence=mapping.evidence, assignee_role="cm",
+    )
+
+
+def _drop_already_confirmed(session: Session, mappings: Sequence[ActivityDocumentMapping]) -> list[ActivityDocumentMapping]:
+    """재계산된 후보 중, 이미 사람이 확정한(`reviewed_by is not None`) 기존 매핑 행이 있으면 제외한다.
+
+    `map_documents_to_activities`는 순수 함수라 매번 `needs_review=True`인 새 후보를 만든다(§4 규칙 5) —
+    그걸 그대로 upsert 하면 대장 재업로드가 CM 이 이미 확정한 매핑을 조용히 다시 미확정으로 되돌리고,
+    방금 닫은 document_mapping 검토요청까지 재생성하게 된다. 확정은 사람의 행위이고 시스템 재계산이
+    되돌려서는 안 된다 — ADR 0001 불변식 2("CONFIRMED 에서 나가는 전이도 cm만")와 같은 구조다."""
+    kept: list[ActivityDocumentMapping] = []
+    for m in mappings:
+        existing = session.get(ActivityDocumentMappingRow, (m.activity_id, m.doc_id))
+        if existing is not None and existing.reviewed_by is not None:
+            continue
+        kept.append(m)
+    return kept
+
+
+def _sync_pending_document_mapping_reviews(session: Session, project_id: str,
+                                           mappings: Sequence[ActivityDocumentMapping],
+                                           docs_by_id: dict[str, Document]) -> list[str]:
+    """`needs_review=True`인 매핑마다 열린 document_mapping 검토요청이 없으면 만든다.
+
+    **중복 생성 금지**(과제 1 규칙 2): 대장을 매주 재업로드하면 `map_project_documents`가 다시 돌고
+    같은 (activity_id, doc_id) 후보가 또 나올 수 있다 — 이미 열린 검토요청이 있으면 새로 만들지 않고
+    confidence·evidence·title 만 최신 값으로 갱신한다(재업로드로 근거가 바뀌었을 수 있으므로)."""
+    created: list[str] = []
+    for m in mappings:
+        if not m.needs_review:
+            continue
+        existing = db.open_document_mapping_review(session, project_id, m.activity_id, m.doc_id)
+        if existing is not None:
+            existing.confidence = m.confidence
+            existing.evidence = m.evidence.model_dump(mode="json")
+            existing.title = _document_mapping_review_title(m, docs_by_id.get(m.doc_id))
+            continue
+        review = _document_mapping_review(m, project_id, docs_by_id.get(m.doc_id))
+        db.save_review_request(session, review)
+        created.append(str(review.review_request_id))
+    return created
+
+
+def _close_reviews_for_orphaned_documents(session: Session, project_id: str) -> list[str]:
+    """과제 1 규칙 4: 매핑이 가리키는 문서가 고아가 됐거나(최근 대장에서 사라짐) 아예 없어졌으면 그
+    document_mapping 검토요청을 닫는다 — 없어진 문서를 확정하라고 CM 에게 남겨두지 않는다.
+
+    `status="on_hold"`를 쓴다: `approved`/`rejected`는 사람(cm)의 판단이어야 하고(ADR 0001 §6·CLAUDE.md
+    §3 규칙 7 — 전이는 actor·evidence 필수), 이건 시스템이 "이 요청이 더 이상 유효하지 않다"고 닫는
+    것이라 `resolved_by`도 채우지 않는다(ADR 0001 §6: "시스템은 대체된 요청을 on_hold로 바꿀 수만 있다").
+    매핑 행 자체는 손대지 않는다(ADR 0007 §2-2 규칙 3: 고아 문서도 매핑·이력은 유지)."""
+    closed: list[str] = []
+    now = datetime.now(UTC)
+    for row in db.open_reviews(session, project_id, kind="document_mapping"):
+        doc_id = (row.conflicting_sources or {}).get("doc_id")
+        doc = db.load_document(session, project_id, str(doc_id)) if doc_id else None
+        if doc is not None and not doc.is_orphaned:
+            continue   # 문서가 살아 있으면 그대로 둔다
+        row.status = "on_hold"
+        row.resolved_at = now
+        row.resolution_note = (f"document {doc_id!r} is orphaned or no longer in the register — "
+                               "closed automatically, nothing for cm to confirm")
+        closed.append(row.review_request_id)
+    if closed:
+        session.flush()
+    return closed
+
+
+def close_document_mapping_review(session: Session, project_id: str, activity_id: str, doc_id: str,
+                                  resolved_by: str, note: str | None = None) -> list[str]:
+    """과제 1 규칙 3: 매핑이 확정(`needs_review=False`)되면 그 document_mapping 검토요청을 닫는다.
+
+    CLAUDE.md §3 규칙 11: 검토요청 해소는 `services/progress` 소유. `services/api/usecases.py`의
+    `confirm_document_mapping`이 매핑을 저장한 뒤 **이 함수를 호출해야 한다** —
+    `state_machine.close_inspection_reviews`와 같은 패턴(호출자는 사람 확정 사실만 넘긴다)."""
+    row = db.open_document_mapping_review(session, project_id, activity_id, doc_id)
+    if row is None:
+        return []
+    row.status = "approved"
+    row.resolved_by = resolved_by
+    row.resolved_at = datetime.now(UTC)
+    row.resolution_note = note or f"mapping confirmed by {resolved_by}"
+    session.flush()
+    return [row.review_request_id]
+
+
+def _unmapped_document_warnings(session: Session, project_id: str,
+                                documents: Sequence[Document]) -> list[dict[str, Any]]:
+    """과제 2 선택지 2: 어떤 Activity 에도 매핑 후보가 없는 문서 수를 경고로 노출한다.
+
+    대장을 공정표보다 먼저 올리면(현장에서 흔한 순서) `map_project_documents`가 Activity 없이 돌아
+    매핑이 0건으로 남는데, 이 함수가 그 상태를 신호로 바꾼다 — `services/api/jobs.py`의 `_warning()`과
+    같은 `{code, message, context}` 모양을 직접 반환하므로(api 를 import 하지 않기 위해) 호출자가
+    `JobRow.warnings`에 그대로 extend 하면 된다."""
+    if not documents:
+        return []
+    mapped_doc_ids = {m.doc_id for m in db.document_mappings_for_project(session, project_id)}
+    unmapped = [d for d in documents if d.doc_id not in mapped_doc_ids]
+    if not unmapped:
+        return []
+    by_type: dict[str, int] = {}
+    for d in unmapped:
+        by_type[d.doc_type.value] = by_type.get(d.doc_type.value, 0) + 1
+    detail = ", ".join(f"{t}={n}" for t, n in sorted(by_type.items()))
+    message = (f"어떤 Activity 에도 매핑 후보가 없는 문서 {len(unmapped)}건 ({detail}). 공정표가 대장보다 "
+              "늦게 올라왔거나 제목 유사도가 임계값 미만일 수 있습니다 — 공정표 적재 후 문서 매핑을 "
+              "다시 생성하세요.")
+    return [{"code": _UNMAPPED_WARNING_CODE, "message": message,
+            "context": {"unmapped_count": len(unmapped), "by_doc_type": by_type,
+                        "doc_ids": [d.doc_id for d in unmapped][:50]}}]
+
+
+def map_project_documents(session: Session, project_id: str) -> DocumentMappingSyncResult:
+    """DB 에서 문서·Activity 를 읽어 매핑을 산출·저장하고(항상 needs_review=True로 upsert),
+    document_mapping 검토요청을 함께 동기화한다(생성·중복 방지·고아 문서 자동 종료 — 과제 1·2).
+
+    **재업로드에 안전하다**: 대장을 다시 올려 이 함수가 다시 호출돼도(주간 재업로드가 정상 운영
+    절차다 — ADR 0007 Consequences) 이미 열린 document_mapping 검토요청은 중복 생성되지 않는다.
+
+    **호출 순서가 뒤집혀도(대장 → 공정표) 안전하다**: Activity 가 아직 없으면 매핑은 0건이지만
+    `warnings`에 "매핑되지 않은 문서 n건"이 실린다(과제 2). 공정표가 나중에 올라온 뒤 이 함수를
+    **다시 호출하면** 그때는 실제 매핑이 생성된다 — `services/api/jobs.py`의 `run_schedule`이
+    스케줄 저장 직후 이 함수를 한 번 더 호출하도록 바꾸는 것을 권한다(과제 2 선택지 1, api 소유)."""
     documents = [db.document_row_to_model(r) for r in db.load_documents(session, project_id, include_orphaned=False)]
     activities = [db.activity_row_to_model(a) for a in db.load_activities(session, project_id)]
-    mappings = map_documents_to_activities(documents, activities)
+    computed = map_documents_to_activities(documents, activities)
+    mappings = _drop_already_confirmed(session, computed)   # 확정된 매핑은 재계산으로 덮어쓰지 않는다
     db.save_document_mappings(session, mappings)
-    return mappings
+    docs_by_id = {d.doc_id: d for d in documents}
+    created = _sync_pending_document_mapping_reviews(session, project_id, mappings, docs_by_id)
+    closed = _close_reviews_for_orphaned_documents(session, project_id)
+    warnings = _unmapped_document_warnings(session, project_id, documents)
+    return DocumentMappingSyncResult(mappings=mappings, created_review_ids=created, closed_review_ids=closed,
+                                     warnings=warnings)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -256,4 +419,7 @@ def confirmed_required_documents(session: Session, project_id: str, activity_ids
     return DocumentEvidence(list(required_confirmed.values()), pending_count)
 
 
-__all__ = ["DocumentEvidence", "confirmed_required_documents", "map_documents_to_activities", "map_project_documents"]
+__all__ = [
+    "DocumentEvidence", "DocumentMappingSyncResult", "close_document_mapping_review",
+    "confirmed_required_documents", "map_documents_to_activities", "map_project_documents",
+]

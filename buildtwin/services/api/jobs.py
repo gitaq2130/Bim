@@ -206,10 +206,18 @@ def run_schedule(session: Session, job: JobRow, file_row: FileRow, options: dict
     warnings = [_warning("SCHEDULE_WARNING", w) for w in schedule.warnings]
     if not objects:
         warnings.append(_warning("NO_MODEL", "프로젝트에 객체가 없어 Activity↔객체 매핑이 비어 있습니다."))
+    from services.progress.document_mapper import map_project_documents  # 지연 import(이 파일의 관례)
+
+    # 대장이 공정표보다 먼저 올라온 경우(현장에서 흔하다 — 대장은 매주, 공정표는 가끔 갱신된다) 그때는
+    # 매핑할 Activity 가 없어 문서 매핑이 0건으로 남는다. 여기서 다시 돌려 회복시킨다. map_project_documents 는
+    # 여러 번 불러도 안전하다 — 확정된 매핑은 보존하고 열린 검토요청을 중복 생성하지 않는다(ADR 0007 §4 규칙 6).
+    doc_sync = map_project_documents(session, job.project_id)
+    warnings.extend(doc_sync.warnings)
     return "done", {"status": "ok", "source_kind": file_row.kind, "schedule_id": schedule.schedule_id,
                     "source_format": schedule.source_format, "activity_count": len(schedule.activities),
                     "relation_count": len(schedule.relations), "mapping_count": len(mappings),
-                    "needs_review_count": sum(1 for m in mappings if m.needs_review)}, warnings
+                    "needs_review_count": sum(1 for m in mappings if m.needs_review),
+                    "document_mapping_count": len(doc_sync.mappings)}, warnings
 
 
 def run_document_register(session: Session, job: JobRow, file_row: FileRow, options: dict[str, Any]) -> tuple[str, dict[str, Any], list[dict]]:
@@ -224,10 +232,14 @@ def run_document_register(session: Session, job: JobRow, file_row: FileRow, opti
     path = _file_path(file_row)
     import_result = import_document_register(path, job.project_id, file_row.file_id, file_uri=file_row.uri)
     persisted = persist_document_register_import(session, job.project_id, file_row.file_id, import_result)
-    mappings = map_project_documents(session, job.project_id)
+    sync = map_project_documents(session, job.project_id)
     warnings = [_warning("DOCUMENT_REGISTER_WARNING", w) for w in persisted.warnings]
+    warnings.extend(sync.warnings)   # "어떤 Activity 에도 매핑되지 않은 문서" 경고(progress 가 만든다)
     summary = {"status": "ok", "source_kind": file_row.kind, **persisted.model_dump(exclude={"warnings"}),
-               "mapping_count": len(mappings), "mapping_needs_review_count": sum(1 for m in mappings if m.needs_review)}
+               "mapping_count": len(sync.mappings),
+               "mapping_needs_review_count": sum(1 for m in sync.mappings if m.needs_review),
+               "created_review_count": len(sync.created_review_ids),
+               "closed_review_count": len(sync.closed_review_ids)}
     return "done", summary, warnings
 
 
