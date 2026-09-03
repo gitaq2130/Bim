@@ -94,7 +94,14 @@ def _initial_evidence(row: BimObjectRow) -> Evidence:
 
 
 def caller_project_role(session: Session, project_id: str, user: CurrentUser) -> str | None:
-    """호출자의 그 프로젝트 역할(`project_members.role`). 비멤버·admin 은 None(행위 역할 없음, ADR 0006 §2)."""
+    """호출자의 그 프로젝트 역할(`project_members.role`). 비멤버·admin 은 None(행위 역할 없음, ADR 0006 §2).
+
+    ADR 0006 §2-1 항목 2(심층 방어): 쓰기측(routers/projects.py 의 add_member)이 admin 을 멤버로 추가하는
+    것을 422 로 막지만, 그 검사 이전에 생성된 admin 멤버 행이 남은 DB에서도 이 불변식이 성립하도록, admin
+    이면 멤버십 행이 있어도 무시한다 — 둘 중 하나만으로는 불변식이 지켜지지 않는다.
+    """
+    if user.role == "admin":
+        return None
     member = session.get(ProjectMemberRow, (project_id, user.user_id))
     return member.role if member else None
 

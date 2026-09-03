@@ -101,7 +101,12 @@ def project_role(session: Session, project_id: str, user: CurrentUser, *roles: s
       (별도 cm 계정을 쓰라는 안내, ADR §2).
     """
     allowed = set(roles)
-    member = session.get(ProjectMemberRow, (project_id, user.user_id))
+    # ADR 0006 §2-1 항목 2(심층 방어): 쓰기측(routers/projects.py 의 add_member)이 admin 을 프로젝트
+    # 멤버로 추가하는 것을 422(admin_cannot_be_member)로 막지만, 그 검사가 생기기 전에 만들어진 admin
+    # 멤버십 행이 남아 있는(마이그레이션을 두지 않기로 한 개발/시드) DB에서도 이 불변식이 성립해야 한다.
+    # 그래서 읽기측인 여기서도 호출자가 admin 이면 멤버십 행의 존재 여부와 무관하게 항상 무시하고
+    # 아래 admin 분기(조회만 가능·행위 불가)로 보낸다 — 둘 중 하나만으로는 불변식이 지켜지지 않는다.
+    member = None if user.role == "admin" else session.get(ProjectMemberRow, (project_id, user.user_id))
     if member is not None:
         if allowed and member.role not in allowed:
             raise Forbidden(f"project role '{member.role}' not allowed on project {project_id}; "
