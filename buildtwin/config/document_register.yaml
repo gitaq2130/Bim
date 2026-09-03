@@ -202,3 +202,11 @@ import_warnings:
   required_column_missing: "필수 컬럼(제목)이 없어 시트를 건너뜀"
   document_status_unmatched: "처리결과 텍스트를 어떤 규칙으로도 해석하지 못함 — UNKNOWN 으로 적재(evidence.method=register_status_unmatched)"
   sheet_skipped: "skip_sheets 설정에 의해 건너뜀"
+  # services/progress/document_mapper.py 가 만드는 경고(대장 파서가 아니라 문서↔Activity 매핑 동기화
+  # 단계에서 발화). 다른 키와 달리 code 가 대문자인 이유: DOCUMENT_UNMAPPED 는 이 카탈로그가 생기기
+  # 전(9차 리뷰 이전)부터 tests/integration/test_14_document_mapping_order_recovery.py 가 이 정확한
+  # 문자열을 계약으로 고정해 두었다 — 카탈로그로 옮기며 대소문자를 다른 키와 맞추면 그 테스트가 깨진다.
+  # 발화 조건(과제 3, 9차 리뷰): 프로젝트 전체에 매핑이 "단 한 건도" 없을 때만 — 부분 미매핑은 정상
+  # (title_matching 임계값 미만은 흔하다)이라 신호가 아니다. document_mapper._unmapped_document_warnings
+  # 참고.
+  DOCUMENT_UNMAPPED: "프로젝트에 문서는 있으나 어떤 Activity 에도 매핑 후보가 하나도 없음 — 대장을 공정표보다 먼저 올렸거나(업로드 순서 역전) 아직 공정표가 없을 수 있음. 공정표 적재 후 문서 매핑이 자동으로 재생성됨"

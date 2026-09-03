@@ -383,6 +383,23 @@ def open_document_mapping_review(session: Session, project_id: str, activity_id:
     return None
 
 
+def find_document_mapping_review(session: Session, project_id: str, activity_id: str,
+                                 doc_id: str) -> ReviewRequestRow | None:
+    """`open_document_mapping_review`와 같은 조회지만 **상태 무관**이다(과제 1, 9차 리뷰 후속).
+
+    확정된 매핑의 검토요청은 이미 `approved`로 닫혀 있다 — 재계산이 그 확정을 더 이상 뒷받침하지
+    못하게 되면(`document_mapper._reopen_reviews_for_invalidated_confirmations`) `approved` 상태인 이
+    행을 다시 찾아 `open`으로 되돌려야 하므로, `status == "open"` 필터를 걸지 않는 버전이 필요하다."""
+    stmt = select(ReviewRequestRow).where(
+        ReviewRequestRow.project_id == project_id,
+        ReviewRequestRow.kind == "document_mapping", ReviewRequestRow.activity_id == activity_id,
+    )
+    for row in session.scalars(stmt):
+        if (row.conflicting_sources or {}).get("doc_id") == doc_id:
+            return row
+    return None
+
+
 def save_review_request(session: Session, review: ReviewRequest) -> ReviewRequestRow:
     ensure_project(session, review.project_id)
     row = ReviewRequestRow(

@@ -35,7 +35,7 @@ from packages.core.models.review import ReviewRequest
 from . import persistence as db
 from .config_loader import load_document_register_config
 
-_UNMAPPED_WARNING_CODE = "DOCUMENT_UNMAPPED"
+_UNMAPPED_WARNING_CODE = "DOCUMENT_UNMAPPED"   # config/document_register.yaml import_warnings 의 카탈로그 키(과제 3, 9차 리뷰)
 
 
 def _load_document_register_config() -> dict[str, Any]:
@@ -231,6 +231,7 @@ class DocumentMappingSyncResult:
     mappings: list[ActivityDocumentMapping]
     created_review_ids: list[str] = field(default_factory=list)   # 새로 만든 document_mapping 검토요청
     closed_review_ids: list[str] = field(default_factory=list)    # 문서가 고아가 되어 자동으로 닫힌 검토요청
+    reopened_review_ids: list[str] = field(default_factory=list)  # 확정 근거가 재계산에서 무너져 다시 연 검토요청(9차 리뷰)
     warnings: list[dict[str, Any]] = field(default_factory=list)  # JobRow.warnings 에 그대로 append 가능(과제 2)
 
 
@@ -265,6 +266,86 @@ def _drop_already_confirmed(session: Session, mappings: Sequence[ActivityDocumen
             continue
         kept.append(m)
     return kept
+
+
+def _activity_signature(activity: Activity) -> str:
+    """확정 매핑을 무효화할 수 있는 Activity 쪽 입력의 스냅샷. `_build_mapping`이 판정에 실제로 쓰는
+    필드만 담는다(name/level/zone → 판별 토큰·유사도, discipline → 가점, planned_start → date_window).
+    문서 쪽은 여기 넣지 않는다 — `doc_id`가 title/sender/seq 의 해시라(§2-1) 그 셋이 바뀌면 다른 doc_id가
+    되고, 그러면 원래 문서는 고아가 되어 `_close_reviews_for_orphaned_documents`가 이미 처리한다."""
+    planned = activity.planned_start.isoformat() if activity.planned_start else ""
+    return "|".join([activity.name or "", activity.level or "", activity.zone or "", activity.discipline or "", planned])
+
+
+def _reconfirmation_review_title(mapping_row: ActivityDocumentMappingRow, doc: Document | None) -> str:
+    label = f"{doc.doc_number or doc.doc_id} «{doc.title}»" if doc is not None else mapping_row.doc_id
+    return (f"문서 매핑 재확인 필요: Activity {mapping_row.activity_id} → {label} — 확정 이후 Activity 정보가 "
+            "바뀌어 재계산이 더 이상 이 매핑을 지지하지 않습니다(판별 토큰 불일치 등). 재계산이 매핑을 "
+            "되돌리지는 않았지만 CM 재확인이 필요합니다.")
+
+
+def _reopen_reviews_for_invalidated_confirmations(
+    session: Session, project_id: str, documents: Sequence[Document], activities: Sequence[Activity],
+    cfg: dict[str, Any], tokens_cfg: list[_DiscriminativeToken],
+) -> list[str]:
+    """9차 리뷰 REJECT 후속. `_drop_already_confirmed`는 재계산 후보에 없는 확정 매핑을 그대로
+    보존한다 — 확정은 사람의 행위이고 시스템이 되돌려서는 안 되므로 그 자체는 옳다. 하지만 침묵하는
+    것은 다른 문제다: Activity 가 재업로드로 바뀌어(예: "1F 기둥…" → "9F 기둥…") 판별 토큰이 더는
+    맞지 않으면(ADR 0007 §4 규칙 3 — 유사도와 무관한 하드 배제) 확정 행은 아무 신호 없이 남아
+    `drawing_approval`을 계속 채운다.
+
+    되돌리지 않고 CM 에게 넘긴다: 확정된 (activity_id, doc_id) 쌍마다 `_build_mapping`(후보 생성과
+    100% 같은 판정 로직)을 다시 돌려, 더 이상 후보가 아니면 이미 `approved`로 닫힌 document_mapping
+    검토요청을 다시 `open`으로 되돌린다. 매핑 행 자체(`confidence`/`reviewed_by`/`needs_review`)는
+    건드리지 않는다 — 되돌리는 게 아니라 CM 이 다시 보게 하는 것이 목적이다.
+
+    **무한 재생성 방지**: 재오픈할 때 이번에 무효화를 유발한 Activity 상태의 스냅샷
+    (`_activity_signature`)을 검토요청 evidence 에 `extra.invalidated_activity_signature`로 남긴다.
+    다음 실행에서 같은 쌍이 여전히 무효(재실행이 흔히 그렇다 — 재업로드된 공정표는 매번 같은 값)여도,
+    검토요청이 이미 `open`이면 그대로 두고(재생성 없음), CM 이 처리해 `open`이 아니게 된 뒤에는
+    스냅샷이 그대로인 한 다시 열지 않는다(CM 의 결정이 유지된다) — Activity 가 **다시** 바뀌어 스냅샷이
+    달라질 때만 새로운 신호로 보고 또 연다. `open_document_mapping_review`(status="open" 고정)가 아니라
+    상태 무관 `find_document_mapping_review`를 쓰는 이유가 이것이다."""
+    docs_by_id = {d.doc_id: d for d in documents}
+    acts_by_id = {a.activity_id: a for a in activities}
+    reopened: list[str] = []
+    for row in db.document_mappings_for_project(session, project_id):
+        if row.reviewed_by is None:
+            continue   # 확정된 매핑만 대상 — 미확정은 재계산이 그대로 덮어쓰므로 여기서 다룰 대상이 아니다
+        doc = docs_by_id.get(row.doc_id)
+        activity = acts_by_id.get(row.activity_id)
+        if doc is None or activity is None or doc.is_orphaned:
+            continue   # 문서·Activity 가 사라졌으면 다른 경로(orphan 자동 종료) 또는 이번 라운드 범위 밖
+        if _build_mapping(doc, activity, cfg, tokens_cfg) is not None:
+            continue   # 현재 규칙으로도 여전히 유효한 매핑 — 조용히 두는 것이 맞다
+
+        signature = _activity_signature(activity)
+        review = db.find_document_mapping_review(session, project_id, row.activity_id, row.doc_id)
+        if review is not None:
+            already_flagged_this_state = (review.evidence or {}).get("extra", {}).get(
+                "invalidated_activity_signature") == signature
+            if review.status == "open" or already_flagged_this_state:
+                continue   # 이미 열려 있거나(중복 생성 금지), CM 이 이 상태로 이미 처리했다(무한 재생성 금지)
+            review.status = "open"
+            review.resolved_by = None
+            review.resolved_at = None
+            review.resolution_note = None
+        else:
+            mapping_model = db.document_mapping_row_to_model(row)
+            review_model = _document_mapping_review(mapping_model, project_id, doc)
+            review_model.title = _reconfirmation_review_title(row, doc)
+            review = db.save_review_request(session, review_model)
+
+        review.title = _reconfirmation_review_title(row, doc)
+        review.confidence = row.confidence
+        evidence = dict(row.evidence or {})
+        evidence["extra"] = {**evidence.get("extra", {}), "invalidated_activity_signature": signature,
+                             "invalidation_reason": "confirmed_mapping_no_longer_a_recompute_candidate"}
+        review.evidence = evidence
+        reopened.append(review.review_request_id)
+    if reopened:
+        session.flush()
+    return reopened
 
 
 def _sync_pending_document_mapping_reviews(session: Session, project_id: str,
@@ -334,30 +415,39 @@ def close_document_mapping_review(session: Session, project_id: str, activity_id
     return [row.review_request_id]
 
 
-def _unmapped_document_warnings(session: Session, project_id: str,
-                                documents: Sequence[Document]) -> list[dict[str, Any]]:
-    """과제 2 선택지 2: 어떤 Activity 에도 매핑 후보가 없는 문서 수를 경고로 노출한다.
+def _unmapped_document_warnings(session: Session, project_id: str, documents: Sequence[Document],
+                                cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    """과제 2 선택지 2, 과제 3(9차 리뷰 후속) — 어떤 Activity 에도 매핑 후보가 없는 상태를 경고로 노출한다.
 
-    대장을 공정표보다 먼저 올리면(현장에서 흔한 순서) `map_project_documents`가 Activity 없이 돌아
-    매핑이 0건으로 남는데, 이 함수가 그 상태를 신호로 바꾼다 — `services/api/jobs.py`의 `_warning()`과
-    같은 `{code, message, context}` 모양을 직접 반환하므로(api 를 import 하지 않기 위해) 호출자가
-    `JobRow.warnings`에 그대로 extend 하면 된다."""
+    **임계**(과제 3): "매핑이 단 한 건도 없을 때"만 발화한다. 대장을 공정표보다 먼저 올리면(순서 역전)
+    Activity 자체가 없어 매핑이 정확히 0건이 되지만, 정상 순서로 올려도 title_matching 임계값(§4 규칙 1)
+    을 넘지 못하는 문서는 늘 일부 있다(픽스처 기준 10건 중 4건) — 그 정상적 부분 미매핑까지 매번 경고
+    하면 상시 경고가 되어 실제 순서 역전 신호가 묻힌다. 그래서 "문서는 있는데 프로젝트 전체에 매핑이
+    하나도 없다"로 임계를 좁힌다: 순서 역전은 반드시 이 조건을 만족하고, 정상 업로드는(일부만 매핑돼도)
+    이 조건을 만족하지 않는다.
+
+    **관례**(과제 3): code·메시지 원문을 파이썬 리터럴로 박지 않는다 — `RegisterWarning`
+    (`importers/document_register.py`)이 이미 지키는 관례(`document_possibly_renamed`가
+    `cfg["import_warnings"]`에서 메시지를 읽는 것과 같은 방식, `services/ingest/persistence.py`)를
+    그대로 따라 `config/document_register.yaml`의 `import_warnings[DOCUMENT_UNMAPPED]`에서 기본 메시지를
+    읽고 건수·context 만 코드에서 덧붙인다.
+
+    `services/api/jobs.py`의 `_warning()`과 같은 `{code, message, context}` 모양을 직접 반환하므로(api 를
+    import 하지 않기 위해) 호출자가 `JobRow.warnings`에 그대로 extend 하면 된다."""
     if not documents:
         return []
     mapped_doc_ids = {m.doc_id for m in db.document_mappings_for_project(session, project_id)}
-    unmapped = [d for d in documents if d.doc_id not in mapped_doc_ids]
-    if not unmapped:
-        return []
+    if mapped_doc_ids:
+        return []   # 일부라도 매핑됐으면(정상 업로드에서 흔하다) 신호가 아니다 — 과제 3 임계
     by_type: dict[str, int] = {}
-    for d in unmapped:
+    for d in documents:
         by_type[d.doc_type.value] = by_type.get(d.doc_type.value, 0) + 1
     detail = ", ".join(f"{t}={n}" for t, n in sorted(by_type.items()))
-    message = (f"어떤 Activity 에도 매핑 후보가 없는 문서 {len(unmapped)}건 ({detail}). 공정표가 대장보다 "
-              "늦게 올라왔거나 제목 유사도가 임계값 미만일 수 있습니다 — 공정표 적재 후 문서 매핑을 "
-              "다시 생성하세요.")
+    base_message = str(cfg["import_warnings"][_UNMAPPED_WARNING_CODE])
+    message = f"{base_message} (unmapped_count={len(documents)}, by_doc_type: {detail})"
     return [{"code": _UNMAPPED_WARNING_CODE, "message": message,
-            "context": {"unmapped_count": len(unmapped), "by_doc_type": by_type,
-                        "doc_ids": [d.doc_id for d in unmapped][:50]}}]
+            "context": {"unmapped_count": len(documents), "by_doc_type": by_type,
+                        "doc_ids": [d.doc_id for d in documents][:50]}}]
 
 
 def map_project_documents(session: Session, project_id: str) -> DocumentMappingSyncResult:
@@ -371,17 +461,22 @@ def map_project_documents(session: Session, project_id: str) -> DocumentMappingS
     `warnings`에 "매핑되지 않은 문서 n건"이 실린다(과제 2). 공정표가 나중에 올라온 뒤 이 함수를
     **다시 호출하면** 그때는 실제 매핑이 생성된다 — `services/api/jobs.py`의 `run_schedule`이
     스케줄 저장 직후 이 함수를 한 번 더 호출하도록 바꾸는 것을 권한다(과제 2 선택지 1, api 소유)."""
+    cfg = _load_document_register_config()
+    tokens_cfg = _compile_discriminative_tokens(cfg["title_matching"].get("discriminative_tokens", []))
     documents = [db.document_row_to_model(r) for r in db.load_documents(session, project_id, include_orphaned=False)]
     activities = [db.activity_row_to_model(a) for a in db.load_activities(session, project_id)]
-    computed = map_documents_to_activities(documents, activities)
+    computed = map_documents_to_activities(documents, activities, cfg)
     mappings = _drop_already_confirmed(session, computed)   # 확정된 매핑은 재계산으로 덮어쓰지 않는다
     db.save_document_mappings(session, mappings)
     docs_by_id = {d.doc_id: d for d in documents}
     created = _sync_pending_document_mapping_reviews(session, project_id, mappings, docs_by_id)
     closed = _close_reviews_for_orphaned_documents(session, project_id)
-    warnings = _unmapped_document_warnings(session, project_id, documents)
+    # 9차 리뷰: 확정된 매핑이 재계산 후보에서 조용히 사라지는 것(예: Activity 이름 변경으로 판별 토큰
+    # 하드 배제)을 침묵시키지 않는다 — 되돌리지 않고 CM 재확인 요청을 다시 연다.
+    reopened = _reopen_reviews_for_invalidated_confirmations(session, project_id, documents, activities, cfg, tokens_cfg)
+    warnings = _unmapped_document_warnings(session, project_id, documents, cfg)
     return DocumentMappingSyncResult(mappings=mappings, created_review_ids=created, closed_review_ids=closed,
-                                     warnings=warnings)
+                                     reopened_review_ids=reopened, warnings=warnings)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
