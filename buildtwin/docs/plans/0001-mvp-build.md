@@ -88,3 +88,4 @@ CLAUDE.md §0의 MVP 5기능을 실제 동작 코드로 구현한다. 벤치마�
 - **ORM에 `relationship()`이 없다.** 순수 FK 컬럼만 있어 SQLAlchemy가 한 flush 안에서 테이블 간 INSERT 순서를 보장하지 못한다. 운영 코드는 부모마다 `flush()`를 호출해 우회하고 있으나, 새 코드가 이 규칙을 모르면 외래키 위반이 난다. `relationship()` 도입은 cascade 영향 검토가 필요해 별도 사이클로 (담당: architect)
 - Job 진행률이 SQLite에서 작업 종료 시점에만 보임(락 회피). PostgreSQL에서는 중간 진행률 노출 가능
 - `queries.latest_model`과 `ingest.persistence.latest_model` 중복(읽기 전용 헬퍼)
+- `services/progress/state_machine.py:82` `actor_for_role` docstring이 아직 "UserRole → Actor"로 적혀 있다. ADR 0006 규칙 7·ADR 0001 §4-1(개정 2) 이후 이 함수의 입력은 **프로젝트 역할**(`project_members.role`)이며 `usecases.caller_project_role`이 그 값을 넘긴다. 값 집합이 겹쳐 동작은 정상이나 용어가 어긋난다 — docstring만 "프로젝트 역할 → Actor"로 정정 필요(담당: progress-engine, 문서 문자열 변경뿐)

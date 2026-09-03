@@ -1,9 +1,9 @@
 # ADR 0006 — 프로젝트 멤버십과 인가
 
-- 상태: Accepted (개정 1: 2026-09-03 — §2-1 `admin` 멤버십 금지 규칙 추가)
+- 상태: Accepted (개정 1: 2026-09-03 — §2-1 `admin` 멤버십 금지 규칙 추가 / 개정 2: 2026-09-03 — §2-1 금지의 **읽기측 심층 방어**를 명문화하고 §2 표·§4·Consequences의 한정어를 구현에 맞춤. 결정 내용 불변)
 - 작성: architect
 - 날짜: 2026-09-03
-- 관련: ADR 0001 §4-1(역할→actor), ADR 0005 §3·Consequences(인가 전제), 리뷰 3·4·5차 관찰, 리뷰 6차 지적 2
+- 관련: ADR 0001 §4-1(역할→actor), ADR 0005 §3·Consequences(인가 전제), 리뷰 3·4·5차 관찰, 리뷰 6차 지적 2, 리뷰 7차 관찰(문서 정합성)
 
 ## Context
 
@@ -40,7 +40,7 @@ project_members
 
 #### 2-1. 규칙: 전역 `admin` 계정은 어떤 프로젝트의 멤버도 될 수 없다
 
-인가의 기본 구조는 **멤버십이 전역 역할을 이기는** 것이다 — `services/api/deps.py`의 `project_role`은 멤버십 행을 조회해 있으면 그 역할로 결정하고, `admin` 분기는 그 뒤에 있다. 그러므로 위 문단의 방어를 `actor_for_role`에만 맡기면 성립하지 않는다: admin이 `POST /projects/{pid}/members {user_id: <자기 자신>, role: "cm"}`을 호출하면 프로젝트 역할이 `cm`이 되고 `actor_for_role("cm") → Actor.CM`이 되어 CONFIRMED 전이·검측 승인·검토요청 해소가 전부 통과한다. admin이 **스스로 확정 권한을 발급**할 수 있게 되고, 승인 로그의 `actor_id`가 admin 계정이 되어 ADR 0001 §4-1의 "admin은 확정 불가"가 감사 관점에서 무의미해진다.
+인가의 기본 구조는 **멤버십이 전역 역할을 이기는** 것이다 — `services/api/deps.py`의 `project_role`은 멤버십 행을 조회해 있으면 그 역할로 결정하고, `admin` 분기는 그 뒤에 있다(비-admin 호출자에게는 지금도 그렇다 — admin 호출자에 대한 예외는 아래 항목 2가 도입한다). 그러므로 위 문단의 방어를 `actor_for_role`에만 맡기면 성립하지 않는다: admin이 `POST /projects/{pid}/members {user_id: <자기 자신>, role: "cm"}`을 호출하면 프로젝트 역할이 `cm`이 되고 `actor_for_role("cm") → Actor.CM`이 되어 CONFIRMED 전이·검측 승인·검토요청 해소가 전부 통과한다. admin이 **스스로 확정 권한을 발급**할 수 있게 되고, 승인 로그의 `actor_id`가 admin 계정이 되어 ADR 0001 §4-1의 "admin은 확정 불가"가 감사 관점에서 무의미해진다.
 
 따라서 이 금지를 입구에서 강제한다.
 
@@ -55,7 +55,7 @@ project_members
 
 ### 3. 인가 규칙
 
-1. 프로젝트 범위 라우트는 `require_project_role(*roles)`로 검사한다. 멤버십을 읽어 역할을 정하고, 역할이 맞지 않으면 403(`forbidden_role`).
+1. 프로젝트 범위 라우트는 `require_project_role(*roles)`로 검사한다. 멤버십을 읽어 역할을 정하고, 역할이 맞지 않으면 403(`forbidden_role`). 단 호출자가 전역 `admin`이면 멤버십을 읽지 않고 규칙 2·3의 admin 분기로 간다(§2-1 항목 2) — 조회는 통과, 행위 라우트는 403.
 2. **멤버가 아니면 404**(`project_not_found`)를 준다. 403은 프로젝트의 존재를 알려주므로 열거 공격에 쓰인다.
 3. `GET /projects`는 멤버인 프로젝트만 돌려준다(admin은 전부).
 4. `ProjectView`에 `my_role`을 싣는다(admin은 `null`). 화면은 이 값으로 버튼을 가린다. 전역 역할로 가리면 안 된다.
