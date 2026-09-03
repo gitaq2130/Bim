@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import uuid
 
+import pytest
+
 from .conftest import FIXTURES, add_member, upload
 
 
@@ -146,3 +148,152 @@ def test_resolve_object_scoped_to_membership(client, auth, user_ids):
     # 대상 존재 여부보다 멤버십 검사가 먼저이므로 code 는 project_not_found.
     d2 = client.get(f"/api/objects/{gid}", headers=outsider_headers, params={"project_id": p2})
     assert d2.status_code == 404 and d2.json()["code"] == "project_not_found"
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# 리뷰어 6차 관찰 3: 대리키(surrogate id) 라우트 매트릭스 — "행을 먼저 읽고 그 project_id 로 멤버십을 검사한다"는
+# 방어가 라우트마다 실제로 강제되는지. 존재하지 않는 id 로 404 가 나오는 건 아무것도 증명하지 못하므로(그건 그냥
+# not-found), 프로젝트 A 에 실재하는 행을 만들고 B 의 멤버(=A 의 비멤버)로 그 id 들에 접근해 404
+# project_not_found 를 확인한다.
+# ---------------------------------------------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def surrogate_matrix(client, auth, user_ids):
+    """A 에 실재 데이터(파일·잡·도면·모델·스캔·검토요청·액티비티)를 만들고, B 의 멤버(A 의 비멤버)인 outsider
+    헤더를 함께 돌려준다. 세션 스코프 `project` 픽스처는 건드리지 않는다(파일 상단 docstring)."""
+    project_a = _new_project(client, auth, "membership-surrogate-a")
+    add_member(client, auth("admin"), project_a, user_ids["contractor"], "contractor")
+    add_member(client, auth("admin"), project_a, user_ids["cm"], "cm")
+
+    up_ifc, ifc_job = upload(client, auth("contractor"), project_a, FIXTURES / "sample.ifc")
+    assert ifc_job["status"] == "done", ifc_job
+
+    up_dxf, dxf_job = upload(client, auth("cm"), project_a, FIXTURES / "sample.dxf", level="1F")
+    assert dxf_job["status"] == "done", dxf_job
+    drawing_id = dxf_job["result"]["drawing_id"]
+    mappings = client.get(f"/api/drawings/{drawing_id}/mappings", headers=auth("cm")).json()
+    assert mappings
+    handle = mappings[0]["entity_handle"]
+
+    up_ply, ply_job = upload(client, auth("cm"), project_a, FIXTURES / "sample.ply")
+    assert ply_job["status"] == "done", ply_job
+    scan_id = ply_job["result"]["scan_id"]
+
+    up_csv, csv_job = upload(client, auth("cm"), project_a, FIXTURES / "schedule.csv")
+    assert csv_job["status"] == "done", csv_job
+
+    model_id = client.get(f"/api/projects/{project_a}/models", headers=auth("cm")).json()[0]["model_id"]
+
+    # contractor 는 세션 스코프 `project` 픽스처에도 멤버라 같은 sample.ifc 의 global_id 가 두 프로젝트에
+    # 걸쳐 있을 수 있다(ADR 0005) — 여기서는 검토요청을 만드는 게 목적이므로 project_id= 로 disambiguate.
+    objs = client.get(f"/api/projects/{project_a}/objects", headers=auth("cm"),
+                      params={"state": "PLANNED", "page_size": 1}).json()["items"]
+    assert objs
+    global_id = objs[0]["global_id"]
+    assert client.post(f"/api/objects/{global_id}/transitions", headers=auth("contractor"),
+                       params={"project_id": project_a}, json={"to_state": "REPORTED"}).status_code == 201
+    assert client.post(f"/api/objects/{global_id}/transitions", headers=auth("contractor"),
+                       params={"project_id": project_a}, json={"to_state": "INSPECTION_REQUESTED"}).status_code == 201
+    reviews = client.get(f"/api/projects/{project_a}/review-requests", headers=auth("cm"),
+                         params={"kind": "inspection", "status": "open", "global_id": global_id}).json()
+    assert reviews, "inspection review request expected"
+    review_request_id = reviews[0]["review_request_id"]
+
+    project_b = _new_project(client, auth, "membership-surrogate-b")
+    outsider_id, outsider_headers = _register(client, auth, "client")
+    add_member(client, auth("admin"), project_b, outsider_id, "client")
+
+    return {
+        "ids": {
+            "file_id": up_ifc["file_id"],
+            "job_id": up_ifc["job_id"],
+            "drawing_id": drawing_id,
+            "handle": handle,
+            "model_id": model_id,
+            "scan_id": scan_id,
+            "review_request_id": review_request_id,
+            "activity_id": "A100",   # tests/fixtures/schedule.csv 가 만드는 고정 activity_id (test_05 참고)
+        },
+        "global_id": global_id,
+        "project_a": project_a,
+        "outsider_headers": outsider_headers,
+    }
+
+
+# (method, path 템플릿, POST 바디) — 라우트가 추가되면 이 목록에 한 줄만 늘리면 된다. path 템플릿의 자리표시자는
+# `surrogate_matrix()["ids"]` 의 키와 맞아야 한다. GET 라우트는 바디가 없으므로 None.
+#
+# 뺀 라우트: 스캔 정합 결과(`/scans/{id}/verdicts`, `/registration`)는 넣었지만, 실제 point cloud 로 rmse 를
+# 만드는 `POST /scans/{id}/alignment` 의 "성공" 경로까지는 준비하지 않았다 — 이 매트릭스가 필요로 하는 건
+# alignment 요청 자체가 인가를 통과하는지(그래서 프로젝트 A 데이터에 손을 댈 수 있는지)뿐이고, AlignmentInput
+# 의 모든 필드가 기본값을 가져 빈 바디({})로도 스키마 검증은 통과한다 — project_role() 이 그보다 먼저 실행되므로
+# 충분하다. 정합 자체의 성공 여부는 tests/integration/test_07_scans.py 가 이미 검증한다.
+_SURROGATE_ROUTES: list[tuple[str, str, dict | None]] = [
+    ("GET", "/api/files/{file_id}", None),
+    ("GET", "/api/files/{file_id}/content", None),
+    ("GET", "/api/jobs/{job_id}", None),
+    ("GET", "/api/drawings/{drawing_id}", None),
+    ("GET", "/api/drawings/{drawing_id}/entities", None),
+    ("GET", "/api/drawings/{drawing_id}/mappings", None),
+    ("POST", "/api/drawings/{drawing_id}/alignment", {"origin": [0.0, 0.0], "rotation_deg": 0.0, "scale": 1.0}),
+    ("POST", "/api/drawings/{drawing_id}/mappings/{handle}/confirm", {"global_id": "does-not-matter"}),
+    ("GET", "/api/models/{model_id}", None),
+    ("GET", "/api/models/{model_id}/plan-section", None),
+    ("GET", "/api/models/{model_id}/mesh", None),
+    ("GET", "/api/models/{model_id}/mesh.obj", None),
+    ("GET", "/api/scans/{scan_id}", None),
+    ("GET", "/api/scans/{scan_id}/verdicts", None),
+    ("GET", "/api/scans/{scan_id}/registration", None),
+    ("POST", "/api/scans/{scan_id}/alignment", {}),
+    ("GET", "/api/review-requests/{review_request_id}", None),
+    ("POST", "/api/review-requests/{review_request_id}/resolve", {"decision": "approved"}),
+    ("GET", "/api/activities/{activity_id}/readiness", None),
+]
+
+
+@pytest.mark.parametrize("method,path_template,body", _SURROGATE_ROUTES, ids=[f"{m} {p}" for m, p, _ in _SURROGATE_ROUTES])
+def test_surrogate_route_matrix_blocks_non_member(client, surrogate_matrix, method, path_template, body):
+    """리뷰어 6차 관찰 3: 대리키 라우트는 대상 행을 먼저 읽고 그 project_id 로 멤버십을 검사해야 한다(ADR 0006
+    규칙 6). 이 목록의 id 는 전부 프로젝트 A 에 실재하는 행이다 — 존재하지 않는 id 로 404 가 나오는 건 이 방어와
+    무관하므로 증명력이 없다. 프로젝트 A 의 비멤버(B 의 멤버)가 접근하면 반드시 404 + code=project_not_found."""
+    path = path_template.format(**surrogate_matrix["ids"])
+    headers = surrogate_matrix["outsider_headers"]
+    r = client.get(path, headers=headers) if method == "GET" else client.post(path, headers=headers, json=body)
+    assert r.status_code == 404, (method, path, r.status_code, r.text)
+    assert r.json()["code"] == "project_not_found", (method, path, r.text)
+
+
+def test_surrogate_object_routes_do_not_leak(client, surrogate_matrix):
+    """`GET /objects/{global_id}` 와 `POST /objects/{global_id}/transitions` 는 경로에 project_id 가 없다 —
+    `resolve_object` 가 후보를 호출자의 멤버 프로젝트로 한정하므로(ADR 0006 규칙 5), project_id 를 안 주면
+    B 의 멤버에게 A 의 global_id 는 애초에 후보에 없다(code=object_not_found). project_id=A 를 명시하면
+    멤버십 검사를 먼저 통과해야 하므로 code=project_not_found 로 바뀐다. 응답 code 는 두 경우가 다르지만,
+    이 테스트가 단언하려는 핵심은 어느 경우에도 A 의 데이터가 새지 않는다(200 이 나오지 않는다)는 것이다."""
+    gid = surrogate_matrix["global_id"]
+    project_a = surrogate_matrix["project_a"]
+    headers = surrogate_matrix["outsider_headers"]
+
+    r = client.get(f"/api/objects/{gid}", headers=headers)
+    assert r.status_code == 404 and r.json()["code"] == "object_not_found", r.text
+
+    r = client.get(f"/api/objects/{gid}", headers=headers, params={"project_id": project_a})
+    assert r.status_code == 404 and r.json()["code"] == "project_not_found", r.text
+
+    r = client.post(f"/api/objects/{gid}/transitions", headers=headers, json={"to_state": "CONFIRMED"})
+    assert r.status_code == 404 and r.json()["code"] == "object_not_found", r.text
+
+    r = client.post(f"/api/objects/{gid}/transitions", headers=headers, params={"project_id": project_a},
+                    json={"to_state": "CONFIRMED"})
+    assert r.status_code == 404 and r.json()["code"] == "project_not_found", r.text
+
+
+def test_admin_cannot_be_added_as_project_member(client, auth, user_ids):
+    """리뷰어 6차 관찰 2 / ADR 0006 §2·§4: 전역 admin 계정은 어떤 프로젝트의 멤버도 될 수 없다 — 멤버십을
+    주면 `project_role()` 이 멤버 분기(admin 분기보다 먼저)를 타 그 역할을 그대로 돌려주고, actor_for_role()
+    이 이를 거부하지 못해 CONFIRMED 전이·검측 승인·검토요청 해소가 admin 계정으로 통과해버린다.
+    (api 에이전트가 병렬로 구현 중인 항목 — 구현 전이면 이 테스트는 실패하고, 구현이 들어오면 통과한다.)"""
+    project_id = _new_project(client, auth, "membership-admin-guard")
+    r = client.post(f"/api/projects/{project_id}/members", headers=auth("admin"),
+                    json={"user_id": user_ids["admin"], "role": "cm"})
+    assert r.status_code == 422, r.text
+    assert r.json()["code"] == "admin_cannot_be_member", r.text
