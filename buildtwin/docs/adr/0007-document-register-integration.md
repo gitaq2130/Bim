@@ -77,8 +77,10 @@ doc_id = "doc-" + sha256("{doc_type}|{sender_normalized}|{seq_normalized}|{title
    또 필요했을 것이다.
    **다만 미해결 위험이 하나 있다(개정 1에서 추가).** `title_normalized` 는 `doc_id` 의 재료이면서 동시에
    §4 제목 대조의 입력이다. 즉 **매칭을 튜닝하려고 `title_matching.normalize` 를 건드리면 모든 문서의 `doc_id` 가
-   바뀐다.** 실측으로 확인했다 — `strip_chars` 에 괄호를 추가하자 검사한 문서 3건의 `doc_id` 가 3건 모두 달라졌다.
-   운영 데이터에서 이 일이 벌어지면 기존 문서가 전부 §2-2 규칙 2 에 따라 고아가 되고, `doc_id` 에 매달린
+   바뀐다.** 실측으로 확인했다 — `strip_chars` 에 괄호를 추가하자 픽스처 문서 10건 중 7건의 `doc_id` 가 달라졌다
+   (최초 확인은 3건 중 3건으로 표본이 더 좁았다; 이후 표본을 넓혀 재확인한 값이 이 7/10이다 — 표본이 커져도
+   결론은 바뀌지 않는다: 정규화 변경은 정체성을 흔든다). 운영 데이터에서 이 일이 벌어지면 기존 문서가 전부
+   §2-2 규칙 2 에 따라 고아가 되고, `doc_id` 에 매달린
    `activity_document_mappings` 가 통째로 끊겨 **CM 이 확정한 매핑이 조용히 사라진다.** 이는 규칙 1 이 공종을
    해시에서 배제한 것과 정확히 같은 종류의 문제이며, 그때는 "신뢰할 수 없는 필드"가, 여기서는 "튜닝 대상 설정"이
    정체성에 관여한다.
@@ -276,8 +278,19 @@ class DocumentApprovalStatus(str, Enum):
    (CLAUDE.md §3 규칙 11: API는 호출만).
 7. 매핑 `evidence`: `Evidence(source_type="document", source_id=<doc_id>, method="document_title_match",
    note=<title 원문>, extra={"title_similarity": ..., "matched_rules": [...], "excluded_by": [...],
-   "discipline_trusted": false})`. 사람이 확정한 매핑은 `method="document_manual_mapping"`,
-   `source_type="user_input"`.
+   "discipline_trusted": false})`.
+
+   **확정(`needs_review=False`)은 evidence를 덮어쓰지 않고 보존한다(개정 1).** 확정 시 `source_type`/`method`는
+   시스템이 제안했을 때의 값(`document`/`document_title_match`)을 그대로 두고, `note`만 확정 시 남긴 코멘트로
+   갱신하며, 누가 확정했는지는 `reviewed_by`(§2-3)에 `user_id`로 기록한다
+   (`services/api/usecases.confirm_document_mapping`이 구현, `services/sync/review_queue.confirm_mapping`과
+   같은 기존 관례). 근거: `evidence`는 "이 매핑이 왜 제안됐는가"의 감사 기록이고, 확정 여부·확정자는 이미
+   `reviewed_by`가 별도로 표현한다. 확정 시 evidence를 덮어써 제안 근거를 지우는 것은 감사 관점에서 오히려
+   손해다 — 나중에 "어떤 근거로 제안된 매핑을 CM이 확정했는가"를 되짚을 수 없어진다.
+
+   **초판이 적었던 `method="document_manual_mapping"`, `source_type="user_input"`은 채택하지 않는다
+   (개정 1, 2026-09-03 architect 정정).** 어떤 코드도 이 값을 만들지 않으며, 이는 구현 누락이 아니라 위 근거에
+   따른 **설계 정정**이다. `Evidence.source_type`/`.method` 어휘(glossary)에서도 제거한다.
 
 ### 5. `drawing_approval` 구성요소의 재정의
 
@@ -327,7 +340,10 @@ class DocumentApprovalStatus(str, Enum):
 #### 5-3. Blocker 표현 — 기존 구조 안에서
 
 `Blocker` 모델(`component`/`reason`/`related_ids`/`severity`)과 `ComponentResult`(`value`/`missing`/`reason`/
-`related_ids`/`note`)는 **바꾸지 않는다.** CM이 "무슨 문서를 쫓아야 하는가"를 화면에서 바로 알도록 다음처럼 채운다.
+`related_ids`/`note`)는 **구조를 바꾸지 않는다 — 단, 선택 필드 가산은 예외다(개정 1, 아래).** 개정 1이 두 모델
+모두에 `kind: str | None = None`을 더했고(`ComponentResult.kind`는 readiness 계산 중 값을 실어 나르는 중간
+필드이고, 최종적으로 `Blocker.kind`에 담긴다), 값이 없으면 기존과 완전히 동일하게 동작하므로 하위 호환은 깨지지
+않는다. CM이 "무슨 문서를 쫓아야 하는가"를 화면에서 바로 알도록 다음처럼 채운다.
 
 | 필드 | 내용 |
 |---|---|
@@ -336,18 +352,20 @@ class DocumentApprovalStatus(str, Enum):
 | `related_ids` | 해당 문서들의 `doc_id` 목록. 기존 구성요소들이 `activity_id`/`global_id`/`review_request_id`를 넣는 것과 같은 성격(안정 식별자). 프론트는 이 값으로 문서 상세를 연다 |
 | `note`(→ `evidence.note`) | `"approved=<n>/<total>; pending_mappings=<k>"` |
 | `severity` | 기존 `blocker_severity` 규칙 그대로(value 0.0 → `high`) |
+| `kind` | **개정 1.** `document_unapproved` / `document_status_unknown` / `document_mapping_pending` / `None`(문서 근거가 아예 없어 이 컴포넌트가 관여하지 않은 경우). 값이 있으면 화면은 이것만 믿는다 — 아래 표 참고 |
 
 `reason`은 **사람이 읽는 문구**이므로 문서번호를 그대로 노출한다(§2-4대로 파싱하지 않고 원문 표시). `related_ids`는
 `doc_number`가 아니라 `doc_id`다 — `doc_number`는 중복·공란이 가능해 식별자로 쓸 수 없기 때문이다(§2-1).
 
-**개정 1 — `Blocker.kind` 추가.** 초판은 "`Blocker`/`ComponentResult` 모델을 바꾸지 않는다"고만 적었고, 그 결과
-화면이 세 갈래를 `reason` **산문의 부분 문자열**로 분류하게 됐다. 이는 이 저장소가 이미 한 번 걷어낸 패턴이다 —
-409 가 다섯 원인에 쓰여 화면이 전부 같은 안내를 하던 문제를 기계 판독 오류 `code` 로 분기해 해소했었다. 문구는
-사용자에게 보이는 글이라 다듬어지기 마련이고, 그 순간 분류가 조용히 `other` 로 떨어져 CM 이 "다음에 무엇을 할지"를
-잃는다. 아무것도 실패하지 않은 채로.
+**개정 1 — `Blocker.kind` / `ComponentResult.kind` 추가.** 초판은 이 예외를 두지 않고 "두 모델을 바꾸지 않는다"고만
+적었다. 그 결과 화면이 세 갈래를 `reason` **산문의 부분 문자열**로 분류하게 됐다(위 표는 이미 정정된 결과다). 이는
+이 저장소가 이미 한 번 걷어낸 패턴이다 — 409 가 다섯 원인에 쓰여 화면이 전부 같은 안내를 하던 문제를 기계 판독
+오류 `code` 로 분기해 해소했었다. 문구는 사용자에게 보이는 글이라 다듬어지기 마련이고, 그 순간 분류가 조용히
+`other` 로 떨어져 CM 이 "다음에 무엇을 할지"를 잃는다. 아무것도 실패하지 않은 채로.
 
-따라서 `Blocker` 에 **선택적** 필드 `kind: str | None` 을 더한다(구조 변경이 아니라 가산이므로 초판의 취지를 지킨다.
-값이 없으면 기존과 동일). `drawing_approval` 은 다음 셋 중 하나를 넣는다.
+따라서 `Blocker`와 `ComponentResult`에 **선택적** 필드 `kind: str | None`을 더한다(구조 변경이 아니라 가산이므로
+초판의 취지를 지킨다. 값이 없으면 기존과 동일). `ComponentResult.kind`가 `drawing_component()`(§5-2) 안에서
+채워지고, 그 값이 그대로 최종 `Blocker.kind`로 전달된다. `drawing_approval` 은 다음 셋 중 하나를 넣는다.
 
 | `kind` | 갈래 | CM 이 할 일 |
 |---|---|---|
@@ -359,6 +377,17 @@ class DocumentApprovalStatus(str, Enum):
 
 미확정 매핑만 있는 경우의 문구는 다르다: `"문서 매핑 <k>건이 CM 검토 대기 — 확정 전까지 도면 승인 근거로 쓰지 않음"`.
 `UNKNOWN`만 있는 경우: `"<문서번호> «<제목>» 처리결과 미기재(UNKNOWN)"` — 미승인과 구분된다.
+
+**architect 승인 (2026-09-03).** 이 모델 변경(`packages/core/models/progress.py`의 `Blocker.kind`,
+`services/progress/readiness.py`의 `ComponentResult.kind`)은 위 개정 1의 근거가 된 구현과 **같은 커밋에서
+자기 인가로** 반영됐다 — `packages/core/models/`와 `docs/adr/`는 architect 소유이므로(CLAUDE.md §2, §2 소유
+규칙 2: "구현 에이전트는 필드 추가를 **제안**할 수 있다(직접 수정 금지)") 절차 위반이다. architect로서 사후
+검토한 결과 **설계 결론 자체는 승인**하며 되돌리지 않는다. 근거: (1) `kind`는 선택 필드(`str | None = None`)
+가산이라 값이 없는 기존 소비자·저장된 데이터와 하위 호환이 전혀 깨지지 않는다. (2) `reason` 산문을 부분
+문자열로 분류하는 패턴은 이 저장소가 오류 응답 `code`(glossary "오류 응답 code 어휘")로 이미 한 번 걷어낸
+것과 정확히 같은 문제이므로 같은 해법(기계 판독 필드를 문구와 분리)이 타당하다. 절차 위반 자체는 기록으로
+남기되 설계는 유지한다 — 앞으로 `packages/core/models/` 변경은 구현 전 architect 선행 승인을 거칠 것
+(CLAUDE.md §2).
 
 ### 6. 3중 검증(`rules/verification.yaml`)에 대한 제안
 
@@ -376,24 +405,44 @@ class DocumentApprovalStatus(str, Enum):
 | `logic.unapproved_document_count` | `int` | 미승인(승인 아님) 필수 문서 수. 근거가 없으면 `0` |
 | `logic.unapproved_document_numbers` | `list[str]` | 위 문서들의 `doc_number`(표시용). 검토요청 문구에 쓴다 |
 | `logic.pending_document_mappings` | `int` | `needs_review=True` 문서 매핑 수 |
+| `logic.rejected_document_count` | `int` | 확정 매핑된 필수 문서 중 `approval_status == REJECTED`(반려)인 것의 수. `document_evidence_available`이 `False`면 언제나 `0`. **개정 1** — 아래 설명 참고 |
 
-#### 6-2. 제안 패턴
+**개정 1 — `logic.rejected_document_count` 신설.** 초판 표에는 이 필드가 없었다. `knowledge`가
+`rules/verification.yaml`을 구현하며 VER-008/009를 가르는 조건으로 신설했고(`services/progress/verification.py`
+`build_logic_context`가 실제로 채운다), 이 ADR이 뒤늦게 등록한다(6·7차 반려와 같은 유형의 누락이었다). 필요한
+이유: `drawing_approval_status == 'not_approved'` 하나만으로는 REJECTED(발주처가 명시적으로 거부한 것 — 확실)와
+RESUBMIT_REQUIRED/IN_REVIEW/UNKNOWN(대장에 아직 반영되지 않았을 뿐일 수 있는 것 — 불확실)이 뭉뚱그려진다. 반려와
+그 외 미승인은 심각도가 다르므로, 검증 패턴의 `confidence`도 달라야 한다 — 아래 §6-2가 그 구분을 반영한다.
+
+#### 6-2. 패턴
+
+**개정 1 — VER-008을 반려/그 외 미승인으로 분리.** 초판은 `drawing_approval_status == 'not_approved'`만으로
+완료 신고 이상 패턴 하나(VER-008, confidence 0.8)를 제안했다. `knowledge`가 구현하며 위 `rejected_document_count`로
+반려(확실)와 그 외 미승인(불확실)을 분리해 VER-008/009 두 패턴으로 나눴고, 초판 VER-009(스캔 축)는 VER-010으로
+밀렸다. 아래는 `rules/verification.yaml`에 실제로 반영된 값이다.
 
 ```yaml
   - id: VER-008
-    title: "미승인 도면 상태에서 완료 신고"
-    when: "report.claimed_state == 'completed' and logic.drawing_approval_status == 'not_approved'"
+    title: "반려된 도면 상태에서 완료 신고"
+    when: "report.claimed_state == 'completed' and logic.rejected_document_count > 0"
     severity: high
-    confidence: 0.8
+    confidence: 0.9
   - id: VER-009
+    title: "미승인(불확실) 도면 상태에서 완료 신고"
+    when: "report.claimed_state == 'completed' and logic.drawing_approval_status == 'not_approved' and logic.rejected_document_count == 0"
+    severity: high
+    confidence: 0.6
+  - id: VER-010
     title: "미승인 도면 상태에서 스캔 완료추정"
     when: "scan.state == 'ESTIMATED_DONE' and logic.drawing_approval_status == 'not_approved'"
     severity: medium
     confidence: 0.7
 ```
 
-VER-009는 실무적으로 값이 크다 — 도면이 승인되지 않았는데 물리적으로 지어져 있다는 것은 **재시공 리스크**의 조기
-신호다.
+VER-008(반려, confidence 0.9)과 VER-009(그 외 미승인, confidence 0.6)를 가르는 것이 `rejected_document_count`다 —
+반려는 발주처의 명시적 거부이므로 확실하고, 그 외(RESUBMIT_REQUIRED/IN_REVIEW/UNKNOWN)는 "대장 갱신이 늦었을
+뿐일 수도 있다"는 불확실성이 남는다. VER-010(초판 VER-009)은 그대로 스캔 축을 담당하며, 실무적으로 값이 크다는
+근거도 그대로다 — 도면이 승인되지 않았는데 물리적으로 지어져 있다는 것은 **재시공 리스크**의 조기 신호다.
 
 **제약(반드시 지킬 것): `"unknown"`을 조건으로 삼는 패턴은 만들지 않는다.** 문서 데이터가 없는 프로젝트에서 모든
 객체가 `unknown`이 되므로, 그것으로 검토요청을 만들면 **전 프로젝트가 검토요청으로 뒤덮인다**. 조건은 언제나
@@ -455,8 +504,12 @@ VER-009는 실무적으로 값이 크다 — 도면이 승인되지 않았는데
   `document_approval.enabled: false` 킬 스위치가 있다. 가중치 합 1.0도 불변이다.
 - **비용: 사람의 확정 작업이 새로 생긴다.** 모든 문서 매핑이 CM 검토 큐를 거친다(§4 규칙 5). 이것은 부작용이 아니라
   의도한 설계다 — 절차서가 "0.9 이상이어도 자동 확정 금지"라고 못 박은 이유이고, ADR 0001이 스캔 AI에 건 제약과
-  같은 것이다. 검토 부담이 실제로 과하면 완화 수단은 임계값 조정이 아니라 **후보 수를 줄이는 것**(제목 정규화 규칙
-  보강, 판별 토큰 추가)이어야 한다.
+  같은 것이다. 검토 부담이 실제로 과하면 완화 수단은 임계값 조정이 아니라 **후보 수를 줄이는 것**이어야 하되,
+  문서 **정체성**(`doc_id`)에 영향이 없는 수단으로 한정한다 — 판별 토큰 추가(§4 규칙 3), `mapping.min_confidence_to_propose`
+  상향(§4 규칙 4 — 후보 하한만 올리며 `doc_id` 산출에는 관여하지 않는다). **제목 정규화(`title_matching.normalize`)
+  보강은 이 완화 수단에서 제외한다** — §2-1 개정 1이 실측으로 확인했듯 그 규칙을 건드리면 `doc_id`가 바뀌어 CM이
+  확정한 매핑이 조용히 끊긴다(픽스처 10건 중 7건). 정규화 보강은 §2-1 개정 1이 제안한 **정체성용/대조용 정규화
+  분리** 이후로 미룬다.
 - **초기에는 `drawing_approval`의 confidence가 낮게 나온다.** 검토 대기 매핑이 쌓여 있는 동안 `missing=True`이므로
   readiness `confidence`가 떨어진다. 이는 정확한 신호다 — "점수는 이렇지만 우리는 아직 모른다".
 - 처리결과 규칙표(`status_normalization`)는 **현장마다 보강해야 하는 운영 자산**이다. `register_status_unmatched`가

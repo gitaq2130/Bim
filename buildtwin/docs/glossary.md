@@ -117,7 +117,7 @@
 | 차단 구성요소 | `Blocker.component` = 위 6개 + `predecessor` / `readiness` / `resource` | scheduler가 추가로 쓰는 값 |
 | 부재 그룹 | `group` (`IFC_TYPE_GROUP`) = `column` / `beam` / `slab` / `wall` / `duct` / `pipe` / `cable_tray` / `facade_panel` / `other` | IfcType을 화면·집계용으로 묶은 것. **공종(discipline)과 다른 개념** |
 | 공종 | `discipline` = `structure` / `architecture` / `mechanical` / `electrical` / `civil` / `finishing` | 규칙·공정표·사례에서 공통 사용. `mep`는 쓰지 않는다 |
-| 근거 방법 | `Evidence.method` | 자유 문자열이되 서비스별 규약값: sync `user_align|grid_align|bbox_iou|layer_rule`, scan `control_points+icp`, progress `wbs_rule|keyword_rule|level_zone|readiness_weighted_sum|triple_verification|daily_report_item`, knowledge `rule_engine`, scan `preregistered`, api/sync `manual_mapping|review_resolution|model_ingest`, progress(문서, ADR 0007) `register_status_rule|register_status_blank|register_status_unmatched|document_title_match|document_manual_mapping` |
+| 근거 방법 | `Evidence.method` | 자유 문자열이되 서비스별 규약값: sync `user_align|grid_align|bbox_iou|layer_rule`, scan `control_points+icp`, progress `wbs_rule|keyword_rule|level_zone|readiness_weighted_sum|triple_verification|daily_report_item`, knowledge `rule_engine`, scan `preregistered`, api/sync `manual_mapping|review_resolution|model_ingest`, progress(문서, ADR 0007) `register_status_rule|register_status_blank|register_status_unmatched|document_title_match`(확정 시에도 이 값 유지 — evidence는 제안 근거를 보존하고 확정자는 `reviewed_by`가 기록한다. `document_manual_mapping`은 ADR 0007 §4 규칙 7 개정 1에서 폐기 — 어떤 코드도 만들지 않음) |
 
 ## ADR 0005 추가 항목 (architect, 2026-09-02)
 
@@ -260,6 +260,7 @@ reviewer 4차 지적 1: 동일 상태코드(특히 409)가 서로 무관한 여�
 | 도면승인 논리곱 | `scoring: all_or_nothing` | `drawing_approval`은 비율이 아니라 AND다 — 필수 문서 전부 승인이면 1.0, 하나라도 아니면 0.0. 비율(9/10=0.9)을 쓰면 `start_threshold` 0.75를 넘겨 미승인 도면 위에서 착수 가능이 뜬다. 비율은 점수가 아니라 `Blocker.reason`·`evidence`로만 보고한다(ADR 0007 §5-1) |
 | 고아 문서 | `documents.is_orphaned` | 최근 대장 업로드에 없던 문서. **삭제하지 않고 표시만** 하며 판단은 **그 업로드에 존재한 `doc_type` 안에서만** 한다(TFA 시트만 올렸다고 TFR이 고아가 되면 안 된다). readiness 계산에서 제외(ADR 0007 §2-2) |
 | 문서 근거 가용성 | `logic.document_evidence_available` / `logic.drawing_approval_status` = `approved` / `not_approved` / `unknown` | 3중 검증 `logic` 축의 새 입력(ADR 0007 §6-1). **`unknown`을 조건으로 삼는 검증 패턴은 만들지 않는다** — 문서 데이터가 없는 프로젝트가 통째로 검토요청으로 뒤덮이기 때문 |
+| 반려 문서 수 | `logic.rejected_document_count` | 확정 매핑된 필수 문서 중 `approval_status == REJECTED`(발주처가 명시적으로 거부)인 것의 수. `document_evidence_available`이 `False`면 언제나 `0`(ADR 0007 §6-1 개정 1). `drawing_approval_status == 'not_approved'`는 반려(확실)와 RESUBMIT_REQUIRED/IN_REVIEW/UNKNOWN(대장 갱신이 늦었을 뿐일 수 있음 — 불확실)을 뭉뚱그리므로, 이 필드가 `rules/verification.yaml`의 VER-008(반려, confidence 0.9)과 VER-009(그 외 미승인, confidence 0.6)를 가른다 |
 
 ### 대장 업로드 인가 (ADR 0007 §7)
 
