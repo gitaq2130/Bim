@@ -294,8 +294,12 @@ def _reject_confirm_of_rejected_mapping(row: ActivityDocumentMappingRow) -> None
     나온 "응답은 성공인데 아무 효과가 없다").
 
     설계대로 영구를 택해 거절한다 — 확정 시 반려 표시를 지우는 쪽(반려 취소)은 별개의 기능이고, 그것을
-    조용히 여기에 끼워 넣으면 화면에 도달 경로가 없는 API 만 생긴다(ADR §9 후속 과제로 남겼다).
-    화면에서는 확정 버튼 자체가 뜨지 않으므로(`mappingReviewState`) 이 경로로 오는 것은 API 직접 호출이다."""
+    조용히 여기에 끼워 넣으면 화면에 도달 경로가 없는 API 만 생긴다(ADR Deferred 에 남겼다).
+
+    `_confirm_document_mapping_row`(공유 본체)가 호출하므로 **모든 확정 경로**가 이 방어를 받는다 —
+    전용 엔드포인트(`confirm_document_mapping`)와 검토 큐 승인(`resolve_review`) 둘 다. 화면에서는 확정
+    버튼 자체가 뜨지 않고(`mappingReviewState`) 반려된 요청은 이미 닫혀 있어(409 review_already_resolved)
+    오늘 이 예외에 도달하는 정상 경로는 없지만, 방어를 한쪽에만 거는 비대칭을 남기지 않는다(11차 리뷰)."""
     if is_rejected_mapping(row.evidence):
         raise Conflict(
             f"document mapping already rejected: activity_id={row.activity_id!r} doc_id={row.doc_id!r}",
@@ -308,7 +312,14 @@ def _confirm_document_mapping_row(session: Session, row: ActivityDocumentMapping
     document_mapping 검토요청을 닫는다(ADR 0007 §4 규칙 5·6). commit 은 호출자 책임 — `confirm_document_mapping`
     (전용 엔드포인트)은 여기서 바로 커밋하고, `resolve_review`(검토 큐 승인)는 검토요청 상태 갱신까지
     끝낸 뒤 자신의 트랜잭션 경계에서 한 번에 커밋한다(과제 1 — 두 경로가 같은 로직을 복제하지 않는다).
-    인가는 호출자가 이미 끝낸 것으로 가정한다(이 함수는 인가하지 않는다)."""
+    인가는 호출자가 이미 끝낸 것으로 가정한다(이 함수는 인가하지 않는다).
+
+    반려된 매핑 거절(`_reject_confirm_of_rejected_mapping`)은 **여기** 있어야 한다(11차 리뷰). 처음에는
+    전용 엔드포인트에만 붙였는데, 그러면 같은 확정 행위인데 큐 승인 경로만 방어가 없는 비대칭이 된다 —
+    오늘은 반려된 요청이 이미 닫혀 있어(409 review_already_resolved) 도달할 수 없지만, 이 사이클이 겪은
+    네 번의 사고가 전부 "한쪽 경로에만 방어를 걸었다"에서 나왔다. 공유 본체에 두면 확정 경로가 몇 개로
+    늘어도 방어가 따라온다."""
+    _reject_confirm_of_rejected_mapping(row)
     activity_id, doc_id = row.activity_id, row.doc_id
     before = db.document_mapping_row_to_model(row)
     # confirm_mapping(services.sync.review_queue)과 같은 패턴: evidence 는 보존하고 reviewed_by 만 얹는다.
@@ -338,7 +349,6 @@ def confirm_document_mapping(session: Session, activity_id: str, doc_id: str, us
         raise NotFound(f"document mapping not found: activity_id={activity_id!r} doc_id={doc_id!r}",
                        code="document_mapping_target_not_found")
     project_role(session, row.project_id, user, CONFIRM_ROLE)
-    _reject_confirm_of_rejected_mapping(row)
     _confirm_document_mapping_row(session, row, user.user_id, note)
     session.commit()
     session.refresh(row)

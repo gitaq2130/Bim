@@ -347,3 +347,41 @@ def test_confirming_a_pending_mapping_still_works(client, auth, dm_project, user
     m = _mapping_for_activity(client, auth, dm_project, doc_id, ACTIVITY_UNTOUCHED)
     assert m["needs_review"] is False and m["reviewed_by"] == user_ids["cm"]
     assert m["evidence"]["extra"].get("mapping_review_decision") is None   # 확정은 이 키를 쓰지 않는다
+
+
+def test_every_confirm_path_shares_the_rejection_guard(client, auth, dm_project):
+    """확정 경로 **전부**가 반려 방어를 받는다 — 방어가 한쪽 경로에만 걸려 있지 않다(11차 리뷰).
+
+    처음 고칠 때는 `confirm_document_mapping`(전용 엔드포인트)에만 가드를 붙였다. 그러면 같은 확정
+    행위인데 검토 큐 승인(`resolve_review`) 경로만 무방비가 되고, 그 경로로 들어오면 10차 major 3 이
+    고친 "200 인데 아무 효과가 없다"가 그대로 재현된다 — 반려 표시가 남아 readiness 가 그 확정을 영원히
+    보지 못한다. **오늘 API 로는 도달할 수 없다**(반려된 요청은 이미 닫혀 있어 409 review_already_resolved
+    에 먼저 걸린다) — 그래서 두 경로가 공유하는 본체를 직접 불러 계약을 고정한다. 이 사이클이 겪은 네 번의
+    사고가 전부 "한쪽 경로에만 방어를 걸었다"에서 나왔으므로, 도달 불가라는 이유로 비대칭을 남기지 않는다.
+
+    HTTP 레벨에서 그 두 경로가 실제로 막히는지는 각각 `test_confirming_a_rejected_mapping_is_refused_with_409`
+    (전용 엔드포인트 409)와 아래 큐 재승인 확인(409 review_already_resolved)이 담당한다."""
+    from packages.core.db import session_scope
+    from packages.core.models.orm import ActivityDocumentMappingRow
+    from services.api.errors import Conflict
+    from services.api.usecases import _confirm_document_mapping_row
+
+    review = _review_for_activity(_all_document_mapping_reviews(client, auth, dm_project), ACTIVITY_REJECT)
+    doc_id = review["conflicting_sources"]["doc_id"]
+
+    with session_scope() as session:
+        row = session.get(ActivityDocumentMappingRow, (ACTIVITY_REJECT, doc_id))
+        assert row is not None and row.evidence["extra"]["mapping_review_decision"] == "rejected"
+        with pytest.raises(Conflict) as exc:
+            _confirm_document_mapping_row(session, row, "u-any-cm")
+        assert exc.value.code == "document_mapping_already_rejected"
+
+    # 큐 경로를 HTTP 로 다시 밀어도 막힌다(요청이 이미 닫혀 있어 다른 코드로 먼저 걸린다)
+    r = client.post(f"/api/review-requests/{review['review_request_id']}/resolve",
+                    headers=auth("cm"), json={"decision": "approved", "note": "재승인 시도"})
+    assert r.status_code == 409, r.text
+    assert r.json()["code"] == "review_already_resolved", r.text
+
+    # 어느 쪽으로도 매핑이 바뀌지 않았다
+    m = _mapping_for_activity(client, auth, dm_project, doc_id, ACTIVITY_REJECT)
+    assert m["evidence"]["extra"]["mapping_review_decision"] == "rejected"

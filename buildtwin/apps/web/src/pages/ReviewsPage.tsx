@@ -9,6 +9,7 @@ import { ConfidenceBadge } from "../components/ConfidenceBadge";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ErrorBox } from "../components/ErrorBox";
 import { DOC_TYPE_LABELS, REVIEW_KIND_LABELS, REVIEW_STATUS_LABELS, SOURCE_AXIS_LABELS, labelForAnyState } from "../domain/labels";
+import { mappingRejection, mappingReviewState } from "../domain/mappingReview";
 import { fmtDate } from "../lib/format";
 import { useStore } from "../store";
 
@@ -179,10 +180,25 @@ function DocumentMappingCard({ review, projectId }: { review: ReviewRequest; pro
   const docId = ev?.source_type === "document" ? ev.source_id : undefined;
   const doc = useDocument(projectId, docId);
   const docRow = doc.data?.document;
-  // ADR 0007 §4-2 규칙 6 ⑤(개정 2): 확정된(reviewed_by 있음) 매핑이 재계산으로 더는 후보가 아니게 되면
-  // 검토요청이 다시 open 된다 — 매핑 자체는 확정 상태로 남는다. 이 evidence.extra 필드가 서버가 남기는
-  // 유일한 구조적 표식이다(과제 3). title 산문("문서 매핑 재확인 필요: …")으로 분류하지 않는 이유는 위 참고.
-  const reopened = typeof extra.invalidated_activity_signature === "string";
+  // ADR 0007 §4-2 규칙 6 ⑥: 매핑이 확정인지 반려인지는 **매핑 행**이 정하고, 판정은 domain/mappingReview
+  // 한 곳이 소유한다(11차 리뷰). 검토요청 evidence 의 재오픈 표식만 보고 "확정 상태"를 단언하면, 그 뒤
+  // CM 이 재확인 요청을 **반려**했을 때 자기가 반려한 매핑을 "여전히 확정 상태"로 읽게 된다 — 10차 blocker 2
+  // 와 같은 결함이 화면만 바꿔 재현되는 자리였다. 이 카드는 이미 useDocument 로 매핑까지 들고 있으므로
+  // 그 행을 직접 판정한다.
+  const mapping = doc.data?.mappings?.find((m) => m.activity_id === review.activity_id);
+  const mappingState = mapping ? mappingReviewState(mapping) : undefined;
+  const rejection = mapping ? mappingRejection(mapping) : {};
+  // ADR 0007 §4-2 규칙 6 ⑤(개정 2): 확정된 매핑이 재계산으로 더는 후보가 아니게 되면 검토요청이 다시
+  // open 된다 — 매핑 자체는 확정 상태로 남는다. 이 evidence.extra 필드가 서버가 남기는 유일한 구조적
+  // 표식이다(과제 3). title 산문으로 분류하지 않는 이유는 위 참고.
+  //
+  // 세 조건을 **모두** 만족할 때만 이 안내를 띄운다: 재오픈 표식이 있고, 요청이 아직 열려 있고,
+  // 매핑이 실제로 확정 상태여야 한다. 문서 조회가 끝나기 전(mappingState === undefined)에는 띄우지
+  // 않는다 — 확정을 단언하는 문구라 모르는 동안 침묵하는 쪽이 안전하다.
+  const reopened =
+    typeof extra.invalidated_activity_signature === "string" &&
+    review.status === "open" &&
+    mappingState === "confirmed";
   return (
     <div className="source-card" data-testid="document-mapping-card">
       {reopened && (
@@ -190,6 +206,14 @@ function DocumentMappingCard({ review, projectId }: { review: ReviewRequest; pro
           <strong>재확인 필요</strong> — CM이 이미 확정한 매핑입니다. 확정 이후 이 Activity 정보가 바뀌어(층·구역·차수
           등) 지금 다시 계산하면 더는 이 매핑을 지지하지 않습니다. <strong>매핑 자체는 여전히 확정 상태입니다</strong>
           — 시스템은 사람의 확정을 되돌리지 않으며, 지금 필요한 것은 이 매핑이 여전히 맞는지 재확인하는 것입니다.
+        </div>
+      )}
+      {mappingState === "rejected" && (
+        <div className="notice strong" data-testid="rejected-notice">
+          <strong>반려된 매핑입니다</strong> — 도면 승인 근거로 쓰이지 않으며, 대장을 재업로드해도 후보로 다시
+          제안되지 않습니다(되돌릴 수 없습니다).
+          {rejection.rejectedBy ? ` 반려: ${rejection.rejectedBy}` : ""}
+          {rejection.note ? ` — ${rejection.note}` : ""}
         </div>
       )}
       <div className="source-title">매핑 근거</div>

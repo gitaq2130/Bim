@@ -25,6 +25,44 @@ const MAPPING_REVIEW: ReviewRequest = {
   created_at: "2026-09-01T00:00:00Z",
 };
 
+/** 이 카드는 useDocument 로 문서 상세(= mappings 포함)를 읽어 매핑 상태를 직접 판정한다(11차 리뷰). */
+function docDetail(mapping: Record<string, unknown>) {
+  return {
+    document: {
+      project_id: "p1", doc_id: "doc-aaa", doc_type: "TFA", sender: "동부건설",
+      sender_normalized: "동부건설", title: "1F 기둥 배근도 승인요청", title_normalized: "1f 기둥 배근도 승인요청",
+      doc_number: "TFA-26-049", approval_status: "APPROVED", approval_confidence: 0.95,
+      approval_evidence: { source_type: "document", source_id: "doc-aaa", method: "register_status_rule" },
+      file_id: "file-1", sheet_name: "TFA", source_row: 4, needs_review: false, is_orphaned: false,
+      imported_at: "2026-08-30T00:00:00Z",
+    },
+    mappings: [mapping],
+  };
+}
+
+const baseMapping = {
+  activity_id: "ACT-100", doc_id: "doc-aaa", confidence: 0.62,
+  evidence: { source_type: "document", source_id: "doc-aaa", method: "document_title_match", note: "t", extra: {} },
+};
+
+/** 확정: reviewed_by 가 있고 반려 표시가 없다. */
+function confirmedMapping() {
+  return { ...baseMapping, needs_review: false, reviewed_by: "user-cm" };
+}
+
+/** 반려: needs_review/reviewed_by 는 확정과 **똑같고** evidence 의 표식만 다르다 — 결함의 핵심. */
+function rejectedMapping() {
+  return {
+    ...baseMapping,
+    needs_review: false,
+    reviewed_by: "user-cm",
+    evidence: {
+      ...baseMapping.evidence,
+      extra: { mapping_review_decision: "rejected", rejected_by: "user-cm", rejection_note: "재확인 결과 무관" },
+    },
+  };
+}
+
 function renderPage() {
   return renderWithProviders(
     <Routes>
@@ -192,7 +230,10 @@ describe("ReviewsPage — document_mapping (ADR 0007)", () => {
         },
       },
     };
+    // 11차 리뷰: 이 배너는 "매핑 자체는 여전히 확정 상태입니다"를 단언하므로, 재오픈 표식만이 아니라
+    // **매핑 행이 실제로 확정인지**까지 확인해야 뜬다. 그래서 문서 조회를 함께 목한다.
     mockFetch((url) => {
+      if (url.includes("/api/documents/doc-aaa")) return { body: docDetail(confirmedMapping()) };
       if (url.includes("/api/projects/p1/review-requests")) return { body: [REOPENED] };
       if (url.endsWith("/api/projects/p1")) return { body: { project_id: "p1", name: "P", my_role: "cm" } };
       return undefined;
@@ -200,8 +241,67 @@ describe("ReviewsPage — document_mapping (ADR 0007)", () => {
     renderPage();
 
     const card = await screen.findByTestId("document-mapping-card");
-    expect(within(card).getByTestId("reopened-notice")).toBeInTheDocument();
+    expect(await within(card).findByTestId("reopened-notice")).toBeInTheDocument();
     expect(within(card).getByText(/재확인 필요/)).toBeInTheDocument();
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 11차 리뷰 — 이 카드가 **반려된** 매핑을 "여전히 확정 상태"라고 단언하던 결함.
+  // 10차에서 세운 "판정은 domain/mappingReview 한 곳" 규칙을 화면 세 자리 중 이 자리가 안 따랐다:
+  // 검토요청 evidence 의 재오픈 표식 하나만 보고 요청 status 도 매핑 상태도 확인하지 않았다.
+  // 도달 경로: CM 이 확정 -> Activity 변경으로 재오픈 -> 그 재확인 요청을 반려 -> 큐에서 상태 필터를
+  // "반려"로 바꾸면 그 요청이 그대로 보인다.
+  // ══════════════════════════════════════════════════════════════════════════
+  it("반려된 매핑의 재오픈 요청에는 '여전히 확정 상태' 배너를 띄우지 않고 반려로 표시한다", async () => {
+    resetStore();
+    loginAs("cm");
+    const REJECTED_REVIEW: ReviewRequest = {
+      ...MAPPING_REVIEW,
+      status: "rejected",
+      evidence: {
+        ...MAPPING_REVIEW.evidence,
+        extra: {
+          ...MAPPING_REVIEW.evidence.extra,
+          invalidated_activity_signature: "sig-old",
+          invalidation_reason: "confirmed_mapping_no_longer_a_recompute_candidate",
+        },
+      },
+    };
+    mockFetch((url) => {
+      if (url.includes("/api/documents/doc-aaa")) return { body: docDetail(rejectedMapping()) };
+      if (url.includes("/api/projects/p1/review-requests")) return { body: [REJECTED_REVIEW] };
+      if (url.endsWith("/api/projects/p1")) return { body: { project_id: "p1", name: "P", my_role: "cm" } };
+      return undefined;
+    });
+    renderPage();
+
+    const card = await screen.findByTestId("document-mapping-card");
+    expect(await within(card).findByTestId("rejected-notice")).toBeInTheDocument();
+    expect(within(card).queryByTestId("reopened-notice")).not.toBeInTheDocument();
+    expect(within(card).queryByText(/매핑 자체는 여전히 확정 상태입니다/)).not.toBeInTheDocument();
+  });
+
+  it("요청이 닫혀 있으면(승인 완료) 재오픈 배너를 띄우지 않는다 — 이미 처리된 재확인이다", async () => {
+    resetStore();
+    loginAs("cm");
+    const RESOLVED: ReviewRequest = {
+      ...MAPPING_REVIEW,
+      status: "approved",
+      evidence: {
+        ...MAPPING_REVIEW.evidence,
+        extra: { ...MAPPING_REVIEW.evidence.extra, invalidated_activity_signature: "sig-old" },
+      },
+    };
+    mockFetch((url) => {
+      if (url.includes("/api/documents/doc-aaa")) return { body: docDetail(confirmedMapping()) };
+      if (url.includes("/api/projects/p1/review-requests")) return { body: [RESOLVED] };
+      if (url.endsWith("/api/projects/p1")) return { body: { project_id: "p1", name: "P", my_role: "cm" } };
+      return undefined;
+    });
+    renderPage();
+
+    const card = await screen.findByTestId("document-mapping-card");
+    expect(within(card).queryByTestId("reopened-notice")).not.toBeInTheDocument();
   });
 
   it("재오픈 표식이 없는 보통의 신규 검토요청에는 재확인 배너를 보여주지 않는다", async () => {
