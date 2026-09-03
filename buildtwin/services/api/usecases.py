@@ -23,7 +23,15 @@ from packages.core.models.evidence import Evidence
 from packages.core.models.identity import IFC_TYPE_GROUP, BimObjectDraft
 from packages.core.models.knowledge import Rule
 from packages.core.models.mapping import EntityObjectMapping
-from packages.core.models.orm import BimObjectRow, DailyReportRow, DrawingRow, JobRow, ModelRow, ReviewRequestRow
+from packages.core.models.orm import (
+    BimObjectRow,
+    DailyReportRow,
+    DrawingRow,
+    JobRow,
+    ModelRow,
+    ProjectMemberRow,
+    ReviewRequestRow,
+)
 from packages.core.models.progress import DailyReport
 from packages.core.models.state import Actor, InvalidTransitionError, ObjectState
 from services.knowledge import RuleEngine, load_rules, persist_verdicts, record_expert_review
@@ -44,7 +52,7 @@ from services.sync.plan_section import plan_section_from_objects
 from services.sync.review_queue import confirm_mapping_row, resolve_mapping_review
 
 from . import jobs, queries
-from .deps import CurrentUser
+from .deps import CurrentUser, project_role
 from .errors import Conflict, Forbidden, NotFound, ServerError
 from .schemas.activities import StartableActivityView, StateDistributionRow, WeeklySummary
 from .schemas.drawings import AlignmentRequest, PlanSectionPolyline, PlanSectionView
@@ -85,16 +93,31 @@ def _initial_evidence(row: BimObjectRow) -> Evidence:
                     extra={"model_version": row.model_version})
 
 
-def resolve_object(session: Session, global_id: str, project_id: str | None = None) -> BimObjectRow:
-    """ADR 0005 §3: 공개 경로 `/api/objects/{global_id}` 는 그대로 두고, 여기서 프로젝트 범위를 좁힌다.
-    `project_id` 가 주어지면 그걸로 바로 조회(0건=404). 없으면 global_id 로 후보를 찾아
-    0건=404, 1건=그대로 사용, 2건 이상=409(모호함, ?project_id= 요구)."""
+def caller_project_role(session: Session, project_id: str, user: CurrentUser) -> str | None:
+    """호출자의 그 프로젝트 역할(`project_members.role`). 비멤버·admin 은 None(행위 역할 없음, ADR 0006 §2)."""
+    member = session.get(ProjectMemberRow, (project_id, user.user_id))
+    return member.role if member else None
+
+
+def resolve_object(session: Session, global_id: str, user: CurrentUser, project_id: str | None = None) -> BimObjectRow:
+    """ADR 0005 §3 + ADR 0006 규칙 5: 공개 경로 `/api/objects/{global_id}` 는 그대로 두고, 여기서 프로젝트
+    범위를 좁힌다. 후보 조회는 **호출자가 멤버인 프로젝트로 한정**한다 — admin 은 멤버십 없이 모든 프로젝트를
+    조회할 수 있으므로(ADR 0006 §2) 제한하지 않는다(실제 행위 권한은 이후 별도로 `actor_for_role`/`CONFIRM_ROLE`
+    검사가 막는다).
+    `project_id` 가 주어지면 그걸로 바로 조회하되 그 프로젝트의 멤버십도 통과해야 한다(0건/비멤버 모두 404).
+    없으면 global_id 로 후보를 찾아 0건=404, 1건=그대로 사용, 2건 이상=409(모호함, ?project_id= 요구)."""
     if project_id is not None:
+        if user.role != "admin":
+            project_role(session, project_id, user)   # 비멤버는 404(project_not_found) — 존재를 흘리지 않는다
         row = session.get(BimObjectRow, (project_id, global_id))
         if row is None:
             raise NotFound(f"object not found: {global_id} (project {project_id})", code="object_not_found")
         return row
-    candidates = list(session.scalars(select(BimObjectRow).where(BimObjectRow.global_id == global_id)))
+    stmt = select(BimObjectRow).where(BimObjectRow.global_id == global_id)
+    if user.role != "admin":
+        member_project_ids = select(ProjectMemberRow.project_id).where(ProjectMemberRow.user_id == user.user_id)
+        stmt = stmt.where(BimObjectRow.project_id.in_(member_project_ids))
+    candidates = list(session.scalars(stmt))
     if not candidates:
         raise NotFound(f"object not found: {global_id}", code="object_not_found")
     if len(candidates) > 1:
@@ -104,9 +127,10 @@ def resolve_object(session: Session, global_id: str, project_id: str | None = No
     return candidates[0]
 
 
-def object_detail(session: Session, global_id: str, role: str, project_id: str | None = None) -> ObjectDetail:
-    row = resolve_object(session, global_id, project_id)
+def object_detail(session: Session, global_id: str, user: CurrentUser, project_id: str | None = None) -> ObjectDetail:
+    row = resolve_object(session, global_id, user, project_id)
     project_id = row.project_id
+    role = caller_project_role(session, project_id, user) or ""   # ADR 0006 규칙 7: 다음 행동은 프로젝트 역할 기준
     sm = ObjectStateMachine()
     history = list(reversed(sm.history(session, project_id, global_id)))
     open_reviews = db.open_reviews(session, project_id, [global_id])
@@ -155,14 +179,18 @@ def _evidence_from_request(req: TransitionRequest, user: CurrentUser, actor: Act
 
 def transition_object(session: Session, global_id: str, req: TransitionRequest, user: CurrentUser,
                       project_id: str | None = None) -> TransitionResponse:
+    """ADR 0006 규칙 7: actor 는 **프로젝트 역할**에서 나온다(전역 `user.role` 아님) — 한 사람이 현장마다 다른
+    역할일 수 있다. `resolve_object` 가 먼저 대상을 찾아 어느 프로젝트인지 확정해야 그 프로젝트의 역할을 알 수
+    있으므로, 역할 검사보다 조회가 먼저다(admin·비멤버는 어차피 역할이 없어 뒤이은 `actor_for_role`이 403)."""
+    row = resolve_object(session, global_id, user, project_id)
+    project_id = row.project_id
+    role = caller_project_role(session, project_id, user) or ""
     try:
-        actor = actor_for_role(user.role)
+        actor = actor_for_role(role)
     except RoleNotAllowedError as exc:
         raise Forbidden(str(exc), code="forbidden_role")
-    if req.to_state == ObjectState.CONFIRMED and user.role != CONFIRM_ROLE:
+    if req.to_state == ObjectState.CONFIRMED and role != CONFIRM_ROLE:
         raise Forbidden("CONFIRMED requires role cm", code="forbidden_role")
-    row = resolve_object(session, global_id, project_id)
-    project_id = row.project_id
     from_state = ObjectState(row.state)
     evidence = _evidence_from_request(req, user, actor)
     sm = ObjectStateMachine()
@@ -267,12 +295,15 @@ def plan_section(session: Session, model: ModelRow, level: str | None, offset: f
 
 # ------------------------------------------------------------------ review requests
 def resolve_review(session: Session, review_request_id: str, decision: str, note: str | None, user: CurrentUser) -> ReviewRequestRow:
-    """cm 의 검토요청 처리. inspection → 상태기계 전이가 요청을 닫고, mapping → sync 가 닫는다. 그 외(verification/on_hold)는 상태만 갱신."""
-    if user.role != CONFIRM_ROLE:
-        raise Forbidden("review request resolution requires role cm", code="forbidden_role")
+    """cm 의 검토요청 처리. inspection → 상태기계 전이가 요청을 닫고, mapping → sync 가 닫는다. 그 외(verification/on_hold)는 상태만 갱신.
+
+    ADR 0006 규칙 6·7: 이 라우트는 `project_id` 를 경로에 갖지 않는다 — 대상 행(`ReviewRequestRow`, 이미
+    `project_id` 보유)을 먼저 읽고 **그 프로젝트의** 역할을 검사한다(전역 역할 아님). 대상이 없으면 멤버십
+    여부와 무관하게 같은 404(`review_request_not_found`)를 준다(존재를 흘리지 않는다)."""
     row = session.get(ReviewRequestRow, review_request_id)
     if row is None:
         raise NotFound(f"review request not found: {review_request_id}", code="review_request_not_found")
+    project_role(session, row.project_id, user, CONFIRM_ROLE)   # ADR 0006 규칙 6: 대상 행의 project_id 로 검사
     if row.status != "open":
         raise Conflict(f"review request already {row.status}", code="review_already_resolved")
     before = db.review_row_to_model(row).model_dump(mode="json")

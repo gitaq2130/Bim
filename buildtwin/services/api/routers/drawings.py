@@ -12,7 +12,7 @@ from packages.core.models.orm import DrawingRow, FileRow, ModelRow
 from services.sync.persistence import load_mappings
 
 from .. import jobs, queries, usecases
-from ..deps import CurrentUser, get_current_user, get_session, require_role
+from ..deps import CurrentUser, ProjectContext, get_current_user, get_session, project_role, require_project_role
 from ..errors import NotFound
 from ..schemas.drawings import (
     AlignmentRequest,
@@ -24,7 +24,7 @@ from ..schemas.drawings import (
     PlanSectionView,
 )
 from ..storage import mesh_bundle_path, obj_path_for
-from .projects import get_project_or_404, model_summary
+from .projects import model_summary
 
 router = APIRouter(tags=["drawings"])
 
@@ -51,19 +51,21 @@ def _summary(session: Session, d: DrawingRow) -> DrawingSummary:
 
 
 @router.get("/projects/{project_id}/drawings", response_model=list[DrawingSummary])
-def list_drawings(project_id: str, session: Session = Depends(get_session), _: CurrentUser = Depends(get_current_user)) -> list[DrawingSummary]:
-    get_project_or_404(session, project_id)
+def list_drawings(project_id: str, session: Session = Depends(get_session), _: ProjectContext = Depends(require_project_role())) -> list[DrawingSummary]:
     return [_summary(session, d) for d in queries.project_drawings(session, project_id)]
 
 
 @router.get("/drawings/{drawing_id}", response_model=DrawingSummary)
-def get_drawing(drawing_id: str, session: Session = Depends(get_session), _: CurrentUser = Depends(get_current_user)) -> DrawingSummary:
-    return _summary(session, _drawing_or_404(session, drawing_id))
+def get_drawing(drawing_id: str, session: Session = Depends(get_session), user: CurrentUser = Depends(get_current_user)) -> DrawingSummary:
+    d = _drawing_or_404(session, drawing_id)
+    project_role(session, d.project_id, user)   # ADR 0006 규칙 6
+    return _summary(session, d)
 
 
 @router.get("/drawings/{drawing_id}/entities", response_model=DrawingEntitiesResponse)
-def drawing_entities(drawing_id: str, session: Session = Depends(get_session), _: CurrentUser = Depends(get_current_user)) -> DrawingEntitiesResponse:
+def drawing_entities(drawing_id: str, session: Session = Depends(get_session), user: CurrentUser = Depends(get_current_user)) -> DrawingEntitiesResponse:
     d = _drawing_or_404(session, drawing_id)
+    project_role(session, d.project_id, user)
     entities = [DrawingEntityView(**e.model_dump()) for e in jobs.drawing_entities(session, drawing_id)]
     return DrawingEntitiesResponse(drawing_id=drawing_id, project_id=d.project_id, level=d.level, entities=entities,
                                    coordinate_system=CoordinateSystem.model_validate(d.coordinate_system), alignment=d.alignment,
@@ -72,41 +74,51 @@ def drawing_entities(drawing_id: str, session: Session = Depends(get_session), _
 
 @router.get("/drawings/{drawing_id}/mappings", response_model=list[EntityObjectMapping])
 def drawing_mappings(drawing_id: str, needs_review: bool | None = None, session: Session = Depends(get_session),
-                     _: CurrentUser = Depends(get_current_user)) -> list[EntityObjectMapping]:
-    _drawing_or_404(session, drawing_id)
+                     user: CurrentUser = Depends(get_current_user)) -> list[EntityObjectMapping]:
+    d = _drawing_or_404(session, drawing_id)
+    project_role(session, d.project_id, user)
     return load_mappings(session, drawing_id, needs_review=needs_review)
 
 
 @router.post("/drawings/{drawing_id}/alignment")
 def set_alignment(drawing_id: str, body: AlignmentRequest, session: Session = Depends(get_session),
-                  user: CurrentUser = Depends(require_role("contractor", "cm", "admin"))) -> dict[str, Any]:
-    """사용자 정합값(origin/rotation/scale) 저장 → 매핑 재구성(사용자 확정 매핑은 유지). 동기 실행, job 기록 남김."""
+                  user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    """사용자 정합값(origin/rotation/scale) 저장 → 매핑 재구성(사용자 확정 매핑은 유지). 동기 실행, job 기록 남김.
+    그 도면 프로젝트의 contractor/cm 만(ADR 0006 — admin 은 행위 역할이 없어 제외)."""
     d = _drawing_or_404(session, drawing_id)
+    project_role(session, d.project_id, user, "contractor", "cm")
     return usecases.realign_drawing(session, d, body, user)
 
 
 @router.post("/drawings/{drawing_id}/mappings/{handle}/confirm", response_model=EntityObjectMapping)
 def confirm_mapping(drawing_id: str, handle: str, body: ConfirmMappingRequest, session: Session = Depends(get_session),
-                    user: CurrentUser = Depends(require_role("cm"))) -> EntityObjectMapping:
-    """매핑 확정(cm 만). sync.confirm_mapping_row + ExpertReviewLog."""
+                    user: CurrentUser = Depends(get_current_user)) -> EntityObjectMapping:
+    """매핑 확정(그 도면 프로젝트의 cm 만). sync.confirm_mapping_row + ExpertReviewLog."""
+    d = _drawing_or_404(session, drawing_id)
+    project_role(session, d.project_id, user, "cm")
     return usecases.confirm_entity_mapping(session, drawing_id, handle, body.global_id, user, body.note)
 
 
 @router.get("/models/{model_id}", response_model=ModelSummary)
-def get_model(model_id: str, session: Session = Depends(get_session), _: CurrentUser = Depends(get_current_user)) -> ModelSummary:
-    return model_summary(session, _model_or_404(session, model_id))
+def get_model(model_id: str, session: Session = Depends(get_session), user: CurrentUser = Depends(get_current_user)) -> ModelSummary:
+    m = _model_or_404(session, model_id)
+    project_role(session, m.project_id, user)
+    return model_summary(session, m)
 
 
 @router.get("/models/{model_id}/plan-section", response_model=PlanSectionView)
 def plan_section(model_id: str, level: str | None = Query(None), offset: float | None = Query(None),
-                 session: Session = Depends(get_session), _: CurrentUser = Depends(get_current_user)) -> PlanSectionView:
+                 session: Session = Depends(get_session), user: CurrentUser = Depends(get_current_user)) -> PlanSectionView:
     """층 레벨 표고 + offset(기본 config/sync.yaml plan_section_default_offset) 높이에서 객체 bbox 단면."""
-    return usecases.plan_section(session, _model_or_404(session, model_id), level, offset)
+    m = _model_or_404(session, model_id)
+    project_role(session, m.project_id, user)
+    return usecases.plan_section(session, m, level, offset)
 
 
 @router.get("/models/{model_id}/mesh", response_class=FileResponse)
-def model_mesh(model_id: str, session: Session = Depends(get_session), _: CurrentUser = Depends(get_current_user)) -> FileResponse:
+def model_mesh(model_id: str, session: Session = Depends(get_session), user: CurrentUser = Depends(get_current_user)) -> FileResponse:
     m = _model_or_404(session, model_id)
+    project_role(session, m.project_id, user)
     p = mesh_bundle_path(m.mesh_uri)
     if p is None:
         raise NotFound(f"mesh bundle not available for model {model_id}", code="mesh_not_found")
@@ -114,8 +126,9 @@ def model_mesh(model_id: str, session: Session = Depends(get_session), _: Curren
 
 
 @router.get("/models/{model_id}/mesh.obj", response_class=FileResponse)
-def model_mesh_obj(model_id: str, session: Session = Depends(get_session), _: CurrentUser = Depends(get_current_user)) -> FileResponse:
+def model_mesh_obj(model_id: str, session: Session = Depends(get_session), user: CurrentUser = Depends(get_current_user)) -> FileResponse:
     m = _model_or_404(session, model_id)
+    project_role(session, m.project_id, user)
     p = obj_path_for(m.mesh_uri)
     if p is None:
         raise NotFound(f"OBJ not available for model {model_id}", code="model_obj_not_found")

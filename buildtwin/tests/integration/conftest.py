@@ -93,13 +93,35 @@ def upload(client, headers: dict[str, str], project_id: str, path: Path, **form)
     return up, wait_job(client, headers, up["job_id"])
 
 
+def add_member(client, admin_headers: dict[str, str], project_id: str, user_id: str, role: str) -> None:
+    r = client.post(f"/api/projects/{project_id}/members", headers=admin_headers, json={"user_id": user_id, "role": role})
+    assert r.status_code == 201, r.text
+
+
 @pytest.fixture(scope="session")
-def project(client, auth) -> str:
+def user_ids(client, auth) -> dict[str, str]:
+    """role → user_id(시드 계정). ADR 0006 멤버십 부여에 필요하다."""
+    out: dict[str, str] = {}
+    for role in ROLES:
+        r = client.get("/api/auth/me", headers=auth(role))
+        assert r.status_code == 200, r.text
+        out[role] = r.json()["user_id"]
+    return out
+
+
+@pytest.fixture(scope="session")
+def project(client, auth, user_ids) -> str:
+    """ADR 0006: 멤버십 행이 접근권을 정의한다 — contractor/cm/client 를 이름과 같은 프로젝트 역할로 멤버십을
+    준다(admin 은 멤버십 없이 조회만 가능하므로 추가하지 않는다). 이후 테스트 전체가 이 세 계정을
+    '이 프로젝트의 그 역할'로 다룬다는 가정을 그대로 쓸 수 있다."""
     r = client.post("/api/projects", headers=auth("admin"), json={"name": "통합 테스트 현장"})
     assert r.status_code == 201, r.text
     body = r.json()
     assert body["name"] == "통합 테스트 현장" and body["project_id"]
-    return body["project_id"]
+    project_id = body["project_id"]
+    for role in ("contractor", "cm", "client"):
+        add_member(client, auth("admin"), project_id, user_ids[role], role)
+    return project_id
 
 
 @pytest.fixture(scope="session")

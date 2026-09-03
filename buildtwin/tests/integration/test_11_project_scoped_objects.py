@@ -3,15 +3,19 @@
 프로젝트에 걸치면 409, ?project_id= 로 각 프로젝트의 객체를 정확히 해소해야 한다."""
 from __future__ import annotations
 
-from .conftest import FIXTURES, upload
+from .conftest import FIXTURES, add_member, upload
 
 
-def test_same_ifc_in_two_projects(client, auth, project, ifc_job, ifc_expected):
+def test_same_ifc_in_two_projects(client, auth, project, ifc_job, ifc_expected, user_ids):
     """project 픽스처는 이미 sample.ifc 를 올렸다(42개 객체). 같은 파일을 새 프로젝트에도 올린다."""
     r = client.post("/api/projects", headers=auth("admin"), json={"name": "두 번째 현장(ADR 0005 회귀)"})
     assert r.status_code == 201, r.text
     project2 = r.json()["project_id"]
     assert project2 != project
+    # ADR 0006: 이 테스트가 두 프로젝트에 걸친 모호성을 보려면 호출자가 **둘 다**의 멤버여야 한다
+    # (resolve_object 의 후보 조회가 멤버 프로젝트로 한정되므로).
+    for role in ("contractor", "cm", "client"):
+        add_member(client, auth("admin"), project2, user_ids[role], role)
 
     up, job = upload(client, auth("contractor"), project2, FIXTURES / "sample.ifc")
     assert up["kind"] == "ifc"

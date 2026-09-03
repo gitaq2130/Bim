@@ -9,10 +9,8 @@ from packages.core.models.state import ObjectState
 from services.progress import persistence as db
 
 from .. import usecases
-from ..deps import CurrentUser, get_current_user, get_session, require_role
-from ..errors import Forbidden
+from ..deps import CurrentUser, ProjectContext, get_current_user, get_session, require_project_role
 from ..schemas.objects import ObjectDetail, ObjectList, TransitionRequest, TransitionResponse
-from .projects import get_project_or_404
 
 router = APIRouter(tags=["objects"])
 
@@ -21,8 +19,7 @@ router = APIRouter(tags=["objects"])
 def list_objects(project_id: str, level: str | None = None, ifc_type: str | None = None, state: ObjectState | None = None,
                  page: int = Query(1, ge=1), page_size: int = Query(200, ge=1, le=2000, alias="page_size"),
                  size: int | None = Query(None, ge=1, le=2000), include_orphaned: bool = False,
-                 session: Session = Depends(get_session), _: CurrentUser = Depends(get_current_user)) -> ObjectList:
-    get_project_or_404(session, project_id)
+                 session: Session = Depends(get_session), _: ProjectContext = Depends(require_project_role())) -> ObjectList:
     limit = size or page_size
     stmt = select(BimObjectRow).where(BimObjectRow.project_id == project_id)
     if not include_orphaned:
@@ -44,17 +41,17 @@ def list_objects(project_id: str, level: str | None = None, ifc_type: str | None
 def get_object(global_id: str, project_id: str | None = Query(None), session: Session = Depends(get_session),
                user: CurrentUser = Depends(get_current_user)) -> ObjectDetail:
     """한 번의 호출로 basic / current_state / history / next_actions / linked 를 모두 돌려준다.
-    ADR 0005 §3: global_id 가 여러 프로젝트에 걸쳐 있으면 409 — `?project_id=` 로 직접 지정해 해소한다."""
-    return usecases.object_detail(session, global_id, user.role, project_id=project_id)
+    ADR 0005 §3: global_id 가 여러 프로젝트에 걸쳐 있으면 409 — `?project_id=` 로 직접 지정해 해소한다.
+    ADR 0006 규칙 5: 후보는 호출자가 멤버인 프로젝트로 한정한다(usecases.resolve_object)."""
+    return usecases.object_detail(session, global_id, user, project_id=project_id)
 
 
 @router.post("/objects/{global_id}/transitions", response_model=TransitionResponse, status_code=201)
 def request_transition(global_id: str, body: TransitionRequest, project_id: str | None = Query(None),
-                       session: Session = Depends(get_session),
-                       user: CurrentUser = Depends(require_role("contractor", "cm"))) -> TransitionResponse:
-    """상태 전이 요청(ADR 0001 §4-1: contractor/cm 만, admin·client 403). CONFIRMED 는 라우터(역할 cm)와
-    상태기계(actor=cm) 이중 검사. 응답에 생성/종료된 검측 ReviewRequest id 포함.
+                       session: Session = Depends(get_session), user: CurrentUser = Depends(get_current_user)) -> TransitionResponse:
+    """상태 전이 요청. actor·CONFIRMED 자격은 **프로젝트 역할**에서 나온다(ADR 0006 규칙 7) — 이 라우트는
+    `project_id`가 경로에 없어(대상은 `global_id`로만 정해짐) 어느 프로젝트인지 먼저 알아야 역할을 알 수
+    있으므로, 역할 검사는 `usecases.transition_object`가 대상을 resolve 한 뒤 수행한다(contractor/cm 만,
+    admin·client 403, ADR 0001 §4-1). 응답에 생성/종료된 검측 ReviewRequest id 포함.
     ADR 0005 §3: global_id 가 여러 프로젝트에 걸쳐 있으면 409 — `?project_id=` 로 직접 지정해 해소한다."""
-    if body.to_state == ObjectState.CONFIRMED and user.role != usecases.CONFIRM_ROLE:
-        raise Forbidden("CONFIRMED transition requires role cm", code="forbidden_role")
     return usecases.transition_object(session, global_id, body, user, project_id=project_id)

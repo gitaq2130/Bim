@@ -9,17 +9,15 @@ from services.progress.readiness import compute_readiness
 from services.progress.scheduler import compute_startable
 
 from .. import queries, usecases
-from ..deps import CurrentUser, get_current_user, get_session
+from ..deps import CurrentUser, ProjectContext, get_current_user, get_session, project_role, require_project_role
 from ..errors import NotFound
 from ..schemas.activities import ActivityView, WeeklySummary
-from .projects import get_project_or_404
 
 router = APIRouter(tags=["activities"])
 
 
 @router.get("/projects/{project_id}/activities", response_model=list[ActivityView])
-def list_activities(project_id: str, session: Session = Depends(get_session), _: CurrentUser = Depends(get_current_user)) -> list[ActivityView]:
-    get_project_or_404(session, project_id)
+def list_activities(project_id: str, session: Session = Depends(get_session), _: ProjectContext = Depends(require_project_role())) -> list[ActivityView]:
     preds = queries.predecessor_map(session, project_id)
     out: list[ActivityView] = []
     for a in queries.project_activities(session, project_id):
@@ -33,21 +31,21 @@ def list_activities(project_id: str, session: Session = Depends(get_session), _:
 
 
 @router.get("/activities/{activity_id}/readiness", response_model=ReadinessScore)
-def activity_readiness(activity_id: str, session: Session = Depends(get_session), _: CurrentUser = Depends(get_current_user)) -> ReadinessScore:
-    try:
-        return compute_readiness(session, activity_id)
-    except LookupError as exc:
-        raise NotFound(str(exc), code="activity_not_found")
+def activity_readiness(activity_id: str, session: Session = Depends(get_session), user: CurrentUser = Depends(get_current_user)) -> ReadinessScore:
+    """surrogate id 라우트(ADR 0006 규칙 6, 리뷰어 관찰 항목): Activity 를 먼저 읽고 그 project_id 로 멤버십을 검사한다."""
+    row = db.load_activity(session, activity_id)
+    if row is None:
+        raise NotFound(f"activity not found: {activity_id}", code="activity_not_found")
+    project_role(session, row.project_id, user)
+    return compute_readiness(session, activity_id)
 
 
 @router.get("/projects/{project_id}/startable", response_model=StartableSet)
 def project_startable(project_id: str, threshold: float | None = None, session: Session = Depends(get_session),
-                      _: CurrentUser = Depends(get_current_user)) -> StartableSet:
-    get_project_or_404(session, project_id)
+                      _: ProjectContext = Depends(require_project_role())) -> StartableSet:
     return compute_startable(session, project_id, threshold=threshold)
 
 
 @router.get("/projects/{project_id}/weekly-summary", response_model=WeeklySummary)
-def weekly_summary(project_id: str, session: Session = Depends(get_session), _: CurrentUser = Depends(get_current_user)) -> WeeklySummary:
-    get_project_or_404(session, project_id)
+def weekly_summary(project_id: str, session: Session = Depends(get_session), _: ProjectContext = Depends(require_project_role())) -> WeeklySummary:
     return usecases.weekly_summary(session, project_id)

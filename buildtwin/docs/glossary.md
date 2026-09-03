@@ -169,6 +169,9 @@ reviewer 4차 지적 1: 동일 상태코드(특히 409)가 서로 무관한 여�
 | `unprocessable_entity` | 422 | `Unprocessable`의 중립 기본값(호출부가 `code=` 미지정 시). 오늘 기준 모든 422 raise 지점이 구체적 code를 지정한다 |
 | `unsupported_media_type` | 415 | `UnsupportedMedia`의 중립 기본값(호출부가 `code=` 미지정 시). 오늘 기준 모든 415 raise 지점은 `unsupported_file_kind`를 명시한다 |
 | `mapping_review_data_corrupt` | 500 | mapping ReviewRequest 처리 중 저장된 `conflicting_sources`에 `drawing_id`/`entity_handle`이 없어 파싱할 수 없음(`services.sync.review_queue.resolve_mapping_review`) — 대상 객체가 없는 것(`mapping_target_not_found`, 404)이 아니라 서버에 저장된 검토요청 데이터 자체의 손상이므로 5xx로 구분한다 |
+| `user_not_found` | 404 | `POST /api/projects/{pid}/members`에 지정한 `user_id`가 `users`에 없음(ADR 0006 §4) |
+| `duplicate_member` | 409 | `POST /api/projects/{pid}/members`가 이미 그 프로젝트의 멤버인 `user_id`를 다시 추가하려 함 |
+| `member_not_found` | 404 | `DELETE /api/projects/{pid}/members/{user_id}`가 가리키는 멤버십 행이 없음 |
 
 ### 부칙 — reviewer 5차 지적 반영 (api, 2026-09-03)
 
@@ -186,3 +189,20 @@ reviewer 4차 지적 1: 동일 상태코드(특히 409)가 서로 무관한 여�
 - **`drawing_not_found`(404, 위 표) 사용처 확장**: mapping ReviewRequest 승인 처리 중 `confirm_mapping_row`가
   참조하는 도면이 그 사이 삭제된 경우(`services.sync.persistence._project_id_of_drawing`의 `LookupError`)도
   이 code로 보고한다 — `confirm_entity_mapping`(직접 확정 경로)과 같은 code.
+
+### 부칙 — ADR 0006 프로젝트 멤버십 인가 (api, 2026-09-03)
+
+이 절도 append-only — 기존 문장·행은 그대로 둔다.
+
+- **`project_not_found`(404, 위 표) 조건 확장**: `project_id`가 실제로 없는 경우뿐 아니라, **호출자가 그
+  프로젝트의 멤버가 아닌 경우**(admin 제외)에도 같은 code·같은 상태코드를 돌려준다(ADR 0006 규칙 2 — 403은
+  프로젝트 존재를 흘리므로 두 경우를 구분하지 않는다). `services/api/deps.py`의 `project_role`/`require_project_role`이
+  프로젝트 범위 라우트 전체에서 이 판단을 통일한다.
+- **`forbidden_role`(403, 위 표) 조건 확장**: 이제 "역할이 요구 권한 집합에 없음"의 "역할"은 (전역이 아니라)
+  **그 프로젝트에서의 `project_members.role`**을 뜻한다(ADR 0006 규칙 1·7 — 상태 전이의 actor, 검토요청 처리,
+  업로드·정합 입력 등 프로젝트 범위 행위 전부). `admin`은 멤버십이 없어 행위 라우트에서 이 code로 거부된다
+  (별도 cm/contractor 계정이 필요하다는 안내를 `detail`에 남긴다).
+- **대상 행 우선 조회(ADR 0006 규칙 6)**: `project_id`를 경로에 갖지 않는 라우트(`GET/POST /review-requests/{id}`,
+  `GET /activities/{id}/readiness`, 그리고 `drawings/{id}`·`scans/{id}`·`models/{id}`·`files/{id}`·`jobs/{id}` 등
+  surrogate id 라우트 전부)는 대상 행을 먼저 읽어(없으면 그 자원의 기존 404 code, 예: `review_request_not_found`)
+  그 행의 `project_id`로 멤버십을 검사한다.

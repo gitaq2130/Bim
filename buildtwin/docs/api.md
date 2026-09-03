@@ -84,6 +84,9 @@
 | POST | `/api/projects` | Create Project | - | json: ProjectCreate | ProjectView |
 | GET | `/api/projects/{project_id}` | Get Project | project_id*(path) | - | ProjectView |
 | GET | `/api/projects/{project_id}/levels` | List Levels | project_id*(path) | - | LevelView[] |
+| GET | `/api/projects/{project_id}/members` | List Members | project_id*(path) | - | MemberView[] |
+| POST | `/api/projects/{project_id}/members` | Add Member | project_id*(path) | json: MemberCreate | MemberView |
+| DELETE | `/api/projects/{project_id}/members/{user_id}` | Remove Member | project_id*(path), user_id*(path) | - | - |
 | GET | `/api/projects/{project_id}/models` | List Models | project_id*(path) | - | ModelSummary[] |
 
 ### review-requests
@@ -147,6 +150,8 @@
 | LoginResponse | `access_token`*, `token_type`, `role`*, `user_id`*, `email`* |
 | MarkerDefinition | `marker_id`*, `model_xyz`* |
 | MarkerObservation | `marker_id`*, `scan_xyz`* |
+| MemberCreate | `user_id`*, `role`* |
+| MemberView | `project_id`*, `user_id`*, `email`, `role`*, `added_by`, `added_at` |
 | ModelSummary | `model_id`*, `project_id`*, `name`, `model_uri`*, `obj_uri`, `levels`, `coordinate_system`*, `plan_section_default_offset`, `version`, `file_id`, `stats` |
 | NextAction | `kind`*, `label`*, `allowed_roles`*, `to_state`, `actor`, `review_request_id`, `review_kind`, `rule_id` |
 | ObjectDetail | `basic`*, `current_state`*, `history`*, `next_actions`*, `linked`* |
@@ -157,7 +162,7 @@
 | PlanSectionPolyline | `global_id`*, `ifc_type`, `points`*, `closed` |
 | PlanSectionView | `level`*, `elevation`*, `offset`*, `cut_elevation`*, `coordinate_system`*, `svg`, `polylines`* |
 | ProjectCreate | `name`*, `project_id`, `description` |
-| ProjectView | `project_id`*, `name`*, `created_at`, `description` |
+| ProjectView | `project_id`*, `name`*, `created_at`, `description`, `my_role` |
 | ReadinessScore | `activity_id`*, `score`*, `components`*, `weights`*, `blockers`*, `confidence`*, `evidence`*, `estimated_completion`, `computed_at` |
 | RegisterRequest | `email`*, `password`*, `role`, `name` |
 | Registration | `scan_id`*, `status`*, `transform`, `rmse`, `fitness`, `inlier_ratio`, `method`, `message`, `evidence` |

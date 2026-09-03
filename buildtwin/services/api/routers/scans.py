@@ -9,11 +9,10 @@ from packages.core.models.orm import FileRow, JobRow, ScanRow
 from packages.core.models.scan import AlignmentInput, Registration
 
 from .. import queries
-from ..deps import CurrentUser, get_current_user, get_session, require_role
+from ..deps import CurrentUser, ProjectContext, get_current_user, get_session, project_role, require_project_role
 from ..errors import NotFound, Unprocessable
 from ..schemas.scans import AlignmentJobResponse, ScanSummary, ScanVerdictsResponse
 from ..tasks import dispatch_job
-from .projects import get_project_or_404
 
 router = APIRouter(tags=["scans"])
 
@@ -39,21 +38,24 @@ def _summary(session: Session, s: ScanRow) -> ScanSummary:
 
 
 @router.get("/projects/{project_id}/scans", response_model=list[ScanSummary])
-def list_scans(project_id: str, session: Session = Depends(get_session), _: CurrentUser = Depends(get_current_user)) -> list[ScanSummary]:
-    get_project_or_404(session, project_id)
+def list_scans(project_id: str, session: Session = Depends(get_session), _: ProjectContext = Depends(require_project_role())) -> list[ScanSummary]:
     return [_summary(session, s) for s in queries.project_scans(session, project_id)]
 
 
 @router.get("/scans/{scan_id}", response_model=ScanSummary)
-def get_scan(scan_id: str, session: Session = Depends(get_session), _: CurrentUser = Depends(get_current_user)) -> ScanSummary:
-    return _summary(session, _scan_or_404(session, scan_id))
+def get_scan(scan_id: str, session: Session = Depends(get_session), user: CurrentUser = Depends(get_current_user)) -> ScanSummary:
+    scan = _scan_or_404(session, scan_id)
+    project_role(session, scan.project_id, user)   # ADR 0006 규칙 6
+    return _summary(session, scan)
 
 
 @router.post("/scans/{scan_id}/alignment", response_model=AlignmentJobResponse, status_code=status.HTTP_202_ACCEPTED)
 def submit_alignment(scan_id: str, body: AlignmentInput, session: Session = Depends(get_session),
-                     user: CurrentUser = Depends(require_role("cm", "admin"))) -> AlignmentJobResponse:
-    """기준점(≥3) 또는 마커(≥3) → verdict 작업 발행(정합 → 객체 판정 → 상태기계 → 3중 검증). 스캔은 CONFIRMED 를 만들지 않는다."""
+                     user: CurrentUser = Depends(get_current_user)) -> AlignmentJobResponse:
+    """기준점(≥3) 또는 마커(≥3) → verdict 작업 발행(정합 → 객체 판정 → 상태기계 → 3중 검증). 스캔은 CONFIRMED 를
+    만들지 않는다. 그 스캔 프로젝트의 cm 만(ADR 0006 — admin 은 행위 역할이 없어 제외)."""
     scan = _scan_or_404(session, scan_id)
+    project_role(session, scan.project_id, user, "cm")
     if not body.is_sufficient():
         raise Unprocessable("alignment input insufficient: need ≥3 control points or ≥3 observed markers with definitions", code="alignment_input_insufficient")
     scan.alignment_input = body.model_dump(mode="json")
@@ -66,14 +68,16 @@ def submit_alignment(scan_id: str, body: AlignmentInput, session: Session = Depe
 
 
 @router.get("/scans/{scan_id}/verdicts", response_model=ScanVerdictsResponse)
-def scan_verdicts(scan_id: str, session: Session = Depends(get_session), _: CurrentUser = Depends(get_current_user)) -> ScanVerdictsResponse:
+def scan_verdicts(scan_id: str, session: Session = Depends(get_session), user: CurrentUser = Depends(get_current_user)) -> ScanVerdictsResponse:
     scan = _scan_or_404(session, scan_id)
+    project_role(session, scan.project_id, user)
     items = [queries.verdict_row_to_model(r) for r in queries.scan_verdicts(session, scan_id)]
     return ScanVerdictsResponse(scan_id=scan_id, registration=_registration(scan), items=items, total=len(items))
 
 
 @router.get("/scans/{scan_id}/registration", response_model=Registration)
-def scan_registration(scan_id: str, session: Session = Depends(get_session), _: CurrentUser = Depends(get_current_user)) -> Registration:
+def scan_registration(scan_id: str, session: Session = Depends(get_session), user: CurrentUser = Depends(get_current_user)) -> Registration:
     scan = _scan_or_404(session, scan_id)
+    project_role(session, scan.project_id, user)
     reg = _registration(scan)
     return reg or Registration(scan_id=scan_id, status="needs_alignment_input")

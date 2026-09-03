@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from packages.core.models.orm import JobRow
 
-from ..deps import CurrentUser, get_current_user, get_session
+from ..deps import CurrentUser, get_current_user, get_session, project_role
 from ..errors import NotFound
 from ..schemas.jobs import JobView, WarningView
 
@@ -28,8 +28,10 @@ def job_view(row: JobRow) -> JobView:
 
 
 @router.get("/jobs/{job_id}", response_model=JobView)
-def get_job(job_id: str, session: Session = Depends(get_session), _: CurrentUser = Depends(get_current_user)) -> JobView:
+def get_job(job_id: str, session: Session = Depends(get_session), user: CurrentUser = Depends(get_current_user)) -> JobView:
+    """surrogate id 라우트(ADR 0006 규칙 6): job 행을 먼저 읽고 그 project_id 로 멤버십을 검사한다."""
     row = session.get(JobRow, job_id)
     if row is None:
         raise NotFound(f"job not found: {job_id}", code="job_not_found")
+    project_role(session, row.project_id, user)
     return job_view(row)

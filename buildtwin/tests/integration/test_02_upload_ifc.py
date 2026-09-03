@@ -75,7 +75,8 @@ def test_reupload_keeps_state_and_bumps_version(client, auth, project, ifc_job):
     r = client.post(f"/api/objects/{gid}/transitions", headers=auth("contractor"),
                     json={"to_state": "REPORTED", "evidence": {"source_type": "user_input", "source_id": "re-upload-test"}})
     assert r.status_code == 201, r.text
-    _, job = upload(client, auth("admin"), project, FIXTURES / "sample.ifc")
+    # admin 은 프로젝트 범위 업로드(행위)를 못한다(ADR 0006 — 행위 역할이 없다) — 그 프로젝트의 cm 으로 올린다.
+    _, job = upload(client, auth("cm"), project, FIXTURES / "sample.ifc")
     assert job["status"] == "done" and job["result"]["version"] == 2 and job["result"]["orphaned"] == 0
     assert job["result"]["updated"] == 42 and job["result"]["created"] == 0
     detail = client.get(f"/api/objects/{gid}", headers=auth("client")).json()

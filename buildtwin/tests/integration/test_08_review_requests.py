@@ -18,7 +18,7 @@ from packages.core.models.orm import (
     StateTransitionRow,
 )
 
-from .conftest import FIXTURES, upload
+from .conftest import FIXTURES, add_member, upload
 
 # (project_id, global_id) 를 FK 로 참조하는 모든 테이블(ADR 0005) — orphan 시나리오를 만들려면
 # bim_objects 행을 지우기 전에 이들도 함께 지워야 FK 위반이 나지 않는다.
@@ -69,15 +69,20 @@ def _delete_all_objects(project: str) -> None:
 
 
 @pytest.fixture
-def isolated_project(client, auth) -> Iterator[str]:
+def isolated_project(client, auth, user_ids) -> Iterator[str]:
     """이 테스트 함수만을 위한 새 프로젝트. 세션 스코프 `project` 픽스처(다른 파일도 공유, 예: test_02 의
     object_total == 42)는 절대 건드리지 않는다 — orphan 을 만들려고 뭔가를 지워야 하는 테스트는 이 픽스처로
     자기 소유의 프로젝트를 받아 그 안에서만 지운다. 함수 스코프라 테스트 실행 순서·재실행 여부에 영향받지 않는다.
     테스트가 끝나면(성공/실패 무관) 이 프로젝트에 올라간 bim_objects 를 지워, 다른 테스트 파일의 unscoped
-    global_id 조회를 오염시키지 않는다(아래 `_delete_all_objects` 참고)."""
+    global_id 조회를 오염시키지 않는다(아래 `_delete_all_objects` 참고).
+
+    ADR 0006: 이 파일의 테스트들이 쓰는 세 역할(contractor/cm/client) 모두 멤버십을 준다(`project` 픽스처와
+    같은 패턴) — 그래야 업로드·전이·조회가 그대로 동작한다."""
     r = client.post("/api/projects", headers=auth("admin"), json={"name": f"검토요청 격리 테스트 {uuid.uuid4().hex[:8]}"})
     assert r.status_code == 201, r.text
     proj = r.json()["project_id"]
+    for role in ("contractor", "cm", "client"):
+        add_member(client, auth("admin"), proj, user_ids[role], role)
     yield proj
     _delete_all_objects(proj)
 

@@ -12,7 +12,7 @@ from packages.core import db as core_db
 from packages.core.settings import settings
 
 from .auth import router as auth_router
-from .auth.seed import seed_dev_users
+from .auth.seed import seed_dev_project, seed_dev_users
 from .errors import install_handlers
 from .routers import ALL_ROUTERS
 
@@ -30,6 +30,9 @@ def init_database() -> None:
             created = seed_dev_users(s)
             if created:
                 log.info("seeded %d dev users (%s)", len(created), ", ".join(u.email for u in created))
+                project = seed_dev_project(s, created)   # ADR 0006: 데모 프로젝트 멤버십(admin 제외)
+                if project is not None:
+                    log.info("seeded dev project %s with member roles for contractor/cm/client", project.project_id)
 
 
 @asynccontextmanager
