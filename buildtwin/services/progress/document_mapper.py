@@ -263,8 +263,12 @@ def _document_mapping_review(mapping: ActivityDocumentMapping, project_id: str, 
     )
 
 
-def _is_rejected_mapping(evidence: dict[str, Any] | None) -> bool:
+def is_rejected_mapping(evidence: dict[str, Any] | None) -> bool:
     """`row.evidence`(JSON dict)에 `reject_document_mapping`이 남긴 반려 표시가 있는지 본다.
+
+    **공개 함수다(10차 리뷰).** "reviewed_by 만으로 확정을 판별하지 마라"는 §4-2 규칙 6 ⑥의 불변식은
+    이 모듈 밖에서도 지켜져야 하므로(services/api 의 확정 거절, apps/web 의 배지 — domain/mappingReview.ts)
+    판정을 여기 한 곳이 소유한다. 키 문자열을 호출자가 직접 읽지 말고 이 함수를 쓸 것.
 
     확정(`_confirm_document_mapping_row`, api 소유)은 이 키를 절대 쓰지 않으므로, `reviewed_by is not None`
     이면서 이 함수가 `False`를 돌려주면 확정된 매핑이고 `True`를 돌려주면 반려된 매핑이다 — 같은
@@ -340,7 +344,7 @@ def _reopen_reviews_for_invalidated_confirmations(
     for row in db.document_mappings_for_project(session, project_id):
         if row.reviewed_by is None:
             continue   # 확정된 매핑만 대상 — 미확정은 재계산이 그대로 덮어쓰므로 여기서 다룰 대상이 아니다
-        if _is_rejected_mapping(row.evidence):
+        if is_rejected_mapping(row.evidence):
             # 반려된 매핑은 대상이 아니다(10차 리뷰 후속). CM 은 이미 "이 문서는 이 Activity 와 무관하다"고
             # 판단했고, Activity 정보가 바뀐다고 그 판단의 근거가 흔들리지 않는다 — 확정과 달리 반려는
             # readiness/검증 어디에도 "증거"로 쓰이지 않으므로(§ confirmed_required_documents 필터), 낡은
@@ -589,7 +593,7 @@ def confirmed_required_documents(session: Session, project_id: str, activity_ids
     # 반려된 매핑은 needs_review=False 지만(§ reject_document_mapping — "사람이 이미 판단했다") "확정"이
     # 아니다. 여기서 걸러내지 않으면 CM 이 "이 문서는 무관하다"고 반려한 매핑이 도면 승인 AND 조건의
     # 증거로 도로 들어가 버린다(10차 리뷰 후속).
-    confirmed = [m for m in mappings if not m.needs_review and not _is_rejected_mapping(m.evidence)]
+    confirmed = [m for m in mappings if not m.needs_review and not is_rejected_mapping(m.evidence)]
     pending_count = sum(1 for m in mappings if m.needs_review)
 
     doc_ids = [m.doc_id for m in confirmed]

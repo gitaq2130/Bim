@@ -38,7 +38,10 @@ function reviewDecisionMessage(kind: ReviewKind, decision: ReviewDecision): stri
     case "document_mapping":
       return decision === "approved"
         ? "승인하면 이 문서 ↔ Activity 매핑이 확정됩니다(needs_review=False) — 도면 승인 근거(readiness)로 반영됩니다. 확정 이후에는 사람만 되돌릴 수 있습니다."
-        : "반려해도 매핑 행은 아직 바뀌지 않습니다 — 검토요청 상태만 기록되고, 매핑은 검토 대기 상태로 남습니다.";
+        // ADR 0007 §4-2 규칙 6 ⑥: 반려는 (activity_id, doc_id) 쌍에 대해 영구하다. 되돌리는 경로가 없으므로
+        // 문구가 그 사실을 정확히 말해야 한다 — 10차 리뷰가 잡은 결함은 이 자리가 정반대("아무것도 바뀌지
+        // 않습니다")를 말하는데 실제로는 되돌릴 수 없는 반려가 실행되던 것이다.
+        : "반려하면 이 문서 ↔ Activity 매핑에 반려 표시가 남고 검토 큐에서 내려갑니다 — 도면 승인 근거로 쓰이지 않으며, 대장을 재업로드해도 후보로 다시 제안되지 않습니다. 되돌릴 수 없으니 확인 후 진행하세요.";
     case "verification":
     default:
       // verification 은 신고/스캔/논리 3축 불일치를 사람이 확인했다는 기록일 뿐, 어떤 상태 전이도 일으키지 않는다(ADR 0001 §6).

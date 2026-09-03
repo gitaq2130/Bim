@@ -295,3 +295,55 @@ def test_other_mappings_remain_normal_after_reject_and_recompute_cycles(client, 
     assert am["needs_review"] is False and am["reviewed_by"] == user_ids["cm"]
 
     assert len(reviews) == EXPECTED_MAPPING_COUNT   # 전체 요청 수도 처음 그대로(재생성·중복 없음)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 10차 리뷰 — 반려된 매핑의 확정 시도
+# ═══════════════════════════════════════════════════════════════════════════
+def test_confirming_a_rejected_mapping_is_refused_with_409(client, auth, dm_project, user_ids):
+    """반려된 매핑을 확정 엔드포인트로 확정하려 하면 **409 로 거절**한다.
+
+    원래 결함(10차 리뷰): `_confirm_document_mapping_row` 가 evidence 를 그대로 복사해
+    `extra.mapping_review_decision="rejected"` 가 남은 채 `reviewed_by` 만 갈아끼웠다. 그 결과 **200 을
+    돌려주고 화면은 "확정됨"을 그리는데 readiness 는 이 확정을 영원히 보지 못하는** 반쪽 상태가 됐다
+    (`confirmed_required_documents` 가 반려 표시로 계속 걸러내므로). 이번 사이클에서 네 번째로 나온
+    "응답은 성공인데 아무 효과가 없다"이다.
+
+    ADR 0007 §4-2 규칙 6 ⑥ 이 반려를 영구로 설계했으므로 설계대로 거절한다 — 반려 취소는 별개 기능이다.
+    A400 은 앞선 테스트에서 이미 반려됐다(이 파일은 모듈 스코프 프로젝트를 순서대로 공유한다)."""
+    review = _review_for_activity(_all_document_mapping_reviews(client, auth, dm_project), ACTIVITY_REJECT)
+    assert review["status"] == "rejected"
+    doc_id = review["conflicting_sources"]["doc_id"]
+    before = _mapping_for_activity(client, auth, dm_project, doc_id, ACTIVITY_REJECT)
+
+    r = client.post(f"/api/documents/mappings/{ACTIVITY_REJECT}/{doc_id}/confirm",
+                    headers=auth("cm"), json={"note": "실수로 확정 시도"})
+    assert r.status_code == 409, r.text
+    assert r.json()["code"] == "document_mapping_already_rejected", r.text
+
+    # 거절이므로 매핑 행은 조금도 바뀌지 않아야 한다(반려 표시·반려자·사유 전부 그대로)
+    after = _mapping_for_activity(client, auth, dm_project, doc_id, ACTIVITY_REJECT)
+    assert after["evidence"]["extra"]["mapping_review_decision"] == "rejected"
+    assert after["evidence"]["extra"]["rejected_by"] == user_ids["cm"]
+    assert after["evidence"]["extra"]["rejection_note"] == before["evidence"]["extra"]["rejection_note"]
+    assert after["needs_review"] is False
+
+    # readiness 도 그대로 — 반려된 문서는 여전히 도면 승인 근거가 아니다
+    score = client.get(f"/api/activities/{ACTIVITY_REJECT}/readiness", headers=auth("cm")).json()
+    assert score["components"]["drawing_approval"] != 1.0
+
+
+def test_confirming_a_pending_mapping_still_works(client, auth, dm_project, user_ids):
+    """위 409 방어가 **정상 확정까지 막지는 않는다** — 아무도 손대지 않은 A200 매핑은 그대로 확정된다.
+    (방어를 넣고 기능을 죽이는 것도 이 사이클이 반복한 실패라 대조군을 둔다.)"""
+    review = _review_for_activity(_all_document_mapping_reviews(client, auth, dm_project), ACTIVITY_UNTOUCHED)
+    assert review["status"] == "open"
+    doc_id = review["conflicting_sources"]["doc_id"]
+
+    r = client.post(f"/api/documents/mappings/{ACTIVITY_UNTOUCHED}/{doc_id}/confirm",
+                    headers=auth("cm"), json={"note": "대장 확인"})
+    assert r.status_code == 200, r.text
+
+    m = _mapping_for_activity(client, auth, dm_project, doc_id, ACTIVITY_UNTOUCHED)
+    assert m["needs_review"] is False and m["reviewed_by"] == user_ids["cm"]
+    assert m["evidence"]["extra"].get("mapping_review_decision") is None   # 확정은 이 키를 쓰지 않는다

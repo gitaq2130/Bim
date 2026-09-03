@@ -15,6 +15,12 @@ import { ConfidenceBadge } from "../components/ConfidenceBadge";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ErrorBox } from "../components/ErrorBox";
 import { DOC_TYPE_LABELS } from "../domain/labels";
+import {
+  MAPPING_REVIEW_STATE_LABELS,
+  type MappingReviewState,
+  mappingRejection,
+  mappingReviewState,
+} from "../domain/mappingReview";
 import { fmtDate } from "../lib/format";
 
 export function DocumentDetailPage() {
@@ -213,6 +219,14 @@ function MappingSection({
   );
 }
 
+/** 검토 결과별 배지 스타일. 반려는 확정(초록)과 **반드시** 달라야 한다 — 10차 리뷰가 잡은 결함이
+    정확히 반려를 초록 "확정됨"으로 그리던 것이다. */
+const REVIEW_STATE_CLASS: Record<MappingReviewState, string> = {
+  pending: "badge status-open",
+  confirmed: "badge status-approved",
+  rejected: "badge status-rejected",
+};
+
 function MappingRow({
   mapping: m,
   canConfirm,
@@ -227,19 +241,25 @@ function MappingRow({
   reopened: boolean;
 }) {
   const extra = (m.evidence.extra ?? {}) as { title_similarity?: number; matched_rules?: string[] };
+  // needs_review/reviewed_by 만으로 확정을 판별하면 반려를 확정으로 읽는다(ADR 0007 §4-2 규칙 6 ⑥) —
+  // 판정은 domain/mappingReview 한 곳이 소유한다.
+  const reviewState = mappingReviewState(m);
+  const rejection = mappingRejection(m);
   return (
     <li className="card col gap" data-testid="mapping-row" data-activity-id={m.activity_id}>
       <div className="row gap">
         <strong>Activity {m.activity_id}</strong>
         <ConfidenceBadge confidence={m.confidence} evidence={m.evidence} />
-        {m.needs_review ? <span className="badge status-open">검토 대기</span> : <span className="badge status-approved">확정됨</span>}
+        <span className={REVIEW_STATE_CLASS[reviewState]} data-testid="mapping-review-state">
+          {MAPPING_REVIEW_STATE_LABELS[reviewState]}
+        </span>
         {reopened && (
           <span className="badge" style={{ background: "#fde68a" }} data-testid="reopened-badge">
             재확인 필요
           </span>
         )}
         <div className="spacer" />
-        {canConfirm && m.needs_review && (
+        {canConfirm && reviewState === "pending" && (
           <button type="button" className="primary" onClick={onConfirm}>
             확정
           </button>
@@ -255,7 +275,17 @@ function MappingRow({
         {typeof extra.title_similarity === "number" && <span>제목 유사도: {Math.round(extra.title_similarity * 100)}% · </span>}
         {extra.matched_rules && extra.matched_rules.length > 0 && <span>일치 규칙: {extra.matched_rules.join(", ")}</span>}
       </div>
-      {!m.needs_review && m.reviewed_by && <div className="muted small">확정: {m.reviewed_by}</div>}
+      {reviewState === "confirmed" && m.reviewed_by && <div className="muted small">확정: {m.reviewed_by}</div>}
+      {reviewState === "rejected" && (
+        /* 반려는 (activity_id, doc_id) 쌍에 대해 영구하다(ADR 0007 §4-2 규칙 6 ⑥) — 재계산이 이 후보를
+           다시 만들지 않고, 도면 승인 근거로도 쓰이지 않는다. 사유·반려자를 반드시 함께 보여준다:
+           이 화면이 매핑 반려를 볼 수 있는 유일한 자리다. */
+        <div className="muted small" data-testid="mapping-rejection">
+          반려: {rejection.rejectedBy ?? "-"}
+          {rejection.note ? ` — ${rejection.note}` : ""}
+          <br />이 매핑은 도면 승인 근거로 쓰이지 않으며, 대장을 재업로드해도 후보로 다시 제안되지 않습니다.
+        </div>
+      )}
     </li>
   );
 }

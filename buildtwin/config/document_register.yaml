@@ -210,3 +210,8 @@ import_warnings:
   # (title_matching 임계값 미만은 흔하다)이라 신호가 아니다. document_mapper._unmapped_document_warnings
   # 참고.
   DOCUMENT_UNMAPPED: "프로젝트에 문서는 있으나 어떤 Activity 에도 매핑 후보가 하나도 없음 — 대장을 공정표보다 먼저 올렸거나(업로드 순서 역전) 아직 공정표가 없을 수 있음. 공정표 적재 후 문서 매핑이 자동으로 재생성됨"
+  # services/api/jobs.py 가 만드는 경고(공정표 적재 job). 대문자인 이유는 위 DOCUMENT_UNMAPPED 와 같은
+  # 계열(매핑 동기화 단계 발화)이라 스타일을 맞춘 것이다. 발화 조건(ADR 0007 §4-3): 공정표 적재는
+  # 성공했는데 뒤이은 문서 매핑 재동기화가 실패했을 때 — job 을 실패시키지 않고 경고로 강등한다.
+  # 문서 매핑은 공정표 적재의 부수 효과일 뿐이라, 대장 설정이 잘못됐다고 공정표를 인질로 잡지 않는다.
+  DOCUMENT_MAPPING_RESYNC_FAILED: "공정표는 정상 적재됐으나 뒤이은 문서↔Activity 매핑 재동기화가 실패함 — 공정표 자체는 사용 가능하고, 문서 매핑은 대장을 재업로드하거나 매핑 재생성을 호출하면 다시 시도됨"

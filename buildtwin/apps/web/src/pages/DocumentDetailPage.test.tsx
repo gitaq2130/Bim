@@ -238,4 +238,60 @@ describe("DocumentDetailPage", () => {
     expect(within(row).getByText("확정됨")).toBeInTheDocument();
     expect(within(row).queryByTestId("reopened-badge")).not.toBeInTheDocument();
   });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 10차 리뷰 — 반려된 매핑을 "확정됨"으로 그리던 결함. ADR 0007 §4-2 규칙 6 ⑥이
+  // reviewed_by 를 확정·반려가 공유하도록 설계했으므로, needs_review/reviewed_by 만 보는 화면은
+  // CM 이 방금 반려한 매핑을 초록 "확정됨 / 확정: 나" 로 보여준다. 서버 두 곳은 이 불변식을
+  // 지켰지만 화면은 지키지 않았고, 웹 테스트 169개가 전부 통과했다.
+  // ══════════════════════════════════════════════════════════════════════════
+  const REJECTED = {
+    ...PENDING_MAPPING,
+    needs_review: false,          // 반려도 확정과 똑같이 false 가 된다 — 이것만 보면 구분 불가
+    reviewed_by: "user-cm",       // 반려자도 같은 필드에 들어간다
+    evidence: {
+      ...PENDING_MAPPING.evidence,
+      extra: {
+        ...PENDING_MAPPING.evidence.extra,
+        mapping_review_decision: "rejected",
+        rejected_by: "user-cm",
+        rejected_at: "2026-09-03T00:00:00Z",
+        rejection_note: "다른 공종 문서로 확인됨",
+      },
+    },
+  } as ActivityDocumentMapping;
+
+  function renderRejected(role: "cm" | "client" = "cm") {
+    mockFetch((url) => {
+      if (url.includes("/api/documents/doc-aaa")) return { body: detail([REJECTED]) };
+      if (url.includes("/api/projects/p1/review-requests")) return { body: [] };
+      return mockProjectRole(role)(url);
+    });
+    renderPage();
+  }
+
+  it("반려된 매핑을 '확정됨'이 아니라 '반려됨'으로 그린다", async () => {
+    renderRejected();
+    const row = await screen.findByTestId("mapping-row");
+    expect(within(row).getByTestId("mapping-review-state")).toHaveTextContent("반려됨");
+    expect(within(row).queryByText("확정됨")).not.toBeInTheDocument();
+    // 반려자를 "확정: ..." 으로 표기하지 않는다 — 원래 결함이 정확히 이것이었다
+    expect(within(row).queryByText(/^확정: /)).not.toBeInTheDocument();
+  });
+
+  it("반려된 매핑에 반려자와 사유를 보여준다 — 매핑 반려를 볼 수 있는 유일한 화면이다", async () => {
+    renderRejected();
+    const row = await screen.findByTestId("mapping-row");
+    const rejection = within(row).getByTestId("mapping-rejection");
+    expect(rejection).toHaveTextContent("user-cm");
+    expect(rejection).toHaveTextContent("다른 공종 문서로 확인됨");
+    // 도면 승인 근거로 쓰이지 않는다는 사실을 명시해야 한다(화면의 다른 안내문과 모순되지 않도록)
+    expect(rejection).toHaveTextContent(/도면 승인 근거로 쓰이지 않으며/);
+  });
+
+  it("반려된 매핑에는 cm 이라도 확정 버튼을 띄우지 않는다 — 서버가 409 로 거절한다", async () => {
+    renderRejected("cm");
+    const row = await screen.findByTestId("mapping-row");
+    expect(within(row).queryByRole("button", { name: "확정" })).not.toBeInTheDocument();
+  });
 });

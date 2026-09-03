@@ -117,7 +117,10 @@ describe("ReviewsPage — document_mapping (ADR 0007)", () => {
     expect(within(dialog).getByText(/needs_review=False/)).toBeInTheDocument();
   });
 
-  it("document_mapping 반려 다이얼로그는 '매핑은 아직 바뀌지 않는다'고 말한다 — 승인과 같은 문구를 쓰지 않는다", async () => {
+  // 10차 리뷰: 이 테스트는 원래 "매핑 행은 아직 바뀌지 않습니다"라는 **거짓 문구를 계약으로 고정**하고
+  // 있었다. reject_document_mapping 이 매핑 행을 실제로 바꾸고 그 반려가 영구적인데도 화면은 정반대를
+  // 말했고, 이 기대값 때문에 웹 테스트 169개가 전부 통과했다. 문구가 아니라 **실제 동작**을 고정한다.
+  it("document_mapping 반려 다이얼로그는 반려가 영구적이고 되돌릴 수 없다고 경고한다", async () => {
     resetStore();
     loginAs("cm");
     mockFetch((url) => {
@@ -132,7 +135,12 @@ describe("ReviewsPage — document_mapping (ADR 0007)", () => {
     await user.click(screen.getByRole("button", { name: "반려" }));
 
     const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByText(/매핑 행은 아직 바뀌지 않습니다/)).toBeInTheDocument();
+    const text = within(dialog).getByText(/반려하면 이 문서/).textContent ?? "";
+    // 되돌릴 수 없다는 경고와, 재업로드해도 다시 제안되지 않는다는 사실이 반드시 있어야 한다.
+    expect(text).toMatch(/되돌릴 수 없/);
+    expect(text).toMatch(/다시 제안되지 않습니다/);
+    // 반대로 "아무것도 바뀌지 않는다"는 취지의 문구가 다시 들어오면 안 된다(원래 결함의 회귀 방지).
+    expect(text).not.toMatch(/아직 바뀌지 않습니다/);
   });
 
   // 과제 2: DocumentMappingCard 는 문서번호를 보여줘야 CM 이 어느 문서인지 정확히 판단할 수 있다.

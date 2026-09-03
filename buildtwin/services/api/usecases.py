@@ -41,6 +41,7 @@ from services.knowledge import RuleEngine, load_rules, persist_verdicts, record_
 from services.progress import persistence as db
 from services.progress.document_mapper import (
     close_document_mapping_review,
+    is_rejected_mapping,
     map_project_documents,
     reject_document_mapping,
 )
@@ -282,6 +283,25 @@ def generate_document_mappings(session: Session, project_id: str) -> list[Activi
     return sync.mappings
 
 
+def _reject_confirm_of_rejected_mapping(row: ActivityDocumentMappingRow) -> None:
+    """이미 반려된 매핑을 확정하려 하면 409 로 거절한다(10차 리뷰).
+
+    ADR 0007 §4-2 규칙 6 ⑥은 반려를 `(activity_id, doc_id)` 쌍에 대해 **영구**로 설계했다 —
+    `_drop_already_confirmed`가 이후 모든 재계산에서 그 후보를 버리고, `confirmed_required_documents`가
+    readiness 증거에서 제외한다. 그런데 확정 경로는 `evidence`를 그대로 복사하므로
+    `extra.mapping_review_decision="rejected"`가 남은 채 `reviewed_by`만 갈아끼워졌고, 그 결과 **200 을
+    돌려주면서 readiness 는 이 확정을 영원히 보지 못하는** 반쪽 상태가 만들어졌다(이번 사이클에서 네 번째로
+    나온 "응답은 성공인데 아무 효과가 없다").
+
+    설계대로 영구를 택해 거절한다 — 확정 시 반려 표시를 지우는 쪽(반려 취소)은 별개의 기능이고, 그것을
+    조용히 여기에 끼워 넣으면 화면에 도달 경로가 없는 API 만 생긴다(ADR §9 후속 과제로 남겼다).
+    화면에서는 확정 버튼 자체가 뜨지 않으므로(`mappingReviewState`) 이 경로로 오는 것은 API 직접 호출이다."""
+    if is_rejected_mapping(row.evidence):
+        raise Conflict(
+            f"document mapping already rejected: activity_id={row.activity_id!r} doc_id={row.doc_id!r}",
+            code="document_mapping_already_rejected")
+
+
 def _confirm_document_mapping_row(session: Session, row: ActivityDocumentMappingRow, user_id: str,
                                   note: str | None = None) -> ActivityDocumentMapping:
     """문서 매핑 확정의 공유 본체: needs_review=False, reviewed_by=user_id 로 저장하고 그 매핑의
@@ -318,6 +338,7 @@ def confirm_document_mapping(session: Session, activity_id: str, doc_id: str, us
         raise NotFound(f"document mapping not found: activity_id={activity_id!r} doc_id={doc_id!r}",
                        code="document_mapping_target_not_found")
     project_role(session, row.project_id, user, CONFIRM_ROLE)
+    _reject_confirm_of_rejected_mapping(row)
     _confirm_document_mapping_row(session, row, user.user_id, note)
     session.commit()
     session.refresh(row)
