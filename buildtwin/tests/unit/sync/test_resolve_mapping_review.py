@@ -5,36 +5,14 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select
 
-from packages.core.db import init_db, new_session, reset_engine
 from packages.core.models import EntityObjectMapping, Evidence
-from packages.core.models.orm import (
-    BimObjectRow,
-    DrawingRow,
-    EntityObjectMappingRow,
-    FileRow,
-    ProjectRow,
-    ReviewRequestRow,
-)
+from packages.core.models.orm import EntityObjectMappingRow, ReviewRequestRow
 from services.sync.persistence import open_mapping_reviews, rebuild_mappings
 from services.sync.review_queue import MappingReviewResolution, resolve_mapping_review
 
+from .conftest import make_bim_object
+
 D, P = "d1", "p1"
-
-
-@pytest.fixture
-def session():
-    reset_engine()
-    init_db("sqlite://")
-    s = new_session()
-    s.add(ProjectRow(project_id=P, name="P"))
-    s.add(FileRow(file_id="f1", project_id=P, kind="dxf", filename="a.dxf", uri="x", sha256="0", size=1))
-    s.add(DrawingRow(drawing_id=D, project_id=P, file_id="f1", level="1F", coordinate_system={"source": "dxf_local"}))
-    s.commit()
-    try:
-        yield s
-    finally:
-        s.close()
-        reset_engine()
 
 
 def _m(handle: str, gid: str, conf: float) -> EntityObjectMapping:
@@ -46,7 +24,7 @@ def _mapping_review(s, handle: str) -> ReviewRequestRow:
     """rebuild_mappings 로 kind=mapping, needs_review 인 검토요청 하나를 자연스럽게 만든다.
     candidate_global_id(G-{handle})가 실존하는 BimObjectRow 를 가리키도록 함께 만든다 — approved 경로는
     confirm_mapping_row 를 거치며, 그 함수는 이제 (project_id, global_id) 존재를 확인한다(observation 7)."""
-    s.add(BimObjectRow(project_id=P, global_id=f"G-{handle}", model_id="m1", ifc_type="IfcColumn"))
+    make_bim_object(s, P, f"G-{handle}")
     s.commit()
     r = rebuild_mappings(s, D, P, [_m(handle, f"G-{handle}", 0.3)])
     s.commit()

@@ -10,12 +10,14 @@ from sqlalchemy.orm import Session
 
 from packages.core.db import init_db, new_session, reset_engine
 from packages.core.models import BimObjectDraft, IngestResult
-from packages.core.models.orm import Base, BimObjectRow, DrawingEntityRow, DrawingRow, FileRow, ModelRow, ProjectRow
+from packages.core.models.orm import Base, BimObjectRow, DrawingEntityRow, DrawingRow, ModelRow
 from packages.core.models.state import ObjectState
 from services.ingest import persist_drawing, persist_ingest_result
 from services.ingest.dxf_parser import parse_dxf
 from services.ingest.ifc_parser import parse_ifc
 from services.ingest.persistence import PersistedModel
+
+from .conftest import make_file, make_project
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
 PROJECT = "p-test"
@@ -26,12 +28,10 @@ def session() -> Iterator[Session]:
     engine = create_engine("sqlite://", future=True)
     Base.metadata.create_all(engine)
     with Session(engine, expire_on_commit=False) as s:
-        s.add(ProjectRow(project_id=PROJECT, name="test"))
-        s.add(ProjectRow(project_id="p-other", name="other"))
+        make_project(s, PROJECT, name="test")
+        make_project(s, "p-other", name="other")
         for fid in ("f-ifc-1", "f-ifc-2", "f-dxf-1", "f-dxf-2", "f-other"):
-            s.add(FileRow(file_id=fid, project_id="p-other" if fid == "f-other" else PROJECT, kind=fid.split("-")[1],
-                          filename=f"{fid}.bin", uri=f"local://{fid}", sha256="0" * 64, size=1))
-        s.flush()
+            make_file(s, fid, "p-other" if fid == "f-other" else PROJECT, kind=fid.split("-")[1])
         yield s
 
 
@@ -179,13 +179,10 @@ def test_same_ifc_uploaded_to_two_projects_is_the_whole_point_of_adr_0005(ifc_re
         init_db("sqlite://")
         session = new_session()
         try:
-            session.add(ProjectRow(project_id="p-alpha", name="alpha"))
-            session.add(ProjectRow(project_id="p-beta", name="beta"))
-            session.add(FileRow(file_id="f-alpha", project_id="p-alpha", kind="ifc", filename="a.ifc",
-                                uri="local://f-alpha", sha256="0" * 64, size=1))
-            session.add(FileRow(file_id="f-beta", project_id="p-beta", kind="ifc", filename="b.ifc",
-                                uri="local://f-beta", sha256="0" * 64, size=1))
-            session.flush()
+            make_project(session, "p-alpha", name="alpha")
+            make_project(session, "p-beta", name="beta")
+            make_file(session, "f-alpha", "p-alpha", kind="ifc")
+            make_file(session, "f-beta", "p-beta", kind="ifc")
 
             alpha = persist_ingest_result(session, "p-alpha", "f-alpha", ifc_result)
             beta = persist_ingest_result(session, "p-beta", "f-beta", ifc_result)

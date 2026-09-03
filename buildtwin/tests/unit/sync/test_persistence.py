@@ -2,25 +2,14 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
 
 from packages.core.models import EntityObjectMapping, Evidence
-from packages.core.models.orm import Base, DrawingRow, FileRow, ProjectRow
 from services.sync.persistence import load_alignment, load_mappings, save_alignment, save_mappings
 from services.sync.transform import DrawingAlignment, alignment_to_transform
 
+from .conftest import make_bim_object
 
-@pytest.fixture
-def session():
-    eng = create_engine("sqlite://", future=True)
-    Base.metadata.create_all(eng)
-    with Session(eng) as s:
-        s.add(ProjectRow(project_id="p1", name="P"))
-        s.add(FileRow(file_id="f1", project_id="p1", kind="dxf", filename="a.dxf", uri="x", sha256="0", size=1))
-        s.add(DrawingRow(drawing_id="d1", project_id="p1", file_id="f1", level="1F", coordinate_system={"source": "dxf_local"}))
-        s.commit()
-        yield s
+# conftest.session 은 이미 Project(p1)/File(f1)/Drawing(d1) 체인을 만들어 둔다.
 
 
 def _m(handle, gid, conf, reviewed=None):
@@ -29,6 +18,10 @@ def _m(handle, gid, conf, reviewed=None):
 
 
 def test_save_and_load_mappings(session):
+    make_bim_object(session, "p1", "G1")
+    make_bim_object(session, "p1", "G2")
+    make_bim_object(session, "p1", "G9")
+    session.commit()
     assert save_mappings(session, [_m("3A", "G1", 0.9), _m("3B", "G2", 0.4)]) == 2
     session.commit()
     got = {m.entity_handle: m for m in load_mappings(session, "d1")}

@@ -53,6 +53,17 @@ CLAUDE.md §0의 MVP 5기능을 실제 동작 코드로 구현한다. 벤치마�
 ### 진행 예정
 - [ ] 실제 IFC(고창CDC)·실측 스캔으로 `tests/metrics.json` 기준 재산정 — **사용자 파일 필요**
 
+### 리뷰 3차 지적 반영 (2026-09-03)
+- [x] [progress] 교차 프로젝트 전이 차단 — 다른 프로젝트의 activity_id를 담은 작업일보는 전이 대신 사유와 함께 `skipped`
+- [x] [architect] glossary 복합 키·409 모호성 등록, ADR 0001 Consequences·Deferred 정리, ADR 0005 1단계 범위·인가 전제 명시
+- [x] [frontend] 객체별 요청에 `project_id` 전달 + 캐시 키 분리 + 409 한국어 안내
+- [x] [api] 깨진 호출 지점 수정, `ObjectNotFoundError`·매핑 `ValueError` → 404 매핑, 중복 사전 검사 제거
+- [x] [sync] 매핑 확정 시 대상 객체 존재 검증(다른 프로젝트 객체도 거부)
+- [x] [architect] SQLite 외래키 강제(`PRAGMA foreign_keys=ON`) — 개발·테스트를 운영 PostgreSQL과 동일 제약으로
+- [x] [progress] 그 결과 드러난 실제 결함 수정 — `ensure_model()`이 존재하지 않는 파일을 참조하는 모델 행 생성
+
 ### 관측된 개선 후보 (미착수)
+- **ORM에 `relationship()`이 없다.** 순수 FK 컬럼만 있어 SQLAlchemy가 한 flush 안에서 테이블 간 INSERT 순서를 보장하지 못한다. 운영 코드는 부모마다 `flush()`를 호출해 우회하고 있으나, 새 코드가 이 규칙을 모르면 외래키 위반이 난다. `relationship()` 도입은 cascade 영향 검토가 필요해 별도 사이클로 (담당: architect)
+- 프로젝트 멤버십·인가가 없다. 도입 시 `resolve_object`의 후보 조회와 명시 `project_id` 경로 양쪽에 필터 필요(ADR 0005 §3 전제)
 - Job 진행률이 SQLite에서 작업 종료 시점에만 보임(락 회피). PostgreSQL에서는 중간 진행률 노출 가능
 - `queries.latest_model`과 `ingest.persistence.latest_model` 중복(읽기 전용 헬퍼)

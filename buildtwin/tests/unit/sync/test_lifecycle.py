@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import select
 
 from packages.core.models import MAPPING_REVIEW_THRESHOLD, EntityObjectMapping, Evidence
-from packages.core.models.orm import BimObjectRow, EntityObjectMappingRow, FileRow, ProjectRow, ReviewRequestRow
+from packages.core.models.orm import EntityObjectMappingRow, ReviewRequestRow
 from services.sync.config import load_sync_config
 from services.sync.persistence import RebuildResult, load_mappings, open_mapping_reviews, rebuild_mappings
 from services.sync.review_queue import confirm_mapping_row, resolve_mapping_reviews
@@ -35,6 +35,9 @@ def _assert_system_never_resolves(s):
 
 def test_rebuild_creates_reviews_and_supersedes_previous(session):
     s = session
+    for gid in ("G1", "G2", "G3", "G9"):
+        make_bim_object(s, P, gid)
+    s.commit()
     r1 = rebuild_mappings(s, D, P, [_m("A", "G1", 0.9), _m("B", "G2", 0.5), _m("C", "G3", 0.4)])
     s.commit()
     assert isinstance(r1, RebuildResult)
@@ -60,8 +63,10 @@ def test_rebuild_creates_reviews_and_supersedes_previous(session):
 
 def test_rebuild_keeps_confirmed_rows_and_manual_mappings(session):
     s = session
-    s.add(BimObjectRow(project_id=P, global_id="G2", model_id="m1", ifc_type="IfcColumn"))
-    s.add(BimObjectRow(project_id=P, global_id="G7", model_id="m1", ifc_type="IfcBeam"))
+    make_bim_object(s, P, "G1")
+    make_bim_object(s, P, "G2")
+    make_bim_object(s, P, "G5")
+    make_bim_object(s, P, "G7", ifc_type="IfcBeam")
     s.commit()
     rebuild_mappings(s, D, P, [_m("A", "G1", 0.9), _m("B", "G2", 0.5)])
     s.commit()
@@ -115,10 +120,8 @@ def test_confirm_mapping_row_rejects_object_from_other_project(session):
     """ADR 0005: global_id 가 실존해도 이 도면의 project_id 소속이 아니면 거부한다."""
     s = session
     P2, D2 = "p2", "d2"
-    s.add(ProjectRow(project_id=P2, name="P2"))
-    s.add(FileRow(file_id="f2", project_id=P2, kind="dxf", filename="b.dxf", uri="y", sha256="1", size=1))
-    s.add(DrawingRow(drawing_id=D2, project_id=P2, file_id="f2", level="1F", coordinate_system={"source": "dxf_local"}))
-    s.add(BimObjectRow(project_id=P2, global_id="G-OTHER", model_id="m2", ifc_type="IfcColumn"))
+    make_drawing(s, D2, P2, "f2")
+    make_bim_object(s, P2, "G-OTHER", model_id="m2")
     s.commit()
 
     with pytest.raises(ValueError, match="object not found"):
@@ -133,7 +136,7 @@ def test_confirm_mapping_row_rejects_object_from_other_project(session):
 
 def test_confirm_mapping_row_happy_path_existing_object(session):
     s = session
-    s.add(BimObjectRow(project_id=P, global_id="G-REAL", model_id="m1", ifc_type="IfcColumn"))
+    make_bim_object(s, P, "G-REAL")
     s.commit()
     confirmed = confirm_mapping_row(s, D, "A", "G-REAL", user_id="cm-01")
     s.commit()
@@ -144,6 +147,9 @@ def test_confirm_mapping_row_happy_path_existing_object(session):
 
 def test_resolve_mapping_reviews_is_human_only(session):
     s = session
+    make_bim_object(s, P, "G1")
+    make_bim_object(s, P, "G2")
+    s.commit()
     rebuild_mappings(s, D, P, [_m("A", "G1", 0.4), _m("B", "G2", 0.4)])
     s.commit()
     closed = resolve_mapping_reviews(s, D, "A", "rejected", user_id="cm-02", note="wrong object")
@@ -186,12 +192,10 @@ def test_mappings_are_project_scoped(session):
     A 의 rebuild_mappings 는 B 의 행을 절대 건드리지 않는다."""
     s = session
     P2, D2, SHARED = "p2", "d2", "SHARED-1"
-    s.add(ProjectRow(project_id=P2, name="P2"))
-    s.add(FileRow(file_id="f2", project_id=P2, kind="dxf", filename="b.dxf", uri="y", sha256="1", size=1))
-    s.add(DrawingRow(drawing_id=D2, project_id=P2, file_id="f2", level="1F", coordinate_system={"source": "dxf_local"}))
+    make_drawing(s, D2, P2, "f2")
     # 두 프로젝트가 같은 global_id 를 갖는 서로 다른 객체를 소유(ADR 0005 이전이면 PK 충돌)
-    s.add(BimObjectRow(project_id=P, global_id=SHARED, model_id="m1", ifc_type="IfcColumn"))
-    s.add(BimObjectRow(project_id=P2, global_id=SHARED, model_id="m2", ifc_type="IfcColumn"))
+    make_bim_object(s, P, SHARED)
+    make_bim_object(s, P2, SHARED, model_id="m2")
     s.commit()
 
     rebuild_mappings(s, D, P, [_m("A", SHARED, 0.9)])
