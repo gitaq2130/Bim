@@ -213,6 +213,10 @@ def surrogate_matrix(client, auth, user_ids):
             "scan_id": scan_id,
             "review_request_id": review_request_id,
             "activity_id": "A100",   # tests/fixtures/schedule.csv 가 만드는 고정 activity_id (test_05 참고)
+            # ADR 0008 §5: readiness 는 `project_id` 를 쿼리 **필수**로 받는다(409 방식이 아니다).
+            # 이 매트릭스는 "비멤버가 A 의 실재 행에 접근하면 404 project_not_found" 를 보는 것이므로
+            # 프로젝트 A 를 명시해 넘긴다 — 빠뜨리면 422 가 나와 이 방어를 검증하지 못한다.
+            "project_a": project_a,
         },
         "global_id": global_id,
         "project_a": project_a,
@@ -247,7 +251,7 @@ _SURROGATE_ROUTES: list[tuple[str, str, dict | None]] = [
     ("POST", "/api/scans/{scan_id}/alignment", {}),
     ("GET", "/api/review-requests/{review_request_id}", None),
     ("POST", "/api/review-requests/{review_request_id}/resolve", {"decision": "approved"}),
-    ("GET", "/api/activities/{activity_id}/readiness", None),
+    ("GET", "/api/activities/{activity_id}/readiness?project_id={project_a}", None),
 ]
 
 

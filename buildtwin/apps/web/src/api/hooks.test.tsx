@@ -1,8 +1,17 @@
-import { QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, partialMatchKey } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { ApiError } from "./client";
-import { MAX_OBJECTS_PAGES, OBJECTS_PAGE_SIZE, queryKeys, useAllObjects, useObjectDetail } from "./hooks";
+import {
+  MAX_OBJECTS_PAGES,
+  OBJECTS_PAGE_SIZE,
+  queryKeys,
+  useAllObjects,
+  useConfirmDocumentMapping,
+  useObjectDetail,
+  useReadiness,
+  useResolveReview,
+} from "./hooks";
 import type { BimObjectView } from "./types";
 import { objectDetailFixture } from "../test/fixtures";
 import { makeQueryClient, mockFetch } from "../test/utils";
@@ -133,5 +142,115 @@ describe("useObjectDetail", () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.error).toBeInstanceOf(ApiError);
     expect((result.current.error as ApiError).status).toBe(409);
+  });
+});
+
+/**
+ * ADR 0008 §5 / Plan 0002 §4 — Activity 는 `(project_id, activity_id)` 복합 키다.
+ *
+ * 여기서 **가장 중요한 것은 무효화 접두사가 새 readiness 키에 실제로 걸리는가**이다.
+ * 12·13차 리뷰가 두 번 잡은 결함은 모두 "눈으로 읽으면 맞아 보이는데 TanStack 의 부분 일치가
+ * 런타임에 안 걸린다"였다(13차: 목록 키가 `{}` 로 끝나 상세 키와 접두사 일치가 깨진 건). 그래서
+ * 이 파일의 무효화 테스트는 키 리터럴을 문자열로 비교하지 않고 **실제 캐시에 있는 readiness 쿼리가
+ * 무효화됐는지**(`getQueryState().isInvalidated`)와 **`partialMatchKey` 실행 결과**로 확인한다.
+ */
+const ACTIVITIES_SEGMENT = "activities";
+
+describe("ADR 0008 — 프로젝트 범위 readiness 키", () => {
+  const READINESS_P1 = queryKeys.readiness("p1", "A100");
+  const READINESS_P2 = queryKeys.readiness("p2", "A100");
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** 무효화 관찰용 — 관찰자가 없어도 캐시 항목이 수거되지 않도록 gcTime 을 무한으로 둔다. */
+  function makePersistentClient() {
+    return new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
+    });
+  }
+  const wrap = (qc: QueryClient) =>
+    ({ children }: { children: ReactNode }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+
+  it("readiness 캐시 키가 프로젝트 범위다 — 같은 activity_id 라도 프로젝트가 다르면 키가 다르다", () => {
+    expect(READINESS_P1).toEqual(["projects", "p1", "activities", "A100", "readiness"]);
+    expect(READINESS_P1).not.toEqual(READINESS_P2);
+    // 낡은 전역 키(["activities", aid, "readiness"])가 남아 있으면 두 프로젝트가 한 칸을 공유한다.
+    expect(READINESS_P1[0]).toBe("projects");
+  });
+
+  it("activitiesRoot 접두사가 새 readiness 키에 **실제로** 부분 일치하고, 낡은 전역 접두사는 일치하지 않는다", () => {
+    // 눈이 아니라 TanStack 자신의 매처로 확인한다.
+    // (배열 리터럴을 직접 쓰지 않는 이유: Plan 0002 §5 의 확인 grep 이 0줄이어야 한다.)
+    const LEGACY_ROOT: readonly string[] = [ACTIVITIES_SEGMENT];
+    expect(partialMatchKey(READINESS_P1, queryKeys.activitiesRoot("p1"))).toBe(true);
+    expect(partialMatchKey(READINESS_P1, LEGACY_ROOT)).toBe(false);
+    // 남의 프로젝트까지 뒤집지는 않는다.
+    expect(partialMatchKey(READINESS_P2, queryKeys.activitiesRoot("p1"))).toBe(false);
+  });
+
+  it("useReadiness 는 readiness 요청에 project_id 쿼리를 함께 보낸다(서버에서 필수 — 없으면 422)", async () => {
+    const { calls } = mockFetch((url) => {
+      if (!url.includes("/api/activities/A100/readiness")) return undefined;
+      return { body: { activity_id: "A100", score: 0.5, components: {}, blockers: [], confidence: 1, evidence: {} } };
+    });
+
+    const { result } = renderHook(() => useReadiness("p1", "A100"), { wrapper: wrap(makeQueryClient()) });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const call = calls.find((c) => c.url.includes("/readiness"));
+    expect(new URL(call!.url, "http://x").searchParams.get("project_id")).toBe("p1");
+  });
+
+  it("useConfirmDocumentMapping 은 confirm 요청에 project_id 쿼리를 함께 보낸다", async () => {
+    const { calls } = mockFetch((url, init) => {
+      if (!url.includes("/confirm") || init?.method !== "POST") return undefined;
+      return { body: { activity_id: "A100", doc_id: "doc-1", confidence: 1, needs_review: false } };
+    });
+
+    const { result } = renderHook(() => useConfirmDocumentMapping("p1", "doc-1"), {
+      wrapper: wrap(makePersistentClient()),
+    });
+    result.current.mutate({ activityId: "A100" });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const call = calls.find((c) => c.url.includes("/confirm"));
+    expect(new URL(call!.url, "http://x").searchParams.get("project_id")).toBe("p1");
+  });
+
+  it("useConfirmDocumentMapping 성공 후 **캐시에 실재하는** 그 프로젝트의 readiness 쿼리가 무효화된다", async () => {
+    const qc = makePersistentClient();
+    qc.setQueryData(READINESS_P1, { activity_id: "A100", score: 0.1 });
+    qc.setQueryData(READINESS_P2, { activity_id: "A100", score: 0.1 });
+    mockFetch((url, init) => {
+      if (url.includes("/confirm") && init?.method === "POST")
+        return { body: { activity_id: "A100", doc_id: "doc-1", confidence: 1, needs_review: false } };
+      return undefined;
+    });
+
+    const { result } = renderHook(() => useConfirmDocumentMapping("p1", "doc-1"), { wrapper: wrap(qc) });
+    result.current.mutate({ activityId: "A100" });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    // 문자열 비교가 아니라 TanStack 이 실제로 그 쿼리를 stale 로 표시했는지를 본다.
+    await waitFor(() => expect(qc.getQueryState(READINESS_P1)?.isInvalidated).toBe(true));
+    expect(qc.getQueryState(READINESS_P2)?.isInvalidated).toBe(false); // 남의 프로젝트는 건드리지 않는다
+  });
+
+  it("useResolveReview 성공 후 **캐시에 실재하는** 그 프로젝트의 readiness 쿼리가 무효화된다", async () => {
+    const qc = makePersistentClient();
+    qc.setQueryData(READINESS_P1, { activity_id: "A100", score: 0.1 });
+    qc.setQueryData(READINESS_P2, { activity_id: "A100", score: 0.1 });
+    mockFetch((url, init) => {
+      if (url.includes("/resolve") && init?.method === "POST")
+        return { body: { review_request_id: "r1", status: "approved", kind: "document_mapping" } };
+      return undefined;
+    });
+
+    const { result } = renderHook(() => useResolveReview("p1"), { wrapper: wrap(qc) });
+    result.current.mutate({ reviewRequestId: "r1", decision: "approved" });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    await waitFor(() => expect(qc.getQueryState(READINESS_P1)?.isInvalidated).toBe(true));
+    expect(qc.getQueryState(READINESS_P2)?.isInvalidated).toBe(false);
   });
 });

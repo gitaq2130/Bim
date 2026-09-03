@@ -91,7 +91,7 @@ def seeded(session, sample_objects, schedule_expected) -> dict:
     schedule = import_schedule(FIXTURES / "schedule.csv", PROJECT_ID)
     db.save_schedule(session, schedule)
     mappings = map_activities_to_objects(schedule, sample_objects)
-    db.save_mappings(session, mappings)
+    db.save_mappings(session, PROJECT_ID, mappings)
     session.commit()
     return {"schedule": schedule, "mappings": mappings, "expected": schedule_expected["activity_object_mapping"],
             "project_id": PROJECT_ID, "model_id": MODEL_ID}

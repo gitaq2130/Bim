@@ -49,7 +49,7 @@ class ActivityProgress:
 
 
 def activity_progress(session: Session, project_id: str, activity_id: str, row: ActivityRow | None = None) -> ActivityProgress:
-    row = row or db.load_activity(session, activity_id)
+    row = row or db.load_activity(session, project_id, activity_id)
     pct = float(row.percent_complete or 0.0) if row is not None else 0.0
     gids = db.mapped_global_ids(session, project_id, activity_id)
     states = db.object_states(session, project_id, gids)
@@ -74,7 +74,7 @@ class ComponentResult:
 
 
 def predecessor_completion(session: Session, project_id: str, activity_id: str) -> tuple[ComponentResult, float, list[ActivityProgress]]:
-    preds = db.predecessors_of(session, activity_id)
+    preds = db.predecessors_of(session, project_id, activity_id)   # ADR 0008 규칙 3: 프로젝트 필터가 여기 걸린다
     if not preds:
         return ComponentResult(1.0, note="no predecessors"), 1.0, []
     progress = [activity_progress(session, project_id, p.predecessor_id) for p in preds]
@@ -216,16 +216,21 @@ def _severity(value: float, cfg: dict[str, float]) -> str:
     return "low"
 
 
-def compute_readiness(session: Session, activity_id: str, weights: dict[str, float] | None = None) -> ReadinessScore:
-    """시그니처는 그대로. project_id 는 ActivityRow 에서 유도한다(ADR 0005 규칙 1)."""
+def compute_readiness(session: Session, project_id: str, activity_id: str,
+                      weights: dict[str, float] | None = None) -> ReadinessScore:
+    """ADR 0008 규칙 2: `project_id` 는 필수 위치 인자다.
+
+    예전에는 `ActivityRow` 에서 유도했지만(규칙 1), `activity_id` 단독으로는 Activity 를 식별할 수 없다 —
+    같은 코드(`A100`)를 쓰는 프로젝트가 여럿이면 어느 프로젝트의 점수인지가 조회 자체에 달려 있었다.
+    `ReadinessScore` 계약은 바꾸지 않는다(ADR 0008 Consequences).
+    """
     cfg = load_readiness_config()
     weights = dict(weights or cfg["weights"])
     defaults = cfg["component_defaults"]
     severity_cfg = cfg["blocker_severity"]
-    row = db.load_activity(session, activity_id)
+    row = db.load_activity(session, project_id, activity_id)
     if row is None:
-        raise LookupError(f"activity not found: {activity_id}")
-    project_id = row.project_id
+        raise LookupError(f"activity not found: {activity_id} in project {project_id}")
     resources = dict(row.resources or {})
     own = activity_progress(session, project_id, activity_id, row)
 

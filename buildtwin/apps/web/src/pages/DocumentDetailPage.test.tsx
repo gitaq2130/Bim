@@ -5,6 +5,8 @@ import { Route, Routes } from "react-router-dom";
 import type { ActivityDocumentMapping, Document, DocumentDetail } from "../api/types";
 import { loginAs, mockFetch, renderWithProviders, resetStore } from "../test/utils";
 import { DocumentDetailPage } from "./DocumentDetailPage";
+import { partialMatchKey } from "@tanstack/react-query";
+import { queryKeys } from "../api/hooks";
 
 const DOC: Document = {
   project_id: "p1",
@@ -402,7 +404,14 @@ describe("DocumentDetailPage", () => {
     const keys = () => spy.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey));
     await waitFor(() => expect(keys()).toContain(JSON.stringify(["projects", "p1", "weekly-summary"])));
     expect(keys()).toContain(JSON.stringify(["projects", "p1", "startable"]));
-    expect(keys()).toContain(JSON.stringify(["activities"]));
+    // ADR 0008: 새 readiness 키는 ["projects", pid, "activities", aid, "readiness"] 다.
+    // 키 리터럴을 문자열로 비교하면 "눈으로는 맞아 보이는데 런타임 부분 일치가 안 걸리는" 결함
+    // (12·13차 리뷰)을 그대로 통과시킨다. TanStack 자신의 매처로 **실행해서** 확인한다.
+    const readinessKey = queryKeys.readiness("p1", "A100");
+    const invalidated = spy.mock.calls
+      .map((c) => c[0]?.queryKey)
+      .filter((k): k is readonly unknown[] => Array.isArray(k));
+    expect(invalidated.some((k) => partialMatchKey(readinessKey, k))).toBe(true);
     spy.mockRestore();
   });
 });

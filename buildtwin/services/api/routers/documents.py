@@ -66,9 +66,14 @@ def generate_document_mappings(project_id: str, session: Session = Depends(get_s
 
 
 @router.post("/documents/mappings/{activity_id}/{doc_id}/confirm", response_model=ActivityDocumentMapping)
-def confirm_document_mapping(activity_id: str, doc_id: str, body: ConfirmDocumentMappingRequest | None = None,
+def confirm_document_mapping(activity_id: str, doc_id: str, project_id: str = Query(...),
+                             body: ConfirmDocumentMappingRequest | None = None,
                              session: Session = Depends(get_session),
                              user: CurrentUser = Depends(get_current_user)) -> ActivityDocumentMapping:
     """매핑 확정(needs_review=False, reviewed_by 기록 — cm 만, ADR 0007 §4 규칙 5·§7). surrogate id 라우트
-    (ADR 0006 규칙 6): 매핑 행을 먼저 읽어 그 project_id 로 인가한다(usecases.confirm_document_mapping)."""
-    return usecases.confirm_document_mapping(session, activity_id, doc_id, user, body.note if body else None)
+    (ADR 0008 §5): 매핑 PK 가 `(project_id, activity_id, doc_id)` 복합키이고 `activity_id` 는 공정표 파일에서
+    오는 값이라 프로젝트끼리 겹치는 것이 기본값이다 — `project_id` 를 쿼리로 **필수**로 받는다(누락은 422).
+    인가는 그 `project_id` 로 **먼저** 한다(비멤버 404 `project_not_found`, cm 아니면 403 `forbidden_role`
+    — ADR 0006 규칙 2·6). 본체는 usecases.confirm_document_mapping."""
+    return usecases.confirm_document_mapping(session, project_id, activity_id, doc_id, user,
+                                             body.note if body else None)

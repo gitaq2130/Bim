@@ -12,7 +12,7 @@
 
 | 메서드 | 경로 | 요약 | 파라미터 | 요청 본문 | 응답 |
 |---|---|---|---|---|---|
-| GET | `/api/activities/{activity_id}/readiness` | Activity Readiness | activity_id*(path) | - | ReadinessScore |
+| GET | `/api/activities/{activity_id}/readiness` | Activity Readiness | activity_id*(path), project_id*(query) | - | ReadinessScore |
 | GET | `/api/projects/{project_id}/activities` | List Activities | project_id*(path) | - | ActivityView[] |
 | GET | `/api/projects/{project_id}/startable` | Project Startable | project_id*(path), threshold(query) | - | StartableSet |
 | GET | `/api/projects/{project_id}/weekly-summary` | Weekly Summary | project_id*(path) | - | WeeklySummary |
@@ -36,7 +36,7 @@
 
 | 메서드 | 경로 | 요약 | 파라미터 | 요청 본문 | 응답 |
 |---|---|---|---|---|---|
-| POST | `/api/documents/mappings/{activity_id}/{doc_id}/confirm` | Confirm Document Mapping | activity_id*(path), doc_id*(path) | json: ConfirmDocumentMappingRequest | null | ActivityDocumentMapping |
+| POST | `/api/documents/mappings/{activity_id}/{doc_id}/confirm` | Confirm Document Mapping | activity_id*(path), doc_id*(path), project_id*(query) | json: ConfirmDocumentMappingRequest | null | ActivityDocumentMapping |
 | GET | `/api/documents/{doc_id}` | Get Document | doc_id*(path), project_id*(query) | - | DocumentDetail |
 | GET | `/api/projects/{project_id}/documents` | List Documents | project_id*(path), doc_type(query), approval_status(query), include_orphaned(query), page(query), page_size(query), size(query) | - | DocumentList |
 | POST | `/api/projects/{project_id}/documents/mappings` | Generate Document Mappings | project_id*(path) | - | ActivityDocumentMapping[] |

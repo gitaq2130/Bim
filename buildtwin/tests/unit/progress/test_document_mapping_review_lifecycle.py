@@ -67,7 +67,7 @@ def _confirm(session, project_id: str, activity_id: str, doc_id: str, mapping: A
     그대로 재현한다 — evidence 보존, reviewed_by 만 얹는다(ADR 0007 §4 규칙 7)."""
     confirmed = ActivityDocumentMapping(activity_id=activity_id, doc_id=doc_id, confidence=mapping.confidence,
                                         evidence=mapping.evidence, reviewed_by=reviewed_by)
-    db.save_document_mapping(session, confirmed)
+    db.save_document_mapping(session, project_id, confirmed)
     closed = close_document_mapping_review(session, project_id, activity_id, doc_id, reviewed_by)
     session.commit()
     return closed
@@ -172,7 +172,7 @@ def test_confirmed_mapping_survives_rerun_and_its_closed_review_stays_closed(ses
     review_id = review.review_request_id
 
     _confirm(session, PROJECT_ID, m.activity_id, m.doc_id, m)
-    row_after_confirm = session.get(ActivityDocumentMappingRow, (m.activity_id, m.doc_id))
+    row_after_confirm = session.get(ActivityDocumentMappingRow, (PROJECT_ID, m.activity_id, m.doc_id))
     assert row_after_confirm.needs_review is False
     assert row_after_confirm.reviewed_by == CM_USER
 
@@ -181,7 +181,7 @@ def test_confirmed_mapping_survives_rerun_and_its_closed_review_stays_closed(ses
     result2 = map_project_documents(session, PROJECT_ID)
     session.commit()
 
-    row_after_rerun = session.get(ActivityDocumentMappingRow, (m.activity_id, m.doc_id))
+    row_after_rerun = session.get(ActivityDocumentMappingRow, (PROJECT_ID, m.activity_id, m.doc_id))
     assert row_after_rerun.needs_review is False, "재실행이 CM 확정을 조용히 미확정으로 되돌렸다"
     assert row_after_rerun.reviewed_by == CM_USER, "재실행이 reviewed_by 를 지웠다"
 
@@ -235,7 +235,7 @@ def test_rejection_pinned_to_doc_id_survives_recompute_but_not_a_renamed_title(s
     # 여기서는 document_mapper 자체의 계약(재계산이 반려를 되돌리지 않는다)만 본다.
     reject_document_mapping(session, PROJECT_ID, "A-RENAME", "doc-title-v1", CM_USER, note="관련 없는 문서")
     session.commit()
-    row_v1 = session.get(ActivityDocumentMappingRow, ("A-RENAME", "doc-title-v1"))
+    row_v1 = session.get(ActivityDocumentMappingRow, (PROJECT_ID, "A-RENAME", "doc-title-v1"))
     assert row_v1.needs_review is False and row_v1.reviewed_by == CM_USER
 
     # "매주 재업로드"를 두 번 흉내내도 반려된 쌍은 되살아나지 않는다(과제 2-2 와 같은 불변식): 매핑은
@@ -253,7 +253,7 @@ def test_rejection_pinned_to_doc_id_survives_recompute_but_not_a_renamed_title(s
     result2 = map_project_documents(session, PROJECT_ID)
     session.commit()
 
-    row_v2 = session.get(ActivityDocumentMappingRow, ("A-RENAME", "doc-title-v2"))
+    row_v2 = session.get(ActivityDocumentMappingRow, (PROJECT_ID, "A-RENAME", "doc-title-v2"))
     assert row_v2 is not None
     assert row_v2.needs_review is True and row_v2.reviewed_by is None   # 반려 이력이 새 doc_id 로 전혀 새지 않는다
     assert ("A-RENAME", "doc-title-v2") in {(m.activity_id, m.doc_id) for m in result2.mappings}
@@ -261,5 +261,5 @@ def test_rejection_pinned_to_doc_id_survives_recompute_but_not_a_renamed_title(s
     assert new_review is not None and new_review.status == "open"   # 새 후보의 검토요청이 정상 생성된다
 
     # 옛 doc_id 쪽 반려 표시는 그대로 남아 있다(감사 이력 보존, 새 doc_id 처리가 옛 행을 건드리지 않는다)
-    row_v1_after = session.get(ActivityDocumentMappingRow, ("A-RENAME", "doc-title-v1"))
+    row_v1_after = session.get(ActivityDocumentMappingRow, (PROJECT_ID, "A-RENAME", "doc-title-v1"))
     assert row_v1_after.evidence["extra"]["mapping_review_decision"] == "rejected"

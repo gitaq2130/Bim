@@ -328,7 +328,8 @@ def _confirm_document_mapping_row(session: Session, row: ActivityDocumentMapping
     evidence = before.evidence.model_copy(update={"note": note or before.evidence.note})
     new = ActivityDocumentMapping(activity_id=activity_id, doc_id=doc_id, confidence=before.confidence,
                                   evidence=evidence, reviewed_by=user_id)
-    db.save_document_mapping(session, new)
+    # ADR 0008 규칙 1: project_id 는 부모(확정 대상 매핑 행)에서 유도한다 — 호출자가 주입하지 않는다.
+    db.save_document_mapping(session, row.project_id, new)
     # 확정되면 그 매핑의 검토요청을 닫는다. 해소 로직은 services/progress 소유이고 여기서는 호출만 한다
     # (CLAUDE.md §3 규칙 11, ADR 0007 §4 규칙 6).
     close_document_mapping_review(session, row.project_id, activity_id, doc_id, user_id, note=note)
@@ -337,18 +338,23 @@ def _confirm_document_mapping_row(session: Session, row: ActivityDocumentMapping
     return new
 
 
-def confirm_document_mapping(session: Session, activity_id: str, doc_id: str, user: CurrentUser,
+def confirm_document_mapping(session: Session, project_id: str, activity_id: str, doc_id: str, user: CurrentUser,
                              note: str | None = None) -> ActivityDocumentMapping:
     """문서 매핑 확정: needs_review=False, reviewed_by=user_id(ADR 0007 §4 규칙 5 — 확정은 사람의 행위이므로
-    누가 했는지 반드시 기록한다). surrogate id 라우트(ADR 0006 규칙 6): 매핑 행(activity_id, doc_id)을
-    먼저 읽어 그 project_id 로 cm 인가를 검사한다. 대상 매핑이 없으면 404 document_mapping_target_not_found
-    (ADR 0007 §8 규칙 5) — 매핑은 반드시 먼저 generate_document_mappings 로 제안돼 있어야 확정할 수 있다.
+    누가 했는지 반드시 기록한다). surrogate id 라우트(ADR 0008 §5): `activity_id` 는 공정표 파일에서 오는
+    값이라 프로젝트끼리 겹치는 것이 기본값이고 매핑 PK 도 `(project_id, activity_id, doc_id)` 복합키다.
+    그래서 `project_id` 를 **필수**로 받고, **멤버십·역할을 먼저 검사한 뒤**(비멤버 404 `project_not_found`,
+    cm 아니면 403 `forbidden_role` — ADR 0006 규칙 2·6) 3-튜플로 행을 읽는다. 순서가 계약의 일부다 —
+    행을 먼저 읽으면 비멤버에게 매핑의 존재 여부를 흘린다. 대상 매핑이 없으면 404
+    document_mapping_target_not_found(ADR 0007 §8 규칙 5) — 매핑은 반드시 먼저 generate_document_mappings 로
+    제안돼 있어야 확정할 수 있다.
     본체는 `_confirm_document_mapping_row` — `resolve_review`(검토 큐 승인)와 공유한다(과제 1)."""
-    row = session.get(ActivityDocumentMappingRow, (activity_id, doc_id))
+    project_role(session, project_id, user, CONFIRM_ROLE)
+    row = session.get(ActivityDocumentMappingRow, (project_id, activity_id, doc_id))
     if row is None:
-        raise NotFound(f"document mapping not found: activity_id={activity_id!r} doc_id={doc_id!r}",
+        raise NotFound(f"document mapping not found in project {project_id}: "
+                       f"activity_id={activity_id!r} doc_id={doc_id!r}",
                        code="document_mapping_target_not_found")
-    project_role(session, row.project_id, user, CONFIRM_ROLE)
     _confirm_document_mapping_row(session, row, user.user_id, note)
     session.commit()
     session.refresh(row)
@@ -482,7 +488,8 @@ def resolve_review(session: Session, review_request_id: str, decision: str, note
             raise ServerError(f"review request {review_request_id}: malformed document_mapping "
                               f"conflicting_sources (missing doc_id) or activity_id: {row.conflicting_sources!r}",
                               code="mapping_review_data_corrupt")
-        mapping_row = session.get(ActivityDocumentMappingRow, (row.activity_id, str(doc_id)))
+        # ADR 0008: 매핑 PK 는 (project_id, activity_id, doc_id). 검토요청 행이 자신의 project_id 를 갖고 있다.
+        mapping_row = session.get(ActivityDocumentMappingRow, (row.project_id, row.activity_id, str(doc_id)))
         if mapping_row is None:
             session.rollback()
             raise NotFound(f"review request {review_request_id}: document mapping not found: "
@@ -526,7 +533,7 @@ def weekly_summary(session: Session, project_id: str) -> WeeklySummary:
     names = {a.activity_id: a.name for a in queries.project_activities(session, project_id)}
     startable: list[StartableActivityView] = []
     for aid in startable_set.startable:
-        score = compute_readiness(session, aid)
+        score = compute_readiness(session, project_id, aid)
         startable.append(StartableActivityView(activity_id=aid, name=names.get(aid), readiness=score.score,
                                                confidence=score.confidence, evidence=score.evidence, blockers=score.blockers))
     return WeeklySummary(
@@ -563,10 +570,10 @@ def evaluate_rules(session: Session, project_id: str, global_id: str, persist: b
     activity: dict[str, Any] | None = None
     readiness = None
     if logic.get("activity_ids"):
-        arow = db.load_activity(session, logic["activity_ids"][0])
+        arow = db.load_activity(session, project_id, logic["activity_ids"][0])
         if arow is not None:
             activity = db.activity_row_to_model(arow).model_dump(mode="json")
-            readiness = compute_readiness(session, arow.activity_id)
+            readiness = compute_readiness(session, project_id, arow.activity_id)
     context = {"scan": scan, "object": queries.object_summary(row), "activity": activity, "readiness": readiness,
                "report": item.model_dump(mode="json") if item else None, "logic": logic}
     engine = _rule_engine()

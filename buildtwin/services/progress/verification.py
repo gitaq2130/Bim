@@ -100,7 +100,7 @@ def build_logic_context(session: Session, project_id: str, global_id: str, quant
     total_in, total_out, count = db.material_totals(session, project_id, activity_ids, [global_id])
     required = None
     for a in activity_ids:
-        row = db.load_activity(session, a)
+        row = db.load_activity(session, project_id, a)   # ADR 0008 규칙 2
         if row is not None and (row.resources or {}).get("material_required"):
             required = float(row.resources["material_required"])
             break
@@ -125,7 +125,7 @@ def build_logic_context(session: Session, project_id: str, global_id: str, quant
         inspection_passed = None
     today = today or datetime.now(UTC).date()
     starts = [date.fromisoformat(r.planned_start) for a in activity_ids
-              if (r := db.load_activity(session, a)) is not None and r.planned_start]
+              if (r := db.load_activity(session, project_id, a)) is not None and r.planned_start]   # ADR 0008 규칙 2
     days_until_start = (min(starts) - today).days if starts else None
 
     doc_cfg = load_readiness_config().get("document_approval", {})

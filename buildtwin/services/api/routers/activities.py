@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from packages.core.models.progress import ReadinessScore, StartableSet
@@ -31,13 +31,20 @@ def list_activities(project_id: str, session: Session = Depends(get_session), _:
 
 
 @router.get("/activities/{activity_id}/readiness", response_model=ReadinessScore)
-def activity_readiness(activity_id: str, session: Session = Depends(get_session), user: CurrentUser = Depends(get_current_user)) -> ReadinessScore:
-    """surrogate id 라우트(ADR 0006 규칙 6, 리뷰어 관찰 항목): Activity 를 먼저 읽고 그 project_id 로 멤버십을 검사한다."""
-    row = db.load_activity(session, activity_id)
-    if row is None:
-        raise NotFound(f"activity not found: {activity_id}", code="activity_not_found")
-    project_role(session, row.project_id, user)
-    return compute_readiness(session, activity_id)
+def activity_readiness(activity_id: str, project_id: str = Query(...), session: Session = Depends(get_session),
+                       user: CurrentUser = Depends(get_current_user)) -> ReadinessScore:
+    """surrogate id 라우트(ADR 0008 §5): `activity_id` 는 공정표 파일에 적혀 오는 값(`A100`·`1.1.1`)이라 서로
+    다른 프로젝트가 같은 값을 갖는 것이 **기본값**이다. PK 가 `(project_id, activity_id)` 복합키이므로
+    `activity_id` 단독으로는 행을 특정할 수 없다(ADR 0008 규칙 2 "activity_id 단독 조회 금지").
+    그래서 `project_id` 를 쿼리로 **필수**로 받는다(누락은 FastAPI 기본 422). 객체 라우트의 409 해소 방식
+    (ADR 0005 §3)을 쓰지 않는 근거는 ADR 0008 §5.
+
+    순서가 계약의 일부다 — **멤버십 먼저, 행 조회는 그 다음**(ADR 0006 규칙 2·6). 비멤버는 Activity 존재
+    여부와 무관하게 항상 404 `project_not_found` 를 받는다(행을 먼저 읽으면 존재를 흘린다)."""
+    project_role(session, project_id, user)
+    if db.load_activity(session, project_id, activity_id) is None:
+        raise NotFound(f"activity not found in project {project_id}: {activity_id}", code="activity_not_found")
+    return compute_readiness(session, project_id, activity_id)
 
 
 @router.get("/projects/{project_id}/startable", response_model=StartableSet)

@@ -278,7 +278,8 @@ def is_rejected_mapping(evidence: dict[str, Any] | None) -> bool:
     return bool((evidence or {}).get("extra", {}).get("mapping_review_decision") == _MAPPING_REVIEW_DECISION_REJECTED)
 
 
-def _drop_already_confirmed(session: Session, mappings: Sequence[ActivityDocumentMapping]) -> list[ActivityDocumentMapping]:
+def _drop_already_confirmed(session: Session, project_id: str,
+                            mappings: Sequence[ActivityDocumentMapping]) -> list[ActivityDocumentMapping]:
     """재계산된 후보 중, 이미 사람이 판단한(`reviewed_by is not None` — 확정이든 반려든) 기존 매핑 행이
     있으면 제외한다.
 
@@ -290,10 +291,14 @@ def _drop_already_confirmed(session: Session, mappings: Sequence[ActivityDocumen
     **반려도 같은 이유로 여기서 걸러진다(10차 리뷰 후속, `reject_document_mapping` 참고).**
     `reject_document_mapping`이 반려된 행에도 `reviewed_by`를 채우므로 이 조건이 그대로 적용된다 —
     "CM 이 이미 이 (activity_id, doc_id) 쌍을 판단했다"는 확정이든 반려든 시스템 재계산이 뒤집어서는
-    안 되는 같은 종류의 사람의 결정이기 때문이다. 별도 분기를 두지 않는다."""
+    안 되는 같은 종류의 사람의 결정이기 때문이다. 별도 분기를 두지 않는다.
+
+    **`project_id` 는 필수다(ADR 0008 규칙 4 — ADR 0007 §Deferred 해소 지점).** 전역 `(activity_id, doc_id)`
+    로 읽던 시절, p1 에서 CM 이 확정·반려한 쌍이 p2 의 후보 생성을 그대로 막았다(실측: p2 의
+    `mapping_count` 가 6 대신 3). 사람의 판단은 그 프로젝트 안에서만 유효하다."""
     kept: list[ActivityDocumentMapping] = []
     for m in mappings:
-        existing = session.get(ActivityDocumentMappingRow, (m.activity_id, m.doc_id))
+        existing = session.get(ActivityDocumentMappingRow, (project_id, m.activity_id, m.doc_id))
         if existing is not None and existing.reviewed_by is not None:
             continue
         kept.append(m)
@@ -489,10 +494,11 @@ def reject_document_mapping(session: Session, project_id: str, activity_id: str,
     `(activity_id, doc_id)` 쌍에 매달려 있으므로 새 `doc_id`는 반려 표시가 전혀 없는 완전히 새 매핑
     후보로 취급된다 — 별도 코드 없이 키 설계에서 이미 그렇게 동작한다.
 
-    대상 매핑 행이 없거나 다른 프로젝트 소속이면 `LookupError`(호출자 사전조건 위반 — api 가 이미
-    존재를 확인했어야 한다, `save_document_mapping`과 같은 관례)."""
-    row = session.get(ActivityDocumentMappingRow, (activity_id, doc_id))
-    if row is None or row.project_id != project_id:
+    대상 매핑 행이 이 프로젝트에 없으면 `LookupError`(호출자 사전조건 위반 — api 가 이미 존재를
+    확인했어야 한다, `save_document_mapping`과 같은 관례). ADR 0008 이후 키 자체가
+    `(project_id, activity_id, doc_id)` 이므로 별도의 `row.project_id != project_id` 방어는 중복이라 없앴다."""
+    row = session.get(ActivityDocumentMappingRow, (project_id, activity_id, doc_id))
+    if row is None:
         raise LookupError(f"document mapping not found: activity_id={activity_id!r} doc_id={doc_id!r} "
                           f"in project {project_id!r}")
     before = Evidence(**row.evidence)
@@ -558,8 +564,8 @@ def map_project_documents(session: Session, project_id: str) -> DocumentMappingS
     documents = [db.document_row_to_model(r) for r in db.load_documents(session, project_id, include_orphaned=False)]
     activities = [db.activity_row_to_model(a) for a in db.load_activities(session, project_id)]
     computed = map_documents_to_activities(documents, activities, cfg)
-    mappings = _drop_already_confirmed(session, computed)   # 확정된 매핑은 재계산으로 덮어쓰지 않는다
-    db.save_document_mappings(session, mappings)
+    mappings = _drop_already_confirmed(session, project_id, computed)   # 확정된 매핑은 재계산으로 덮어쓰지 않는다
+    db.save_document_mappings(session, project_id, mappings)
     docs_by_id = {d.doc_id: d for d in documents}
     created = _sync_pending_document_mapping_reviews(session, project_id, mappings, docs_by_id)
     closed = _close_reviews_for_orphaned_documents(session, project_id)

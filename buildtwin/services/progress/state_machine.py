@@ -221,10 +221,14 @@ class ObjectStateMachine:
         if item.global_id:
             return [item.global_id], None
         if item.activity_id:
-            activity = db.load_activity(session, item.activity_id)
+            # ADR 0008 규칙 2: (project_id, activity_id) 로 읽는다. 남의 프로젝트 Activity 는 애초에
+            # 조회되지 않으므로 None 이 곧 "이 신고서의 프로젝트에 그 Activity 가 없다"는 뜻이고,
+            # 그 사실을 skip_reason 으로 남긴다(예전에는 행을 읽은 뒤 project_id 를 비교해 남겼다).
+            # 어느 프로젝트 소속인지는 **의도적으로 말하지 않는다** — 존재를 흘리지 않는다(ADR 0006 규칙 2 와 같은 결).
+            activity = db.load_activity(session, project_id, item.activity_id)
             if activity is None:
-                return [], None
-            if activity.project_id != project_id:
+                return [], (f"activity {item.activity_id!r} not found in report project {project_id!r}")
+            if activity.project_id != project_id:   # 복합 키상 도달 불가 — 규칙 위반을 조용히 넘기지 않는 이중 방어
                 return [], (f"activity {item.activity_id!r} belongs to project {activity.project_id!r}, "
                            f"not report project {project_id!r}")
             return db.mapped_global_ids(session, project_id, item.activity_id), None

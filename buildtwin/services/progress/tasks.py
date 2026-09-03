@@ -33,7 +33,7 @@ def import_schedule_task(job_id: str | None, path: str, project_id: str, fmt: st
             db.save_schedule(session, schedule)
             objects = [db.object_row_to_model(r) for r in db.load_objects(session, project_id)]
             mappings = map_activities_to_objects(schedule, objects)
-            db.save_mappings(session, mappings)
+            db.save_mappings(session, project_id, mappings)
             result = {"schedule_id": schedule.schedule_id, "activity_count": len(schedule.activities),
                       "relation_count": len(schedule.relations), "mapping_count": len(mappings),
                       "needs_review_count": sum(1 for m in mappings if m.needs_review), "warnings": schedule.warnings}
@@ -49,7 +49,7 @@ def import_schedule_task(job_id: str | None, path: str, project_id: str, fmt: st
 @celery_app.task(name="progress.compute_readiness")
 def compute_readiness_task(project_id: str, threshold: float | None = None) -> dict[str, Any]:
     with session_scope() as session:
-        scores = {a.activity_id: compute_readiness(session, a.activity_id).model_dump(mode="json")
+        scores = {a.activity_id: compute_readiness(session, project_id, a.activity_id).model_dump(mode="json")
                   for a in db.load_activities(session, project_id)}
         startable = compute_startable(session, project_id, threshold=threshold).model_dump(mode="json")
     return {"project_id": project_id, "readiness": scores, "startable": startable}

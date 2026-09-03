@@ -13,12 +13,16 @@ def test_schedule_job_and_activities(client, auth, project, schedule_job):
 
 
 def test_readiness_and_startable(client, auth, project, schedule_job):
-    r = client.get("/api/activities/A110/readiness", headers=auth("client"))
+    # ADR 0008 §5: activity_id 는 프로젝트 안에서만 유일하다 — 대리키 라우트가 project_id 를 필수로 받는다.
+    r = client.get("/api/activities/A110/readiness", headers=auth("client"), params={"project_id": project})
     assert r.status_code == 200
     s = r.json()
     assert 0 <= s["score"] <= 1 and set(s["components"]) == set(s["weights"]) and "evidence" in s and "confidence" in s
     assert any(b["component"] == "predecessor_completion" for b in s["blockers"])
-    assert client.get("/api/activities/NOPE/readiness", headers=auth("client")).status_code == 404
+    assert client.get("/api/activities/NOPE/readiness", headers=auth("client"),
+                      params={"project_id": project}).status_code == 404
+    # project_id 를 빠뜨리면 422 — 조용히 "아무 프로젝트나" 로 해석되지 않는다.
+    assert client.get("/api/activities/A110/readiness", headers=auth("client")).status_code == 422
     r = client.get(f"/api/projects/{project}/startable", headers=auth("client"))
     assert r.status_code == 200
     st = r.json()

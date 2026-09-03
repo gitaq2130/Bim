@@ -202,7 +202,9 @@ def run_schedule(session: Session, job: JobRow, file_row: FileRow, options: dict
     db.save_schedule(session, schedule)
     objects = queries.as_models(queries.project_objects(session, job.project_id))
     mappings = map_activities_to_objects(schedule, objects)
-    db.save_mappings(session, mappings)
+    # ADR 0008 규칙 1·2: Activity 매핑은 (project_id, activity_id, global_id) 로 저장한다. project_id 는
+    # 부모(이 잡의 프로젝트)에서 유도하며, save_mappings 가 그 프로젝트에 Activity 가 실제로 있는지 검증한다.
+    db.save_mappings(session, job.project_id, mappings)
     warnings = [_warning("SCHEDULE_WARNING", w) for w in schedule.warnings]
     if not objects:
         warnings.append(_warning("NO_MODEL", "프로젝트에 객체가 없어 Activity↔객체 매핑이 비어 있습니다."))

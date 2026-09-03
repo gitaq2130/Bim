@@ -44,9 +44,18 @@ startup 시 `settings.database_url` 이 `sqlite` 이고 `users` 테이블이 비
 않는다.** 한 사람이 현장마다 다른 역할일 수 있어서다(A현장 contractor가 B현장에서는 cm일 수 있다).
 
 - `require_project_role(*roles)`(경로에 `project_id`가 있는 라우트) / `project_role(session, project_id, user, *roles)`
-  (surrogate id 라우트 — 대상 행을 먼저 읽어 그 `project_id`로 검사, 예: `review-requests/{id}`,
-  `activities/{id}/readiness`, `drawings/{id}`, `scans/{id}`, `models/{id}`, `files/{id}`, `jobs/{id}`)가
-  `deps.py`의 인가 본체다.
+  (대리키(surrogate id) 라우트)가 `deps.py`의 인가 본체다. 대리키 라우트는 **프로젝트를 어떻게 알아내는가**에
+  따라 두 갈래이고, 저장소에 두 관례가 공존한다(ADR 0008 §Deferred 가 통합을 남겼다):
+  - **대상 행을 먼저 읽어 그 `project_id`로 검사**: `review-requests/{id}`, `drawings/{id}`, `scans/{id}`,
+    `models/{id}`, `files/{id}`, `jobs/{id}`. 키가 우리가 발급한 UUID 라 전역에서 유일하다.
+  - **`project_id`를 쿼리로 필수로 받고 멤버십을 먼저 검사한 뒤 복합키로 읽는다**(누락은 422):
+    `GET /api/documents/{doc_id}`(ADR 0007 §2-3), `GET /api/activities/{activity_id}/readiness`,
+    `POST /api/documents/mappings/{activity_id}/{doc_id}/confirm`(ADR 0008 §5). 이 키들은 우리가 만든 값이
+    아니거나(`activity_id`는 공정표 파일의 `A100`·`1.1.1`) 프로젝트별로 재발급돼 **서로 다른 프로젝트가 같은
+    값을 갖는 것이 기본값**이라 단독으로는 행을 특정할 수 없고, DB PK 도 `project_id`를 포함한 복합키다.
+    **순서가 계약의 일부다** — 행을 먼저 읽으면 비멤버에게 그 id 의 존재 여부를 흘린다(ADR 0006 규칙 2).
+  - `/api/objects/{global_id}`만 세 번째 관례다 — 호출자의 멤버 프로젝트 안에서 후보를 찾아 0건 404 /
+    1건 통과 / 2건 이상 409 + `?project_id=` 요구(ADR 0005 §3). 이번에 바꾸지 않았다(ADR 0008 §5 마지막 문단).
 - **멤버가 아니면 404**(`project_not_found`) — 403은 프로젝트의 존재를 흘리므로 쓰지 않는다.
 - 멤버인데 역할이 요구 집합에 없으면 **403**(`forbidden_role`).
 - `admin`은 멤버십 없이 모든 프로젝트를 **조회**만 할 수 있다(`role=None`). 행위(업로드·정합 입력·작업일보·

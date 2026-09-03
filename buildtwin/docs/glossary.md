@@ -45,8 +45,8 @@
 | BIM 객체 | `BimObject` | IFC에서 추출한 단위 부재. PK = `(project_id, global_id)` 복합 키(ADR 0005). `global_id`는 IFC GlobalId |
 | 도면 엔티티 | `DrawingEntity` | DXF에서 추출한 단위 도형. 키 = `(drawing_id, handle)` |
 | 엔티티-객체 매핑 | `EntityObjectMapping` | 2D 엔티티 ↔ BIM 객체 연결. confidence·evidence 필수 |
-| 공정 작업 | `Activity` | 공정표의 단위 작업 |
-| 작업-객체 매핑 | `ActivityObjectMapping` | Activity ↔ BIM 객체 연결 |
+| 공정 작업 | `Activity` (`activities`) | 공정표의 단위 작업. PK = `(project_id, activity_id)` 복합 키(ADR 0008). `activity_id`는 공정표 파일에 적혀 오는 코드이므로 프로젝트가 다르면 겹친다 — `activity_id` 단독 조회 금지 |
+| 작업-객체 매핑 | `ActivityObjectMapping` (`activity_object_mappings`) | Activity ↔ BIM 객체 연결. PK = **`(project_id, activity_id, global_id)`**(ADR 0008), 복합 FK `(project_id, global_id)`→`bim_objects`. confidence·evidence 필수 |
 | 작업 준비도 점수 | `ReadinessScore` (Work Readiness Score) | 선행공정·검측·자재·도면승인·간섭·인력의 가중합(0~1) |
 | 차단 원인 | `Blocker` | Readiness를 낮추는 구체 사유 |
 | 착수 가능 작업 | `startable activities` | Readiness ≥ 임계값이고 선후행 제약을 만족하는 Activity 집합 |
@@ -124,6 +124,7 @@
 | 한국어 | 영어 | 정의 |
 |---|---|---|
 | 프로젝트 범위 객체 키 | `project-scoped object key` = `(project_id, global_id)` | 객체의 1차 키. 같은 IFC를 여러 프로젝트에 올릴 수 있으며, 모든 객체 조회는 두 키를 함께 건다(ADR 0005 규칙 2) |
+| 프로젝트 범위 Activity 키 | `project-scoped activity key` = `(project_id, activity_id)` | Activity의 1차 키. 같은 공정표를 여러 프로젝트에 올릴 수 있으며, 모든 Activity 조회는 두 키를 함께 건다(ADR 0008 규칙 2). Activity를 참조하는 테이블에는 FK를 걸지 않고 각자 `project_id`를 PK 구성요소로 든다(ADR 0008 §Decision 2) |
 | GlobalId 모호성 | `ambiguous global_id` | 한 GlobalId가 둘 이상의 프로젝트에 존재하는 상태. `/api/objects/{global_id}`는 이때 **409**를 돌려주고 `?project_id=`로 해소를 요구한다(ADR 0005 §3) |
 | 프로젝트 한정 질의 파라미터 | `project_id` (query) | 객체별 API의 선택 질의 파라미터. 모호성을 직접 해소한다 |
 | 고아 객체 | `is_orphaned` | 재업로드에서 사라진 GlobalId. 삭제하지 않고 표시만 하며, 판단은 **같은 프로젝트 안에서만** 한다 |
@@ -175,7 +176,7 @@ reviewer 4차 지적 1: 동일 상태코드(특히 409)가 서로 무관한 여�
 | `file_content_not_found` | 404 | 파일 행은 있으나 저장된 실제 콘텐츠가 없음 |
 | `scan_not_found` | 404 | `scan_id`에 해당하는 스캔이 없음 |
 | `project_not_found` | 404 | `project_id`에 해당하는 프로젝트가 없음 |
-| `activity_not_found` | 404 | `activity_id`에 해당하는 공정 Activity 가 없음(readiness 조회) |
+| `activity_not_found` | 404 | `(project_id, activity_id)`에 해당하는 공정 Activity 가 없음(readiness 조회). `project_id`는 쿼리 필수이며 멤버십을 먼저 검사하므로, 비멤버는 이 code 대신 `project_not_found`를 받는다(ADR 0008 §5) |
 | `plan_section_not_found` | 404 | 지정한 레벨에 기하가 있는 객체가 없어 평면 단면을 만들 수 없음 |
 | `forbidden_role` | 403 | 역할이 요구 권한 집합에 없음(예: CONFIRMED 전이·검측 승인·검토요청 처리는 `cm`만, `admin` 전용 라우트 등, ADR 0001 §4-1) |
 | `unsupported_file_kind` | 415 | 업로드 파일 종류를 인식할 수 없거나(매직넘버/확장자) 그 종류를 처리할 파이프라인이 없음 |
@@ -252,7 +253,7 @@ reviewer 4차 지적 1: 동일 상태코드(특히 409)가 서로 무관한 여�
 | 번호 정규화 | `seq_normalized` | `번호` 원문에서 숫자 이외를 모두 제거해 이어붙인 값(`26-049`→`26049`, `제26-07-09호`→`260709`). **자릿수를 재해석하지 않는다**(연도 확장·선행 0 제거 금지) |
 | 제목 대조 | `title matching` | 문서↔Activity 매핑의 **필수 근거**. `min_similarity` 미만이면 다른 근거가 모두 맞아도 후보가 아니다(ADR 0007 §4 규칙 1). 유사도 = `SequenceMatcher` 비율과 토큰 Jaccard의 가중합 |
 | 판별 토큰 | `discriminative token` (`zone` / `section` / `revision` / `level`) | 문서 제목과 Activity **양쪽에 모두 존재하고 값이 다르면 유사도와 무관하게 후보에서 하드 배제**하는 토큰. "ASRS-1구간 vs ASRS-4구간", "1차 vs 2차"를 걸러낸다. 한쪽에만 있으면 배제하지 않고 confidence만 낮춘다(ADR 0007 §4 규칙 3) |
-| 문서-작업 매핑 | `ActivityDocumentMapping` (`activity_document_mappings`) | 문서 ↔ Activity 연결. PK = `(activity_id, doc_id)`, `project_id`는 Activity에서 유도, **복합 FK `(project_id, doc_id)`**. `confidence`·`evidence`·`needs_review`·`reviewed_by` 필수. 문서↔객체 직접 매핑은 만들지 않는다(대장에 객체 식별 정보가 없음) |
+| 문서-작업 매핑 | `ActivityDocumentMapping` (`activity_document_mappings`) | 문서 ↔ Activity 연결. PK = **`(project_id, activity_id, doc_id)`**(ADR 0008), `project_id`는 Activity에서 유도, **복합 FK `(project_id, doc_id)`**→`documents`. `confidence`·`evidence`·`needs_review`·`reviewed_by` 필수. 문서↔객체 직접 매핑은 만들지 않는다(대장에 객체 식별 정보가 없음) |
 | 매핑 자동 확정 금지 | `always_needs_review` | 시스템이 만든 문서 매핑은 **confidence 값과 무관하게 항상 `needs_review=True`**다. 유사도 0.99여도 그렇다. ADR 0001의 "스캔 AI는 `ESTIMATED_DONE`까지, `CONFIRMED`는 cm만"과 같은 구조이며, `MAPPING_REVIEW_THRESHOLD`(0.7)는 문서 매핑에 적용되지 않는다 |
 | 문서 매핑 검토요청 | `ReviewKind` += `document_mapping` | 미확정 문서 매핑을 CM 검토 큐로 보내는 검토요청. `assignee_role="cm"`. 기존 `mapping`을 재사용하지 않는 이유는 `services/sync`의 해소 로직이 `drawing_id`/`entity_handle`을 기대하기 때문. 해소는 `services/progress`가 소유 |
 | 문서 승인 우선순위 | document evidence > manual flag > unknown default | `drawing_approval` 입력의 3단 사다리(ADR 0007 §5-2). ① 확정 매핑된 필수 문서 → 전부 승인이면 1.0, 아니면 0.0 ② 없으면 기존 `resources.drawing_approved` ③ 둘 다 없으면 `component_defaults.drawing_approval_unknown`. **사실(대장)이 주장(수동 플래그)을 이긴다** |

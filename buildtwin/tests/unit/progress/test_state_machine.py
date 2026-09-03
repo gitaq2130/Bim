@@ -256,7 +256,7 @@ def test_daily_report_activity_from_other_project_is_skipped_not_transitioned(se
     schedule_b = Schedule(schedule_id="S-B", project_id=project_b, source_format="csv",
                           activities=[Activity(activity_id="ACT-B", name="B 공정")], relations=[])
     db.save_schedule(session, schedule_b)
-    db.save_mappings(session, [ActivityObjectMapping(
+    db.save_mappings(session, project_b, [ActivityObjectMapping(
         activity_id="ACT-B", global_id=GID, confidence=0.95,
         evidence=Evidence(source_type="mapping", source_id="S-B"),
     )])
@@ -279,7 +279,12 @@ def test_daily_report_activity_from_other_project_is_skipped_not_transitioned(se
     # 왜 건너뛰었는지 skipped 사유에 남는다.
     assert len(outcome.skipped) == 1
     reason = outcome.skipped[0]["reason"]
-    assert "ACT-B" in reason and project_b in reason and project_a in reason
+    # ADR 0008 이후 사유에 project_b 를 넣을 수 없다 — 넣으려면 activity_id 단독 전역 조회가 필요한데
+    # 그게 바로 ADR 0008 규칙 2 가 금지하는 것이고, 비멤버에게 타 프로젝트의 존재를 흘리는 셈이라
+    # ADR 0006 규칙 2 와도 어긋난다. 사유는 "이 신고서의 프로젝트(P-A)에 ACT-B 가 없다"까지만 말한다.
+    # 되돌리지 말 것: project_b 를 사유에 다시 넣는 것은 정보 누출이다.
+    assert "ACT-B" in reason and project_a in reason
+    assert project_b not in reason
 
     # 프로젝트 B 의 객체도(신고서 자체가 프로젝트 A 앞이므로) 전이되지 않는다.
     assert session.get(BimObjectRow, (project_b, GID)).state == ObjectState.PLANNED.value

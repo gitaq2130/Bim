@@ -178,7 +178,8 @@ def test_step6_upload_schedule_readiness_and_startable(flow):
     acts = {x["activity_id"]: x for x in a.get(f"/projects/{flow['project']}/activities", "cm").json()}
     assert set(acts) == set(expected["activities"])
     for aid in ("A100", "A110"):
-        s = a.get(f"/activities/{aid}/readiness", "cm").json()
+        # ADR 0008 §5: 대리키 라우트는 project_id 를 쿼리 필수로 받는다.
+        s = a.get(f"/activities/{aid}/readiness?project_id={flow['project']}", "cm").json()
         assert 0.0 <= s["score"] <= 1.0 and 0.0 <= s["confidence"] <= 1.0 and s["evidence"]
         assert set(s["components"]) == set(s["weights"])
     startable = a.get(f"/projects/{flow['project']}/startable", "cm").json()

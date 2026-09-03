@@ -110,7 +110,7 @@ def compute_startable(session: Session, project_id: str, threshold: float | None
                 blockers.append(Blocker(component="predecessor", severity="high", related_ids=[rel.predecessor_id],
                                         reason=f"SS predecessor {rel.predecessor_id} not started"))
             # FF / SF 는 착수 시점을 제약하지 않는다
-        score = compute_readiness(session, a.activity_id)
+        score = compute_readiness(session, project_id, a.activity_id)
         readiness_scores[a.activity_id] = score.score
         if score.score < threshold:
             blockers.append(Blocker(component="readiness", severity="medium", related_ids=[b.component for b in score.blockers],

@@ -142,7 +142,9 @@ def test_cm_approving_document_mapping_review_confirms_mapping_row(client, auth,
 def test_confirmed_document_feeds_drawing_approval_readiness(client, auth, dm_project):
     """과제 1-3: 확정된 문서가 `drawing_approval` 의 확정 필수 문서로 실제 집계된다 — readiness 가
     그 문서를 근거로 쓴다(ADR 0007 §5-2 순위 1: 논리곱, 필수 문서 전부 승인 -> 1.0)."""
-    r = client.get(f"/api/activities/{ACTIVITY_APPROVE}/readiness", headers=auth("cm"))
+    # ADR 0008 §5: 대리키 라우트는 project_id 를 쿼리 필수로 받는다.
+    r = client.get(f"/api/activities/{ACTIVITY_APPROVE}/readiness", headers=auth("cm"),
+                   params={"project_id": dm_project})
     assert r.status_code == 200, r.text
     score = r.json()
     assert score["components"]["drawing_approval"] == 1.0
@@ -227,7 +229,8 @@ def test_rejected_document_not_counted_toward_drawing_approval_readiness(client,
     반려된(그런데 원래 승인이었던) 문서가 도면 승인 AND 조건의 증거로 도로 들어간다. A400 은 §4-2 규칙 6과
     무관하게 처리결과가 APPROVED 인 문서를 반려했으므로, 누수가 있으면 drawing_approval 이 그대로 1.0 이
     나온다 — 그래서 이 조합을 배역으로 골랐다."""
-    r = client.get(f"/api/activities/{ACTIVITY_REJECT}/readiness", headers=auth("cm"))
+    r = client.get(f"/api/activities/{ACTIVITY_REJECT}/readiness", headers=auth("cm"),
+                   params={"project_id": dm_project})
     assert r.status_code == 200, r.text
     score = r.json()
     cfg = load_readiness_config()
@@ -317,7 +320,7 @@ def test_confirming_a_rejected_mapping_is_refused_with_409(client, auth, dm_proj
     before = _mapping_for_activity(client, auth, dm_project, doc_id, ACTIVITY_REJECT)
 
     r = client.post(f"/api/documents/mappings/{ACTIVITY_REJECT}/{doc_id}/confirm",
-                    headers=auth("cm"), json={"note": "실수로 확정 시도"})
+                    headers=auth("cm"), params={"project_id": dm_project}, json={"note": "실수로 확정 시도"})
     assert r.status_code == 409, r.text
     assert r.json()["code"] == "document_mapping_already_rejected", r.text
 
@@ -329,7 +332,8 @@ def test_confirming_a_rejected_mapping_is_refused_with_409(client, auth, dm_proj
     assert after["needs_review"] is False
 
     # readiness 도 그대로 — 반려된 문서는 여전히 도면 승인 근거가 아니다
-    score = client.get(f"/api/activities/{ACTIVITY_REJECT}/readiness", headers=auth("cm")).json()
+    score = client.get(f"/api/activities/{ACTIVITY_REJECT}/readiness", headers=auth("cm"),
+                       params={"project_id": dm_project}).json()
     assert score["components"]["drawing_approval"] != 1.0
 
 
@@ -341,7 +345,7 @@ def test_confirming_a_pending_mapping_still_works(client, auth, dm_project, user
     doc_id = review["conflicting_sources"]["doc_id"]
 
     r = client.post(f"/api/documents/mappings/{ACTIVITY_UNTOUCHED}/{doc_id}/confirm",
-                    headers=auth("cm"), json={"note": "대장 확인"})
+                    headers=auth("cm"), params={"project_id": dm_project}, json={"note": "대장 확인"})
     assert r.status_code == 200, r.text
 
     m = _mapping_for_activity(client, auth, dm_project, doc_id, ACTIVITY_UNTOUCHED)
@@ -370,7 +374,7 @@ def test_every_confirm_path_shares_the_rejection_guard(client, auth, dm_project)
     doc_id = review["conflicting_sources"]["doc_id"]
 
     with session_scope() as session:
-        row = session.get(ActivityDocumentMappingRow, (ACTIVITY_REJECT, doc_id))
+        row = session.get(ActivityDocumentMappingRow, (dm_project, ACTIVITY_REJECT, doc_id))
         assert row is not None and row.evidence["extra"]["mapping_review_decision"] == "rejected"
         with pytest.raises(Conflict) as exc:
             _confirm_document_mapping_row(session, row, "u-any-cm")

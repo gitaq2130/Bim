@@ -158,10 +158,21 @@ class ScheduleRow(Base):
 
 
 class ActivityRow(Base):
+    """ADR 0008: 키의 범위는 프로젝트다(ADR 0005 가 객체에 내린 결정과 같은 형태).
+
+    `activity_id` 는 우리가 발급하는 값이 아니라 공정표 파일에 적혀 오는 코드(`A100`)이므로 프로젝트가
+    다르면 반드시 겹친다. 전역 PK 였을 때 `save_schedule` 이 남의 프로젝트 Activity 를 삭제하고 가져갔다.
+
+    Activity 를 참조하는 테이블(`activity_relations`/`activity_object_mappings`/`activity_document_mappings`)
+    에는 **의도적으로 FK 를 걸지 않는다**(ADR 0008 §Decision 2): `activities` 행은 공정표 재업로드마다
+    삭제·재생성되는데 매핑은 그 삭제를 넘어 살아남아야 하므로, FK 를 걸면 정상 재업로드가 FK 위반이 되거나
+    확정된 매핑이 cascade 로 사라진다. 대신 각 자식이 `project_id` 를 PK 구성요소로 든다.
+    """
+
     __tablename__ = "activities"
-    activity_id: Mapped[str] = mapped_column(String, primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.project_id"), primary_key=True, index=True)
+    activity_id: Mapped[str] = mapped_column(String, primary_key=True, index=True)
     schedule_id: Mapped[str] = mapped_column(ForeignKey("schedules.schedule_id"), index=True)
-    project_id: Mapped[str] = mapped_column(String, index=True)
     name: Mapped[str] = mapped_column(String)
     wbs_code: Mapped[str | None] = mapped_column(String, nullable=True)
     discipline: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -176,8 +187,12 @@ class ActivityRow(Base):
 
 
 class ActivityRelationRow(Base):
+    """ADR 0008 §Decision 1: `project_id` 를 든다. `schedule_id` 로 사실상 프로젝트 범위이지만
+    `successor_id` 단독 조회(`predecessors_of`)가 그 범위를 통과하지 않아 교차 프로젝트로 샜다."""
+
     __tablename__ = "activity_relations"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.project_id"), index=True)   # ADR 0008 규칙 1: Schedule 의 프로젝트에서 유도
     schedule_id: Mapped[str] = mapped_column(String, index=True)
     predecessor_id: Mapped[str] = mapped_column(String)
     successor_id: Mapped[str] = mapped_column(String)
@@ -189,9 +204,11 @@ class ActivityObjectMappingRow(Base):
     __tablename__ = "activity_object_mappings"
     __table_args__ = (ForeignKeyConstraint(["project_id", "global_id"],
                                           ["bim_objects.project_id", "bim_objects.global_id"]),)
+    # ADR 0008: project_id 가 PK 구성요소다. 전역 (activity_id, global_id) 였을 때 두 번째 프로젝트의
+    # save_mappings 가 첫 프로젝트의 행을 찾아 project_id 를 덮어써 매핑 27건이 통째로 옮겨갔다.
+    project_id: Mapped[str] = mapped_column(String, primary_key=True, index=True)   # ADR 0008 규칙 1: Activity 의 프로젝트에서 유도
     activity_id: Mapped[str] = mapped_column(String, primary_key=True)
     global_id: Mapped[str] = mapped_column(String, primary_key=True)
-    project_id: Mapped[str] = mapped_column(String, index=True)   # ADR 0005: Activity의 프로젝트에서 유도
     confidence: Mapped[float] = mapped_column(Float)
     evidence: Mapped[dict] = mapped_column(JSON)
     needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -247,6 +264,7 @@ class ReviewRequestRow(Base):
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.project_id"), index=True)
     kind: Mapped[str] = mapped_column(String, index=True)
     global_id: Mapped[str | None] = mapped_column(String, index=True, nullable=True)
+    # ADR 0008: FK 가 아닌 평문 컬럼(ADR 0005 가 global_id 에 내린 것과 같은 판단). 조회는 항상 project_id 와 함께.
     activity_id: Mapped[str | None] = mapped_column(String, nullable=True)
     rule_id: Mapped[str | None] = mapped_column(String, nullable=True)
     title: Mapped[str] = mapped_column(String)
@@ -280,7 +298,7 @@ class MaterialMovementRow(Base):
     project_id: Mapped[str] = mapped_column(String, index=True)
     material_id: Mapped[str] = mapped_column(String)
     global_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    activity_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    activity_id: Mapped[str | None] = mapped_column(String, nullable=True)   # ADR 0008: 평문 컬럼. 조회는 project_id 와 함께
     kind: Mapped[str] = mapped_column(String)
     quantity: Mapped[float] = mapped_column(Float)
     unit: Mapped[str] = mapped_column(String)
@@ -306,7 +324,7 @@ class RuleVerdictRow(Base):
     rule_id: Mapped[str] = mapped_column(String)
     rule_version: Mapped[int] = mapped_column(Integer)
     global_id: Mapped[str | None] = mapped_column(String, index=True, nullable=True)
-    activity_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    activity_id: Mapped[str | None] = mapped_column(String, nullable=True)   # ADR 0008: 평문 컬럼. 조회는 project_id 와 함께
     risk_level: Mapped[str] = mapped_column(String)
     action: Mapped[str] = mapped_column(Text)
     required_evidence: Mapped[list] = mapped_column(JSON, default=list)
@@ -355,9 +373,11 @@ class ActivityDocumentMappingRow(Base):
     __tablename__ = "activity_document_mappings"
     __table_args__ = (ForeignKeyConstraint(["project_id", "doc_id"],
                                           ["documents.project_id", "documents.doc_id"]),)
+    # ADR 0008: project_id 가 PK 구성요소다. 전역 (activity_id, doc_id) 였을 때 p1 에서 CM 이 확정/반려한
+    # 쌍이 p2 의 후보 생성을 막았다(_drop_already_confirmed 가 project 를 보지 않는다 — ADR 0007 §Deferred).
+    project_id: Mapped[str] = mapped_column(String, primary_key=True, index=True)   # ADR 0008 규칙 1: Activity 의 프로젝트에서 유도
     activity_id: Mapped[str] = mapped_column(String, primary_key=True)
     doc_id: Mapped[str] = mapped_column(String, primary_key=True)
-    project_id: Mapped[str] = mapped_column(String, index=True)   # ADR 0005: Activity 의 프로젝트에서 유도
     confidence: Mapped[float] = mapped_column(Float)
     evidence: Mapped[dict] = mapped_column(JSON)
     # §4 규칙 5: 시스템이 만든 문서 매핑은 confidence 와 무관하게 항상 True 로 들어온다.

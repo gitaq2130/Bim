@@ -791,6 +791,11 @@ VER-008(반려, confidence 0.9)과 VER-009(그 외 미승인, confidence 0.6)를
   되돌렸는지(`unrejected_by`/`unrejected_at`), 그 시점에 다시 열 검토요청, 그리고 화면의 도달 경로까지 함께
   설계해야 하고, 그중 화면 없이 API 만 만들면 이번 사이클이 네 번 반복한 "도달 경로 없는 기능"이 하나 더
   생긴다. 실제 운영에서 오반려 빈도를 본 뒤 별도로 연다.
-- **`_drop_already_confirmed`의 project 미검사**: 지금은 `activity_id`가 전역 고유해 무해하지만(그 자체가 ADR 0005
-  영역의 별개 결함이다 — 같은 공정표를 두 프로젝트에 올리면 Activity 가 옮겨간다), 그 스키마가 고쳐지는 순간
-  교차 프로젝트 누수가 된다. **반드시 함께 다뤄야 한다**(10차 리뷰 범위 밖 관찰).
+- ~~**`_drop_already_confirmed`의 project 미검사**~~ → **ADR 0008 로 해소됨.** 원래 기술: "지금은 `activity_id`가
+  전역 고유해 무해하지만(그 자체가 ADR 0005 영역의 별개 결함이다 — 같은 공정표를 두 프로젝트에 올리면
+  Activity 가 옮겨간다), 그 스키마가 고쳐지는 순간 교차 프로젝트 누수가 된다. 반드시 함께 다뤄야 한다."
+  **실측 결과 "지금은 무해하다"는 틀렸다** — 스키마를 고치기 전인 상태에서 이미 누수였다. p1 에서 CM 이
+  확정·반려한 `(activity_id, doc_id)` 쌍이 p2 의 후보 생성을 막아 `mapping_count` 가 6 대신 3 이 나왔다
+  (ADR 0008 §Context 2 에 출력 인용). ADR 0008 이 `activity_document_mappings` 의 PK 를
+  `(project_id, activity_id, doc_id)` 로 바꿔 이 호출부가 조용히 틀리는 대신 `InvalidRequestError` 로
+  터지게 만들었고, 같은 사이클에서 `_drop_already_confirmed(session, project_id, mappings)` 로 고친다.

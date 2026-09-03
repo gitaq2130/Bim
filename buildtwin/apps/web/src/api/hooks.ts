@@ -71,7 +71,21 @@ export const queryKeys = {
    * 이 접두사를 쓴다.
    */
   documentsRoot: (pid: string) => ["projects", pid, "documents"] as const,
-  readiness: (aid: string) => ["activities", aid, "readiness"] as const,
+  /**
+   * ADR 0008 §5: Activity 는 (project_id, activity_id) 복합 키다. 같은 공정표를 두 프로젝트에 올리면
+   * `A100` 은 양쪽에 존재하므로, 캐시 키에 project_id 가 없으면 두 프로젝트의 readiness 가 섞인다.
+   *
+   * **이 키를 바꿀 때는 무효화 접두사도 함께 확인해야 한다.** 아래 `activitiesRoot(pid)` 가 이 키의
+   * 접두사이며, `useResolveReview`·`useConfirmDocumentMapping` 이 그것으로 무효화한다. 낡은
+   * 전역 `activities` 루트 접두사는 이 키와 **부분 일치하지 않는다**(첫 원소부터 "projects" 와 다르다).
+   */
+  readiness: (pid: string, aid: string) => ["projects", pid, "activities", aid, "readiness"] as const,
+  /**
+   * `readiness(pid, aid)` 의 **실제 접두사**. 확정·해소 뮤테이션이 프로젝트의 모든 Activity readiness 를
+   * 한 번에 뒤집을 때 쓴다. 배열 리터럴을 훅마다 손으로 적으면 12·13차 리뷰가 두 번 잡은 "눈으로는
+   * 맞아 보이는데 런타임 부분 일치가 안 걸리는" 결함이 다시 난다 — 한 곳에서만 정의한다.
+   */
+  activitiesRoot: (pid: string) => ["projects", pid, "activities"] as const,
   startable: (pid: string) => ["projects", pid, "startable"] as const,
   weeklySummary: (pid: string) => ["projects", pid, "weekly-summary"] as const,
 };
@@ -367,17 +381,27 @@ export function useResolveReview(projectId: string) {
       if (docId) qc.invalidateQueries({ queryKey: queryKeys.document(projectId, docId) });
       qc.invalidateQueries({ queryKey: queryKeys.weeklySummary(projectId) });
       qc.invalidateQueries({ queryKey: queryKeys.startable(projectId) });
-      qc.invalidateQueries({ queryKey: ["activities"] });   // readiness 키가 ["activities", aid, "readiness"] 라 접두사로 건다
+      // ADR 0008: readiness 키가 ["projects", pid, "activities", aid, "readiness"] 로 바뀌었다.
+      // 낡은 전역 activities 루트 접두사는 이 키와 부분 일치하지 않는다 — 조용히 낡은 값이 남는다.
+      qc.invalidateQueries({ queryKey: queryKeys.activitiesRoot(projectId) });
     },
   });
 }
 
 // ---- readiness / startable / summary ----
-export function useReadiness(activityId: string | null | undefined) {
+/**
+ * GET /activities/{activity_id}/readiness?project_id=... — ADR 0008 §5.
+ * `project_id` 는 서버에서 **필수 쿼리**다(누락 시 422). Activity 는 프로젝트 범위 복합 키이므로
+ * activityId 만으로는 어느 프로젝트의 Activity 인지 정해지지 않는다.
+ */
+export function useReadiness(projectId: string | null | undefined, activityId: string | null | undefined) {
   return useQuery({
-    queryKey: queryKeys.readiness(activityId ?? ""),
-    queryFn: () => api.get<ReadinessScore>(`/activities/${activityId}/readiness`),
-    enabled: !!activityId,
+    queryKey: queryKeys.readiness(projectId ?? "", activityId ?? ""),
+    queryFn: () =>
+      api.get<ReadinessScore>(
+        `/activities/${encodeURIComponent(activityId!)}/readiness?project_id=${encodeURIComponent(projectId!)}`,
+      ),
+    enabled: !!projectId && !!activityId,
   });
 }
 export function useStartable(projectId: string | null | undefined) {
@@ -451,7 +475,9 @@ export function useConfirmDocumentMapping(projectId: string, docId: string) {
   return useMutation({
     mutationFn: ({ activityId, note }: { activityId: string; note?: string }) =>
       api.post<ActivityDocumentMapping>(
-        `/documents/mappings/${encodeURIComponent(activityId)}/${encodeURIComponent(docId)}/confirm`,
+        // ADR 0008 §5: 대리키 라우트는 project_id 를 필수 쿼리로 받는다(누락 시 422).
+        `/documents/mappings/${encodeURIComponent(activityId)}/${encodeURIComponent(docId)}/confirm` +
+          `?project_id=${encodeURIComponent(projectId)}`,
         { note: note || null } satisfies ConfirmDocumentMappingRequest,
       ),
     onSuccess: () => {
@@ -463,7 +489,8 @@ export function useConfirmDocumentMapping(projectId: string, docId: string) {
       // 409 review_already_resolved 가 난다. useResolveReview 와 범위가 같아야 한다는 선언이
       // 이 훅 쪽에서 지켜지지 않고 있었다.
       qc.invalidateQueries({ queryKey: ["projects", projectId, "review-requests"] });
-      qc.invalidateQueries({ queryKey: ["activities"] });   // readiness 키가 ["activities", aid, "readiness"]
+      // ADR 0008: 프로젝트 범위 readiness 키의 접두사(useResolveReview 와 같은 범위여야 한다).
+      qc.invalidateQueries({ queryKey: queryKeys.activitiesRoot(projectId) });
     },
   });
 }

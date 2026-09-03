@@ -36,7 +36,7 @@ def test_unconfirmed_mapping_does_not_enter_rank1_even_with_high_confidence(sess
     make_mapping(session, PROJECT_ID, ACTIVITY_ID, "doc-pending-1", confidence=0.99, needs_review=True)
     session.commit()
 
-    score = compute_readiness(session, ACTIVITY_ID)
+    score = compute_readiness(session, PROJECT_ID, ACTIVITY_ID)
     cfg = load_readiness_config()
     # 확정 문서가 없으므로 순위 1이 아니라 순위 2/3(기존 동작)으로 떨어져야 한다 — 미확정 매핑이 1.0 을 만들면 안 된다
     assert score.components["drawing_approval"] != 1.0
@@ -55,7 +55,7 @@ def test_nine_of_ten_approved_required_docs_is_all_or_nothing_zero(session, seed
         make_mapping(session, PROJECT_ID, ACTIVITY_ID, f"doc-and-{i}", confidence=0.9, needs_review=False)
     session.commit()
 
-    score = compute_readiness(session, ACTIVITY_ID)
+    score = compute_readiness(session, PROJECT_ID, ACTIVITY_ID)
     assert score.components["drawing_approval"] == 0.0   # 비율이었다면 0.9 였을 값
     assert score.components["drawing_approval"] != pytest.approx(0.9)
     blockers = [b for b in score.blockers if b.component == "drawing_approval"]
@@ -69,7 +69,7 @@ def test_unknown_status_scores_zero_and_blocker_text_differs_from_rejected(sessi
                   approval_confidence=1.0, doc_number="DOC-TFA-BLANK-1")
     make_mapping(session, PROJECT_ID, ACTIVITY_ID, "doc-blank-1", needs_review=False)
     session.commit()
-    score = compute_readiness(session, ACTIVITY_ID)
+    score = compute_readiness(session, PROJECT_ID, ACTIVITY_ID)
     assert score.components["drawing_approval"] == 0.0
     unknown_blocker = next(b for b in score.blockers if b.component == "drawing_approval")
     assert "UNKNOWN" in unknown_blocker.reason
@@ -79,7 +79,7 @@ def test_unknown_status_scores_zero_and_blocker_text_differs_from_rejected(sessi
     db.load_document(session, PROJECT_ID, "doc-blank-1").approval_status = "REJECTED"
     db.load_document(session, PROJECT_ID, "doc-blank-1").result_raw = "반려"
     session.commit()
-    score2 = compute_readiness(session, ACTIVITY_ID)
+    score2 = compute_readiness(session, PROJECT_ID, ACTIVITY_ID)
     rejected_blocker = next(b for b in score2.blockers if b.component == "drawing_approval")
     assert "REJECTED" in rejected_blocker.reason
     assert "UNKNOWN" not in rejected_blocker.reason
@@ -88,27 +88,27 @@ def test_unknown_status_scores_zero_and_blocker_text_differs_from_rejected(sessi
 
 # ── 하위 호환: 문서 없음 + resources.drawing_approved 만 있는 프로젝트는 기존 동작(순위 2) ──
 def test_backward_compat_manual_flag_only_project_unaffected(session, seeded):
-    row = db.load_activity(session, "A200")
+    row = db.load_activity(session, PROJECT_ID, "A200")
     row.resources = {**row.resources, "drawing_approved": 1}
     session.flush()
     session.commit()
-    score = compute_readiness(session, "A200")
+    score = compute_readiness(session, PROJECT_ID, "A200")
     assert score.components["drawing_approval"] == 1.0
     assert not any(b.component == "drawing_approval" for b in score.blockers)
     assert "drawing_approval" not in score.evidence.extra.get("missing_components", [])
 
-    row2 = db.load_activity(session, "A300")
+    row2 = db.load_activity(session, PROJECT_ID, "A300")
     row2.resources = {**row2.resources, "drawing_approved": 0}
     session.flush()
     session.commit()
-    score2 = compute_readiness(session, "A300")
+    score2 = compute_readiness(session, PROJECT_ID, "A300")
     assert score2.components["drawing_approval"] == 0.0
     assert any(b.component == "drawing_approval" for b in score2.blockers)
 
 
 def test_backward_compat_neither_flag_nor_documents_is_unknown_default(session, seeded):
     """둘 다 없으면 component_defaults.drawing_approval_unknown(0.5) + missing=True(순위 3) — 기존 동작."""
-    score = compute_readiness(session, "A400")   # seeded 는 문서도 안 만들고 A400 에 drawing_approved 플래그도 안 준다
+    score = compute_readiness(session, PROJECT_ID, "A400")   # seeded 는 문서도 안 만들고 A400 에 drawing_approved 플래그도 안 준다
     cfg = load_readiness_config()
     assert score.components["drawing_approval"] == cfg["component_defaults"]["drawing_approval_unknown"]
     assert "drawing_approval" in score.evidence.extra["missing_components"]
@@ -119,16 +119,16 @@ def test_kill_switch_disables_document_evidence_entirely(session, seeded, tmp_pa
     """확정된 반려 문서가 있어도, enabled=false + 수동 플래그=1 이면 그 문서를 완전히 무시하고 1.0 을 낸다."""
     make_document(session, PROJECT_ID, "doc-killswitch-1", approval_status="REJECTED", doc_number="DOC-KILL-1")
     make_mapping(session, PROJECT_ID, ACTIVITY_ID, "doc-killswitch-1", needs_review=False)
-    row = db.load_activity(session, ACTIVITY_ID)
+    row = db.load_activity(session, PROJECT_ID, ACTIVITY_ID)
     row.resources = {**row.resources, "drawing_approved": 1}
     session.flush()
     session.commit()
 
     # 킬 스위치 이전: 문서 근거(반려)가 이겨서 0.0 이어야 한다(순위 1이 수동 플래그보다 우선)
-    before = compute_readiness(session, ACTIVITY_ID)
+    before = compute_readiness(session, PROJECT_ID, ACTIVITY_ID)
     assert before.components["drawing_approval"] == 0.0
 
     _swap_document_approval(tmp_path, monkeypatch, enabled=False)
-    after = compute_readiness(session, ACTIVITY_ID)
+    after = compute_readiness(session, PROJECT_ID, ACTIVITY_ID)
     assert after.components["drawing_approval"] == 1.0   # 문서 근거를 완전히 건너뛰고 수동 플래그만 본다
     assert not any(b.component == "drawing_approval" for b in after.blockers)

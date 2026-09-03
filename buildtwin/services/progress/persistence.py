@@ -132,13 +132,19 @@ def save_schedule(session: Session, schedule: Schedule) -> ScheduleRow:
         session.add(row)
     else:
         row.source_format, row.warnings = schedule.source_format, list(schedule.warnings)
-        for old_rel in session.scalars(select(ActivityRelationRow).where(ActivityRelationRow.schedule_id == schedule.schedule_id)):
+        # ADR 0008: schedule_id 는 프로젝트 안에서만 유일하다고 보지 않는다 — 교체 대상도 project_id 로 좁힌다.
+        for old_rel in session.scalars(select(ActivityRelationRow).where(
+                ActivityRelationRow.project_id == schedule.project_id,
+                ActivityRelationRow.schedule_id == schedule.schedule_id)):
             session.delete(old_rel)
-        for old_act in session.scalars(select(ActivityRow).where(ActivityRow.schedule_id == schedule.schedule_id)):
+        for old_act in session.scalars(select(ActivityRow).where(
+                ActivityRow.project_id == schedule.project_id,
+                ActivityRow.schedule_id == schedule.schedule_id)):
             session.delete(old_act)
         session.flush()
     for a in schedule.activities:
-        existing = session.get(ActivityRow, a.activity_id)
+        # ADR 0008 §Context 1: 전역 PK 였을 때 이 조회가 남의 프로젝트 Activity 를 찾아 지우고 가져갔다.
+        existing = session.get(ActivityRow, (schedule.project_id, a.activity_id))
         if existing is not None:
             session.delete(existing)
             session.flush()
@@ -150,8 +156,10 @@ def save_schedule(session: Session, schedule: Schedule) -> ScheduleRow:
             source_ref=a.source_ref,
         ))
     for r in schedule.relations:
-        session.add(ActivityRelationRow(schedule_id=schedule.schedule_id, predecessor_id=r.predecessor_id,
-                                        successor_id=r.successor_id, type=r.type, lag_days=r.lag_days))
+        # ADR 0008 규칙 1: 관계의 project_id 는 Schedule 에서 유도한다(predecessors_of 의 필터 축).
+        session.add(ActivityRelationRow(project_id=schedule.project_id, schedule_id=schedule.schedule_id,
+                                        predecessor_id=r.predecessor_id, successor_id=r.successor_id,
+                                        type=r.type, lag_days=r.lag_days))
     session.flush()
     return row
 
@@ -174,15 +182,27 @@ def load_schedule(session: Session, schedule_id: str) -> Schedule:
     row = session.get(ScheduleRow, schedule_id)
     if row is None:
         raise LookupError(f"schedule not found: {schedule_id}")
-    acts = session.scalars(select(ActivityRow).where(ActivityRow.schedule_id == schedule_id).order_by(ActivityRow.activity_id))
-    rels = session.scalars(select(ActivityRelationRow).where(ActivityRelationRow.schedule_id == schedule_id).order_by(ActivityRelationRow.id))
+    # ADR 0008 규칙 2: schedule_id 로 이미 사실상 프로젝트 범위지만, Activity·관계 조회에는 언제나
+    # project_id 를 함께 건다(ScheduleRow 에서 유도 — 규칙 1).
+    acts = session.scalars(select(ActivityRow).where(ActivityRow.project_id == row.project_id,
+                                                     ActivityRow.schedule_id == schedule_id)
+                           .order_by(ActivityRow.activity_id))
+    rels = session.scalars(select(ActivityRelationRow).where(ActivityRelationRow.project_id == row.project_id,
+                                                             ActivityRelationRow.schedule_id == schedule_id)
+                           .order_by(ActivityRelationRow.id))
     return Schedule(schedule_id=schedule_id, project_id=row.project_id, activities=[activity_row_to_model(a) for a in acts],
                     relations=[relation_row_to_model(r) for r in rels], source_format=row.source_format,  # type: ignore[arg-type]
                     warnings=list(row.warnings or []))
 
 
-def load_activity(session: Session, activity_id: str) -> ActivityRow | None:
-    return session.get(ActivityRow, activity_id)
+def load_activity(session: Session, project_id: str, activity_id: str) -> ActivityRow | None:
+    """ADR 0008 규칙 2: `project_id` 는 **필수 위치 인자**다.
+
+    옵션(`| None`·기본값)으로 두면 시그니처가 생략을 허용해버려 규칙이 실제로 강제되지 않는다
+    (`open_reviews` 가 라운드4 에 겪은 것과 같다). `activity_id` 는 공정표 파일에 적혀 오는 코드라
+    프로젝트가 다르면 반드시 겹친다.
+    """
+    return session.get(ActivityRow, (project_id, activity_id))
 
 
 def load_activities(session: Session, project_id: str) -> list[ActivityRow]:
@@ -190,35 +210,47 @@ def load_activities(session: Session, project_id: str) -> list[ActivityRow]:
 
 
 def load_relations(session: Session, project_id: str) -> list[ActivityRelationRow]:
-    schedule_ids = select(ScheduleRow.schedule_id).where(ScheduleRow.project_id == project_id)
-    return list(session.scalars(select(ActivityRelationRow).where(ActivityRelationRow.schedule_id.in_(schedule_ids))
+    """ADR 0008: 관계가 `project_id` 를 직접 들게 됐으므로 Schedule 경유 서브쿼리 대신 그 컬럼으로 거른다
+    (값은 `save_schedule` 이 Schedule 에서 유도해 채운다 — 규칙 1). 결과 집합은 이전과 같다."""
+    return list(session.scalars(select(ActivityRelationRow).where(ActivityRelationRow.project_id == project_id)
                                 .order_by(ActivityRelationRow.id)))
 
 
-def predecessors_of(session: Session, activity_id: str) -> list[ActivityRelationRow]:
-    return list(session.scalars(select(ActivityRelationRow).where(ActivityRelationRow.successor_id == activity_id)))
+def predecessors_of(session: Session, project_id: str, activity_id: str) -> list[ActivityRelationRow]:
+    """ADR 0008 규칙 3 / 계획 0002 §1-b — **이 사이클에서 유일하게 스키마가 잡아주지 않는 자리다.**
+
+    `successor_id` 만으로 조회하면 다른 프로젝트의 같은 `activity_id`(`A100` 같은 코드는 무관한 두 현장도
+    겹친다) 관계를 선행공정으로 끌어온다. 복합 PK 는 `session.get()` 경로만 터뜨려 주므로 이 `select()`
+    경로는 조용히 틀린다 — `project_id` 를 필수 위치 인자로 받고 필터를 반드시 함께 건다.
+    """
+    return list(session.scalars(select(ActivityRelationRow).where(
+        ActivityRelationRow.project_id == project_id,
+        ActivityRelationRow.successor_id == activity_id)))
 
 
 # ------------------------------------------------------------------ mappings
-def save_mappings(session: Session, mappings: list[ActivityObjectMapping]) -> int:
-    """ADR 0005 규칙 1: project_id 는 호출자가 주입하지 않고 Activity의 프로젝트에서 유도한다."""
-    project_id_cache: dict[str, str] = {}
+def save_mappings(session: Session, project_id: str, mappings: list[ActivityObjectMapping]) -> int:
+    """ADR 0008 §2-a: `project_id` 는 필수 위치 인자이고 **검증에** 쓴다.
+
+    규칙 1(부모에서 유도)은 그대로다 — 매핑 행의 `project_id` 는 여전히 Activity 의 프로젝트다. 다만
+    그 Activity 를 `(project_id, activity_id)` 로 찾으므로, 호출자가 임의 `project_id` 를 주입해 남의
+    프로젝트에 매핑을 만들려 하면 Activity 가 없어 `LookupError` 로 멈춘다. 전역 PK 였을 때는 이
+    upsert 가 첫 프로젝트의 행을 찾아 `project_id` 를 덮어써 매핑 27건을 통째로 옮겨갔다(ADR 0008 §Context 1).
+    """
+    verified: set[str] = set()
     count = 0
     for m in mappings:
-        if m.activity_id not in project_id_cache:
-            activity = session.get(ActivityRow, m.activity_id)
-            if activity is None:
-                raise LookupError(f"activity not found: {m.activity_id}")
-            project_id_cache[m.activity_id] = activity.project_id
-        project_id = project_id_cache[m.activity_id]
-        row = session.get(ActivityObjectMappingRow, (m.activity_id, m.global_id))
+        if m.activity_id not in verified:
+            if load_activity(session, project_id, m.activity_id) is None:
+                raise LookupError(f"activity not found: {m.activity_id} in project {project_id}")
+            verified.add(m.activity_id)
+        row = session.get(ActivityObjectMappingRow, (project_id, m.activity_id, m.global_id))
         if row is None:
-            row = ActivityObjectMappingRow(activity_id=m.activity_id, global_id=m.global_id, project_id=project_id,
+            row = ActivityObjectMappingRow(project_id=project_id, activity_id=m.activity_id, global_id=m.global_id,
                                            confidence=m.confidence, evidence=m.evidence.model_dump(mode="json"),
                                            needs_review=m.needs_review)
             session.add(row)
         else:
-            row.project_id = project_id
             row.confidence, row.evidence, row.needs_review = m.confidence, m.evidence.model_dump(mode="json"), m.needs_review
         count += 1
     session.flush()
@@ -309,31 +341,32 @@ def document_mappings_for_project(session: Session, project_id: str) -> list[Act
         ActivityDocumentMappingRow.project_id == project_id)))
 
 
-def save_document_mapping(session: Session, mapping: ActivityDocumentMapping) -> ActivityDocumentMappingRow:
-    """ADR 0005 규칙 1과 같은 패턴: project_id 는 호출자가 주입하지 않고 Activity 에서 유도한다."""
-    activity = session.get(ActivityRow, mapping.activity_id)
-    if activity is None:
-        raise LookupError(f"activity not found: {mapping.activity_id}")
-    project_id = activity.project_id
-    row = session.get(ActivityDocumentMappingRow, (mapping.activity_id, mapping.doc_id))
+def save_document_mapping(session: Session, project_id: str, mapping: ActivityDocumentMapping) -> ActivityDocumentMappingRow:
+    """ADR 0008 §2-a: `save_mappings` 와 같은 계약 — `project_id` 는 필수 위치 인자이고 검증에 쓴다.
+
+    행의 `project_id` 는 여전히 Activity 의 프로젝트다(규칙 1). 그 Activity 를 `(project_id, activity_id)` 로
+    찾으므로 남의 프로젝트에 문서 매핑을 만들 수 없다.
+    """
+    if load_activity(session, project_id, mapping.activity_id) is None:
+        raise LookupError(f"activity not found: {mapping.activity_id} in project {project_id}")
+    row = session.get(ActivityDocumentMappingRow, (project_id, mapping.activity_id, mapping.doc_id))
     if row is None:
         row = ActivityDocumentMappingRow(
-            activity_id=mapping.activity_id, doc_id=mapping.doc_id, project_id=project_id,
+            project_id=project_id, activity_id=mapping.activity_id, doc_id=mapping.doc_id,
             confidence=mapping.confidence, evidence=mapping.evidence.model_dump(mode="json"),
             needs_review=mapping.needs_review, reviewed_by=mapping.reviewed_by,
         )
         session.add(row)
     else:
-        row.project_id = project_id
         row.confidence, row.evidence = mapping.confidence, mapping.evidence.model_dump(mode="json")
         row.needs_review, row.reviewed_by = mapping.needs_review, mapping.reviewed_by
     return row
 
 
-def save_document_mappings(session: Session, mappings: list[ActivityDocumentMapping]) -> int:
+def save_document_mappings(session: Session, project_id: str, mappings: list[ActivityDocumentMapping]) -> int:
     count = 0
     for m in mappings:
-        save_document_mapping(session, m)
+        save_document_mapping(session, project_id, m)
         count += 1
     session.flush()
     return count
