@@ -1,5 +1,11 @@
 """BuildTwin 공용 데이터 모델 (담당: architect, 기준: docs/adr/0001)."""
 from .coordinate import BBox2D, BBox3D, CoordinateSystem, CoordinateTransform
+from .document import (
+                       ActivityDocumentMapping,
+                       Document,
+                       DocumentApprovalStatus,
+                       DocumentType,
+)
 from .evidence import Evidence
 from .identity import IFC_TYPE_GROUP, TARGET_IFC_TYPES, BimObject, BimObjectDraft, DrawingEntity, DrawingEntityDraft
 from .ingest import FileKind, IngestResult, IngestStatus, IngestWarning
@@ -16,7 +22,7 @@ from .progress import (
                        Schedule,
                        StartableSet,
 )
-from .review import ReviewRequest
+from .review import ReviewKind, ReviewRequest
 from .scan import (
                        AlignmentInput,
                        ControlPoint,

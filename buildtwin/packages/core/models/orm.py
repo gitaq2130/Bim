@@ -313,3 +313,54 @@ class RuleVerdictRow(Base):
     confidence: Mapped[float] = mapped_column(Float)
     evidence: Mapped[dict] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class DocumentRow(Base):
+    """문서관리대장 한 행(ADR 0007 §2). 대장이 정본이므로 우리가 무결성 제약을 얹지 않는다."""
+
+    __tablename__ = "documents"
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.project_id"), primary_key=True)
+    # §2-1 결정적 대리키. 산출식에 discipline 이 들어가지 않는다 — 신뢰할 수 없는 필드가
+    # 문서의 정체성에 관여하면 협력사가 공종을 고쳐 적을 때 같은 문서가 다른 문서가 된다.
+    doc_id: Mapped[str] = mapped_column(String, primary_key=True)
+    doc_type: Mapped[str] = mapped_column(String, index=True)
+    sender: Mapped[str] = mapped_column(String)
+    sender_normalized: Mapped[str] = mapped_column(String)
+    discipline_raw: Mapped[str | None] = mapped_column(String, nullable=True)
+    discipline_normalized: Mapped[str | None] = mapped_column(String, nullable=True)
+    seq_raw: Mapped[str | None] = mapped_column(String, nullable=True)
+    seq_normalized: Mapped[str | None] = mapped_column(String, nullable=True)
+    # 유니크 제약을 걸지 않는다(§2-1 규칙 3). 걸면 공란·중복이 실제로 발생하는 대장의 적재를
+    # BuildTwin 이 거부하게 되어 "대장이 정본"(§1 규칙 1)을 정면으로 위반한다. 중복은 경고로만 보고.
+    doc_number: Mapped[str | None] = mapped_column(String, index=True, nullable=True)
+    title: Mapped[str] = mapped_column(Text)
+    title_normalized: Mapped[str] = mapped_column(Text)
+    issued_on: Mapped[str | None] = mapped_column(String, nullable=True)
+    result_raw: Mapped[str | None] = mapped_column(Text, nullable=True)
+    approval_status: Mapped[str] = mapped_column(String, index=True, default="UNKNOWN")
+    approval_confidence: Mapped[float] = mapped_column(Float)
+    approval_evidence: Mapped[dict] = mapped_column(JSON)
+    completed_on: Mapped[str | None] = mapped_column(String, nullable=True)
+    file_id: Mapped[str] = mapped_column(ForeignKey("files.file_id"))
+    sheet_name: Mapped[str] = mapped_column(String)
+    source_row: Mapped[int] = mapped_column(Integer)
+    needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_orphaned: Mapped[bool] = mapped_column(Boolean, default=False)
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ActivityDocumentMappingRow(Base):
+    """문서 ↔ Activity 매핑(ADR 0007 §4). ActivityObjectMappingRow 와 같은 모양이다."""
+
+    __tablename__ = "activity_document_mappings"
+    __table_args__ = (ForeignKeyConstraint(["project_id", "doc_id"],
+                                          ["documents.project_id", "documents.doc_id"]),)
+    activity_id: Mapped[str] = mapped_column(String, primary_key=True)
+    doc_id: Mapped[str] = mapped_column(String, primary_key=True)
+    project_id: Mapped[str] = mapped_column(String, index=True)   # ADR 0005: Activity 의 프로젝트에서 유도
+    confidence: Mapped[float] = mapped_column(Float)
+    evidence: Mapped[dict] = mapped_column(JSON)
+    # §4 규칙 5: 시스템이 만든 문서 매핑은 confidence 와 무관하게 항상 True 로 들어온다.
+    # 기본값을 False 로 두면 누락 시 조용히 확정된 매핑이 되므로 True 로 둔다.
+    needs_review: Mapped[bool] = mapped_column(Boolean, default=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String, nullable=True)

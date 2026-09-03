@@ -10,6 +10,7 @@ from .coordinate import BBox3D
 EvidenceSourceType = Literal[
     "scan", "daily_report", "cm_action", "rule", "ingest", "mapping",
     "schedule", "material", "system_logic", "user_input",
+    "document",   # ADR 0007 §3-2 규칙 4: 대장에서 온 근거. 기존 어느 축에도 속하지 않아 감사에서 구분되어야 한다
 ]
 
 

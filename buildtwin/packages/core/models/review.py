@@ -9,7 +9,9 @@ from pydantic import BaseModel, Field
 
 from .evidence import Evidence
 
-ReviewKind = Literal["mapping", "verification", "inspection"]
+# document_mapping: 미확정 문서 매핑(ADR 0007 §4 규칙 5). 기존 mapping 을 재사용하지 않는 이유는
+# services/sync 의 해소 로직이 drawing_id/entity_handle 을 기대하기 때문이다 — 해소는 services/progress 가 소유.
+ReviewKind = Literal["mapping", "verification", "inspection", "document_mapping"]
 ReviewStatus = Literal["open", "approved", "rejected", "on_hold"]
 
 
