@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
 
 import pytest
 from sqlalchemy import select
@@ -49,14 +50,36 @@ def _delete_object_and_dependents(project: str, gid: str) -> None:
         s.close()
 
 
+def _delete_all_objects(project: str) -> None:
+    """이 프로젝트의 bim_objects 전부와 FK 의존 행을 지운다. `isolated_project` 픽스처의 정리 단계에서만
+    쓰인다 — sample.ifc 를 다시 올린 격리 프로젝트를 그대로 두면 그 global_id 들이 세션 픽스처 `project` 의
+    것과 겹쳐, 이 파일 밖의 project_id 없는 `/api/objects/{global_id}` 조회(test_02 재업로드 테스트 등)가
+    409(여러 프로젝트에 걸침)로 깨진다. 테스트가 끝나자마자 지워 그 가정을 다시 성립시킨다."""
+    s = new_session()
+    try:
+        for model in _FK_DEPENDENT_MODELS:
+            for row in s.scalars(select(model).where(model.project_id == project)):
+                s.delete(row)
+        s.flush()
+        for row in s.scalars(select(BimObjectRow).where(BimObjectRow.project_id == project)):
+            s.delete(row)
+        s.commit()
+    finally:
+        s.close()
+
+
 @pytest.fixture
-def isolated_project(client, auth) -> str:
+def isolated_project(client, auth) -> Iterator[str]:
     """이 테스트 함수만을 위한 새 프로젝트. 세션 스코프 `project` 픽스처(다른 파일도 공유, 예: test_02 의
     object_total == 42)는 절대 건드리지 않는다 — orphan 을 만들려고 뭔가를 지워야 하는 테스트는 이 픽스처로
-    자기 소유의 프로젝트를 받아 그 안에서만 지운다. 함수 스코프라 테스트 실행 순서·재실행 여부에 영향받지 않는다."""
+    자기 소유의 프로젝트를 받아 그 안에서만 지운다. 함수 스코프라 테스트 실행 순서·재실행 여부에 영향받지 않는다.
+    테스트가 끝나면(성공/실패 무관) 이 프로젝트에 올라간 bim_objects 를 지워, 다른 테스트 파일의 unscoped
+    global_id 조회를 오염시키지 않는다(아래 `_delete_all_objects` 참고)."""
     r = client.post("/api/projects", headers=auth("admin"), json={"name": f"검토요청 격리 테스트 {uuid.uuid4().hex[:8]}"})
     assert r.status_code == 201, r.text
-    return r.json()["project_id"]
+    proj = r.json()["project_id"]
+    yield proj
+    _delete_all_objects(proj)
 
 
 @pytest.fixture
@@ -95,8 +118,11 @@ def test_resolve_verification_review_records_log(client, auth, project, ifc_job)
     d = client.get(f"/api/objects/{rv['global_id']}", headers=auth("cm")).json()
     assert d["current_state"]["state"] == state_before
     assert rv["review_request_id"] not in d["current_state"]["open_review_ids"]
-    # 두 번 처리 불가
-    assert client.post(f"/api/review-requests/{rv['review_request_id']}/resolve", headers=auth("cm"), json={"decision": "rejected"}).status_code == 409
+    # 두 번 처리 불가 — code 는 "review_already_resolved"(다른 409 원인과 구분, reviewer round-4 obs. 1)
+    r2 = client.post(f"/api/review-requests/{rv['review_request_id']}/resolve", headers=auth("cm"), json={"decision": "rejected"})
+    assert r2.status_code == 409
+    assert r2.json()["code"] == "review_already_resolved"
+    assert "detail" in r2.json()
     assert client.get(f"/api/review-requests/{rv['review_request_id']}", headers=auth("cm")).json()["status"] == "approved"
 
 

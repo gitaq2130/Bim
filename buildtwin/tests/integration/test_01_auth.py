@@ -43,6 +43,18 @@ def test_create_project_role_matrix(client, auth, role, expected):
     assert r.status_code == expected, r.text
 
 
+def test_create_project_duplicate_id_returns_409_with_code(client, auth):
+    """같은 project_id 로 두 번 생성하면 409 — code 는 "duplicate_project"(다른 409 원인과 구분,
+    reviewer round-4 obs. 1: 클라이언트가 409 를 원인별로 구분할 수 있어야 한다)."""
+    r1 = client.post("/api/projects", headers=auth("admin"), json={"name": "dup-project", "project_id": "p-dup-test"})
+    assert r1.status_code == 201, r1.text
+    r2 = client.post("/api/projects", headers=auth("admin"), json={"name": "dup-project-again", "project_id": "p-dup-test"})
+    assert r2.status_code == 409, r2.text
+    body = r2.json()
+    assert body["code"] == "duplicate_project"
+    assert "p-dup-test" in body["detail"]
+
+
 def test_projects_list_and_get(client, auth, project):
     r = client.get("/api/projects", headers=auth("client"))
     assert r.status_code == 200 and any(p["project_id"] == project for p in r.json())

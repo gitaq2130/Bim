@@ -108,7 +108,7 @@ def object_detail(session: Session, global_id: str, role: str, project_id: str |
     project_id = row.project_id
     sm = ObjectStateMachine()
     history = list(reversed(sm.history(session, project_id, global_id)))
-    open_reviews = db.open_reviews(session, [global_id], project_id=project_id)
+    open_reviews = db.open_reviews(session, project_id, [global_id])
     latest = history[0] if history else None
     if latest is not None:
         confidence = latest.confidence if latest.confidence is not None else (1.0 if latest.actor != Actor.SYSTEM else None)

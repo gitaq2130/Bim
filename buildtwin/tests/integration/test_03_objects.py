@@ -45,9 +45,12 @@ def test_contractor_cannot_confirm(client, auth, project, ifc_job):
 
 def test_cm_confirm_path(client, auth, project, ifc_job):
     gid = _pick_planned(client, auth, project)
-    # cm 이 PLANNED 에서 바로 CONFIRMED 는 상태기계가 거부(409)
+    # cm 이 PLANNED 에서 바로 CONFIRMED 는 상태기계가 거부(409) — code 는 "invalid_transition"
+    # (모호한 global_id·검토요청 재처리 등 다른 409 원인과 구분되어야 한다, reviewer round-4 obs. 1)
     r = client.post(f"/api/objects/{gid}/transitions", headers=auth("cm"), json={"to_state": "CONFIRMED", "note": "너무 이름"})
     assert r.status_code == 409
+    assert r.json()["code"] == "invalid_transition"
+    assert "detail" in r.json()
     r = client.post(f"/api/objects/{gid}/transitions", headers=auth("contractor"),
                     json={"to_state": "REPORTED", "evidence": {"source_type": "daily_report", "source_id": "manual"}, "note": "착수"})
     assert r.status_code == 201, r.text

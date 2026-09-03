@@ -31,14 +31,19 @@ def test_same_ifc_in_two_projects(client, auth, project, ifc_job, ifc_expected):
     shared_gid = sorted(gids1)[0]
 
     # global_id 단독으로는 두 프로젝트 모두에 걸쳐 모호 → 409, project_id 후보를 안내한다.
+    # code 는 "ambiguous_global_id" — 다른 409 원인(전이 거부·검토요청 재처리 등)과 구분 가능해야 한다(reviewer round-4 obs. 1).
     amb = client.get(f"/api/objects/{shared_gid}", headers=auth("cm"))
     assert amb.status_code == 409, amb.text
-    detail = amb.json()["detail"]
+    body = amb.json()
+    detail = body["detail"]
     assert project in detail and project2 in detail and "project_id" in detail
+    assert body["code"] == "ambiguous_global_id"
 
     amb_t = client.post(f"/api/objects/{shared_gid}/transitions", headers=auth("contractor"),
                         json={"to_state": "REPORTED", "evidence": {"source_type": "user_input", "source_id": "x"}})
     assert amb_t.status_code == 409, amb_t.text
+    assert amb_t.json()["code"] == "ambiguous_global_id"
+    assert "detail" in amb_t.json()
 
     # ?project_id= 를 주면 각각 정확한 프로젝트의 객체로 해소된다.
     d1 = client.get(f"/api/objects/{shared_gid}", headers=auth("cm"), params={"project_id": project})

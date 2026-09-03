@@ -36,7 +36,7 @@ def list_objects(project_id: str, level: str | None = None, ifc_type: str | None
     total = int(session.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
     rows = list(session.scalars(stmt.order_by(BimObjectRow.level, BimObjectRow.ifc_type, BimObjectRow.global_id)
                                 .offset((page - 1) * limit).limit(limit)))
-    open_ids = {r.global_id for r in db.open_reviews(session, [r.global_id for r in rows], project_id=project_id)} if rows else set()
+    open_ids = {r.global_id for r in db.open_reviews(session, project_id, [r.global_id for r in rows])} if rows else set()
     return ObjectList(items=[usecases.object_view(r, r.global_id in open_ids) for r in rows], total=total, page=page, page_size=limit)
 
 

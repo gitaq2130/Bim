@@ -124,3 +124,41 @@
 | GlobalId 모호성 | `ambiguous global_id` | 한 GlobalId가 둘 이상의 프로젝트에 존재하는 상태. `/api/objects/{global_id}`는 이때 **409**를 돌려주고 `?project_id=`로 해소를 요구한다(ADR 0005 §3) |
 | 프로젝트 한정 질의 파라미터 | `project_id` (query) | 객체별 API의 선택 질의 파라미터. 모호성을 직접 해소한다 |
 | 고아 객체 | `is_orphaned` | 재업로드에서 사라진 GlobalId. 삭제하지 않고 표시만 하며, 판단은 **같은 프로젝트 안에서만** 한다 |
+
+## 오류 응답 code 어휘 (api, 2026-09-03)
+
+reviewer 4차 지적 1: 동일 상태코드(특히 409)가 서로 무관한 여러 원인에 쓰여 클라이언트가 원인을 구분할 수 없었다
+(예: GlobalId 모호함 / 전이 거부 / 검토요청 재처리 모두 409). 이제 모든 오류 응답 본문은 기존 `detail`(사람이
+읽는 문자열, 문구·상태코드 불변)에 안정적인 식별자 `code`(snake_case)를 추가로 싣는다:
+`{"detail": "...", "code": "ambiguous_global_id"}`. 프론트는 `code`로 분기하고, 모르는 `code`는 `detail`을
+그대로 보여준다(신규 code 추가는 이 표에 행만 더하면 되고 기존 프론트 분기를 깨지 않는다).
+
+| code | HTTP | 발생 조건 |
+|---|---|---|
+| `ambiguous_global_id` | 409 | `global_id`가 둘 이상의 프로젝트에 존재하는데 `?project_id=`를 주지 않고 `/api/objects/{global_id}`(조회·전이)를 호출함(ADR 0005 §3) |
+| `invalid_transition` | 409 | 상태기계가 허용하지 않는 전이 요청(예: PLANNED→CONFIRMED 직행, actor 불일치) |
+| `transition_blocked_by_review` | 409 | 미결 verification ReviewRequest 가 있어 system 전이가 막힘(ADR 0001 불변식 4) |
+| `review_already_resolved` | 409 | 이미 `open`이 아닌(approved/rejected/on_hold) ReviewRequest 를 다시 처리하려 함 |
+| `inspection_confirm_failed` | 409 | 검측(inspection) ReviewRequest 승인 시 CONFIRMED 전이가 상태기계에 의해 거부됨 |
+| `duplicate_project` | 409 | `POST /api/projects`에 이미 존재하는 `project_id`를 지정함 |
+| `duplicate_user_email` | 409 | `POST /api/auth/register`에 이미 등록된 이메일을 지정함 |
+| `object_not_found` | 404 | `(project_id, global_id)` 또는 `global_id` 단독으로 객체를 찾을 수 없음(모호함이 아니라 0건) |
+| `review_object_not_found` | 404 | 검측 ReviewRequest 가 가리키는 객체가 이후 삭제/재업로드로 사라짐(orphan) |
+| `mapping_target_not_found` | 404 | 매핑 확정(`candidate_global_id`)이 가리키는 객체가 그 프로젝트에 없음(직접 확정 또는 mapping ReviewRequest 승인 경로 공통) |
+| `review_request_not_found` | 404 | `review_request_id`에 해당하는 ReviewRequest 가 없음 |
+| `drawing_not_found` | 404 | `drawing_id`에 해당하는 도면이 없음 |
+| `model_not_found` | 404 | `model_id`에 해당하는 모델이 없음 |
+| `mesh_not_found` | 404 | 모델의 메시 번들(JSON)이 아직 생성/저장되지 않음 |
+| `model_obj_not_found` | 404 | 모델의 OBJ 내보내기가 아직 생성/저장되지 않음 |
+| `job_not_found` | 404 | `job_id`에 해당하는 작업이 없음 |
+| `file_not_found` | 404 | `file_id`에 해당하는 파일 행이 없음 |
+| `file_content_not_found` | 404 | 파일 행은 있으나 저장된 실제 콘텐츠가 없음 |
+| `scan_not_found` | 404 | `scan_id`에 해당하는 스캔이 없음 |
+| `project_not_found` | 404 | `project_id`에 해당하는 프로젝트가 없음 |
+| `activity_not_found` | 404 | `activity_id`에 해당하는 공정 Activity 가 없음(readiness 조회) |
+| `plan_section_not_found` | 404 | 지정한 레벨에 기하가 있는 객체가 없어 평면 단면을 만들 수 없음 |
+| `forbidden_role` | 403 | 역할이 요구 권한 집합에 없음(예: CONFIRMED 전이·검측 승인·검토요청 처리는 `cm`만, `admin` 전용 라우트 등, ADR 0001 §4-1) |
+| `unsupported_file_kind` | 415 | 업로드 파일 종류를 인식할 수 없거나(매직넘버/확장자) 그 종류를 처리할 파이프라인이 없음 |
+| `daily_report_missing_field` | 422 | multipart 작업일보 업로드에 `report` JSON 필드가 없음 |
+| `daily_report_invalid` | 422 | 작업일보 본문이 스키마 검증에 실패함 |
+| `alignment_input_insufficient` | 422 | 스캔 정합 입력이 기준점·마커 최소 조건(각 ≥3)을 못 채움 |
