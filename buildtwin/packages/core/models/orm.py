@@ -31,6 +31,17 @@ class ProjectRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class ProjectMemberRow(Base):
+    """ADR 0006: 프로젝트 접근권은 이 행의 존재로 정의된다. 역할도 여기서 나온다(전역 역할 아님)."""
+
+    __tablename__ = "project_members"
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.project_id"), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.user_id"), primary_key=True)
+    role: Mapped[str] = mapped_column(String)          # contractor | cm | client (admin은 멤버십 없이 조회)
+    added_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class FileRow(Base):
     __tablename__ = "files"
     file_id: Mapped[str] = mapped_column(String, primary_key=True)
