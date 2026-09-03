@@ -36,3 +36,48 @@ patterns:
     when: "scan.state == 'MISMATCH'"
     severity: high
     confidence: 0.85
+
+  # ADR 0007 §6 — 문서관리대장 연동. logic 축에 document_evidence_available / drawing_approval_status /
+  # unapproved_document_count / unapproved_document_numbers / pending_document_mappings / rejected_document_count
+  # 가 필요하다(build_logic_context, progress-engine 구현). 필드 정의는 파일 하단 주석 참고.
+  # UNKNOWN(대장 공란·해석불가)과 REJECTED(반려)는 심각도가 다르므로 별도 패턴으로 나눈다 — VER-008과 VER-009.
+  - id: VER-008
+    title: "반려된 도면 상태에서 완료 신고"
+    when: "report.claimed_state == 'completed' and logic.rejected_document_count > 0"
+    severity: high
+    confidence: 0.9
+  - id: VER-009
+    title: "미승인(불확실) 도면 상태에서 완료 신고"
+    when: "report.claimed_state == 'completed' and logic.drawing_approval_status == 'not_approved' and logic.rejected_document_count == 0"
+    severity: high
+    confidence: 0.6
+  - id: VER-010
+    title: "미승인 도면 상태에서 스캔 완료추정"
+    when: "scan.state == 'ESTIMATED_DONE' and logic.drawing_approval_status == 'not_approved'"
+    severity: medium
+    confidence: 0.7
+
+# ─────────────────────────────────────────────────────────────────────────────
+# logic 축 필드 명세 (ADR 0007 §6-1 + knowledge 제안분). progress-engine이
+# services/progress/verification.build_logic_context 에 채워 넣는다. 이 파일은 소비만 한다.
+#
+#   document_evidence_available (bool)
+#     그 객체 귀속 Activity들에 확정(needs_review=False) 매핑된 필수(required_doc_types) 문서가 1건 이상 있는가.
+#   drawing_approval_status ("approved" | "not_approved" | "unknown")
+#     document_evidence_available == False 면 언제나 "unknown". True 면 전부 approved_statuses 에 속하면
+#     "approved", 하나라도 아니면 "not_approved". "unknown" 을 조건으로 삼는 패턴은 만들지 않는다
+#     (문서 데이터가 없는 프로젝트 전체가 검토요청으로 뒤덮인다 — ADR §6-2).
+#   unapproved_document_count (int)
+#     미승인(승인 아님) 확정 필수 문서 수. 근거가 없으면 0.
+#   unapproved_document_numbers (list[str])
+#     위 문서들의 doc_number(표시용). 검토요청 문구에 쓴다.
+#   pending_document_mappings (int)
+#     needs_review=True 인 문서 매핑 수(아직 CM 확정 전). 참고용 — VER-008/009/010 은 이 필드를 조건으로
+#     쓰지 않는다(확정 전 매핑은 판단 근거로 쓰지 않는다는 ADR §4 규칙 5·§5-2 규칙 3과 같은 이유).
+#   rejected_document_count (int)  — knowledge 제안, ADR §6-1 에는 없던 필드
+#     확정(needs_review=False) 매핑된 필수 문서 중 approval_status == REJECTED(반려) 인 것의 수.
+#     document_evidence_available == False 면 언제나 0. "not_approved" 는 REJECTED(명시적 반려) ·
+#     RESUBMIT_REQUIRED · IN_REVIEW · UNKNOWN(대장 처리결과 공란) 을 모두 뭉뚱그리므로, 이 필드가 없으면
+#     "반려됐다"와 "아직 대장에 안 적혔을 뿐이다"를 같은 confidence 로 취급하게 된다. VER-008(반려, 확실)과
+#     VER-009(그 외 미승인, 불확실 — 대장 갱신 지연 가능)를 나누는 데 쓴다.
+# ─────────────────────────────────────────────────────────────────────────────
