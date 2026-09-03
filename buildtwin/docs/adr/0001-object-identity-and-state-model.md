@@ -20,20 +20,21 @@ BuildTwin의 핵심은 3D 뷰어가 아니라 "계획 / 신고 / 물리적 증�
 - **키의 범위는 프로젝트다(ADR 0005).** `global_id`는 `(project_id, global_id)` 복합 키의 일부이며, 같은 IFC를 여러 프로젝트에 올릴 수 있다. 아래 "충돌 시" 접미사 규칙은 한 파일 안의 중복에만 적용된다.
 - IFC 없이 DXF만 있는 프로젝트는 MVP 범위에서 지원하지 않는다(2D 엔티티는 항상 객체에 매핑되는 부속 데이터).
 - 모델 재업로드 시 같은 GlobalId는 같은 객체로 간주하고 속성·기하만 갱신한다(`model_version` 증가). 상태·이력은 유지한다. GlobalId가 사라진 객체는 `is_orphaned=True`로 표시하고 삭제하지 않는다.
-- 파생 엔티티는 모두 `global_id` FK를 가진다:
+- 객체를 참조하는 엔티티는 모두 `(project_id, global_id)` **복합 FK**를 가진다(ADR 0005). 아래 표가 키 전략의 정본이며 `packages/core/models/orm.py`와 1:1로 일치해야 한다:
 
-| 테이블 | 키 | FK |
+| 테이블 | 키 | 객체 참조 |
 |---|---|---|
-| `bim_objects` | `global_id` PK | — |
+| `bim_objects` | **`(project_id, global_id)` PK** | — |
 | `drawing_entities` | `(drawing_id, handle)` PK | 매핑 테이블 경유 |
-| `entity_object_mappings` | `(drawing_id, handle, global_id)` | `global_id` |
+| `entity_object_mappings` | `(drawing_id, entity_handle, global_id)` PK | **복합 FK `(project_id, global_id)`** |
 | `activities` | `activity_id` PK | — |
-| `activity_object_mappings` | `(activity_id, global_id)` | `global_id` |
-| `materials` / `material_movements` | `material_id` | `global_id` (nullable, 객체 귀속 시) |
-| `scan_verdicts` | `(scan_id, global_id)` | `global_id` |
-| `state_transitions` | `transition_id` PK | `global_id` |
-| `review_requests` | `review_request_id` PK | `global_id` (nullable: 프로젝트 단위 요청) |
-| `daily_reports` / `daily_report_items` | — | `global_id` |
+| `activity_object_mappings` | `(activity_id, global_id)` PK | **복합 FK `(project_id, global_id)`** |
+| `scan_verdicts` | `(scan_id, global_id)` PK | **복합 FK `(project_id, global_id)`** |
+| `state_transitions` | `transition_id` PK | **복합 FK `(project_id, global_id)`** |
+| `materials` / `material_movements` | `material_id` | `global_id` 평문 컬럼(FK 아님, nullable). 조회 시 `project_id`를 함께 건다 |
+| `review_requests` | `review_request_id` PK | `global_id` 평문 컬럼(FK 아님, nullable: 프로젝트 단위 요청). 행이 `project_id`를 직접 보유 |
+| `rule_verdicts` | `id` PK | `global_id` 평문 컬럼(FK 아님, nullable). 행이 `project_id`를 직접 보유 |
+| `daily_reports` / `daily_report_items` | `report_id` PK | 항목 JSON 안의 `global_id`. 행이 `project_id`를 직접 보유 |
 
 - 매핑 테이블(`entity_object_mappings`, `activity_object_mappings`)은 반드시 `confidence`(0~1)·`evidence`·`needs_review`를 가진다.
 

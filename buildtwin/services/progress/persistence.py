@@ -245,22 +245,25 @@ def activity_ids_for_object(session: Session, project_id: str, global_id: str) -
 
 
 # ------------------------------------------------------------------ reviews
-def open_reviews(session: Session, global_ids: list[str] | None = None, kind: str | None = None,
-                 project_id: str | None = None) -> list[ReviewRequestRow]:
-    stmt = select(ReviewRequestRow).where(ReviewRequestRow.status == "open")
+def open_reviews(session: Session, project_id: str, global_ids: list[str] | None = None,
+                 kind: str | None = None) -> list[ReviewRequestRow]:
+    """ADR 0005 규칙 2: project_id 는 필수 인자다(단독 global_id 조회 금지 — 라운드4 리뷰 지적 사유).
+
+    project_id 를 옵션으로 두면 시그니처가 생략을 허용해버려 규칙이 실제로 강제되지 않는다(지난
+    프로젝트 간 교차 조회 버그의 원인). load_mappings/mapped_global_ids 와 동일하게 필수 위치 인자로 승격.
+    """
+    stmt = select(ReviewRequestRow).where(ReviewRequestRow.status == "open", ReviewRequestRow.project_id == project_id)
     if global_ids is not None:
         if not global_ids:
             return []
         stmt = stmt.where(ReviewRequestRow.global_id.in_(global_ids))
     if kind is not None:
         stmt = stmt.where(ReviewRequestRow.kind == kind)
-    if project_id is not None:
-        stmt = stmt.where(ReviewRequestRow.project_id == project_id)
     return list(session.scalars(stmt))
 
 
 def has_open_verification_review(session: Session, project_id: str, global_id: str) -> bool:
-    return bool(open_reviews(session, [global_id], kind="verification", project_id=project_id))
+    return bool(open_reviews(session, project_id, [global_id], kind="verification"))
 
 
 def save_review_request(session: Session, review: ReviewRequest) -> ReviewRequestRow:

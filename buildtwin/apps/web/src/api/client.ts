@@ -5,14 +5,39 @@ import { useStore } from "../store";
 
 export const API_BASE = "/api";
 
+/**
+ * 서버 에러 바디의 안정적 원인 식별자. `detail` 은 사람이 읽는 문구(오늘의 동작 유지),
+ * `code` 는 UI 가 원인별로 분기하기 위한 값이며 구버전/알 수 없는 에러에는 없을 수 있다.
+ */
+export type ApiErrorCode =
+  | "ambiguous_global_id"
+  | "invalid_transition"
+  | "transition_blocked_by_review"
+  | "review_already_resolved"
+  | "inspection_confirm_failed"
+  | "duplicate_project"
+  | "object_not_found"
+  | "forbidden_role";
+
+function parseErrorCode(body: unknown): ApiErrorCode | undefined {
+  if (body && typeof body === "object") {
+    const b = body as { code?: unknown };
+    if (typeof b.code === "string") return b.code as ApiErrorCode;
+  }
+  return undefined;
+}
+
 export class ApiError extends Error {
   status: number;
   body: unknown;
+  /** 서버가 내려준 안정적 원인 코드. 없으면 undefined (구버전/알 수 없는 에러). */
+  code?: ApiErrorCode;
   constructor(status: number, message: string, body?: unknown) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.body = body;
+    this.code = parseErrorCode(body);
   }
 }
 

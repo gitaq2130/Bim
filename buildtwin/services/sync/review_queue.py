@@ -84,8 +84,10 @@ def confirm_mapping_row(session: Session, drawing_id: str, entity_handle: str, g
 
     ADR 0005: project_id 는 매핑 계약에 없다 — 여기서 도면(drawing_id)에서 유도해 저장 행에 싣는다.
 
-    ADR 0005 무결성: (project_id, global_id) 가 객체 키이므로, 그 프로젝트에 실제로 존재하는 객체인지 여기서 확인한다
-    (SQLite 는 이 엔진에서 FK 를 강제하지 않는다 — reviewer round-3 observation 7). 다른 프로젝트에 있는 global_id 도
+    ADR 0005 무결성: (project_id, global_id) 가 객체 키이므로, 그 프로젝트에 실제로 존재하는 객체인지 여기서 확인한다.
+    FK 위반 시 나오는 원시 IntegrityError 대신 어떤 global_id/project_id 조합이 문제인지 담은 도메인 에러
+    메시지를 주기 위함이고, 일부 경로(예: 매핑 저장)는 global_id 를 (project_id, global_id) 복합 FK 를 거치지 않고
+    평범한 컬럼 값으로만 다루므로 여기서 명시적으로 막아야 한다. 다른 프로젝트에 있는 global_id 도
     이 도면의 project_id 기준으로는 "존재하지 않음"이다."""
     _require_user(user_id)
     project_id = _project_id_of_drawing(session, drawing_id)
