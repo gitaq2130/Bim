@@ -14,6 +14,12 @@
    만드는데, `_drop_already_confirmed` 없이 그대로 upsert 하면 재업로드가 CM 확정을 조용히 되돌린다.
 6. `conflicting_sources` 에 `drawing_id`/`entity_handle` 이 없다(있으면 services/sync 의 mapping 해소
    경로로 잘못 흘러 500 `mapping_review_data_corrupt`).
+
+11차 QA 사이클(과제 2 — 큐 반려)에서 항목 7을 더한다: 반려는 `(activity_id, doc_id)` 쌍에만 매달린다 —
+문서 제목이 바뀌면(→ ADR §2-1 대로 새 `doc_id`) 반려 이력과 무관한 새 후보가 정상 생성된다. 이 항목은
+`reject_document_mapping`/`map_project_documents` 를 직접 구동한다(**resolve_review 를 통한 승인·반려
+자체**는 tests/integration/test_15_document_mapping_queue_resolve.py 가 API 레벨로 고정한다 — 이 파일은
+document_mapper 모듈 자체의 계약을 고정하는 자리라 기존 관례(직접 호출)를 그대로 따른다).
 """
 from __future__ import annotations
 
@@ -21,11 +27,17 @@ from pathlib import Path
 
 from packages.core.models.document import ActivityDocumentMapping
 from packages.core.models.orm import ActivityDocumentMappingRow, FileRow, ReviewRequestRow
+from packages.core.models.progress import Activity, Schedule
 from services.ingest.persistence import persist_document_register_import
 from services.progress import persistence as db
-from services.progress.document_mapper import close_document_mapping_review, map_project_documents
+from services.progress.document_mapper import (
+    close_document_mapping_review,
+    map_project_documents,
+    reject_document_mapping,
+)
 from services.progress.importers import import_schedule
 from services.progress.importers.document_register import import_document_register
+from tests.helpers.document_fixtures import make_document
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
 PROJECT_ID = "P-DOC-REVIEW-LC"
@@ -194,4 +206,60 @@ def test_review_conflicting_sources_never_carries_drawing_or_entity_keys(session
         keys = set((r.conflicting_sources or {}).keys())
         assert "drawing_id" not in keys
         assert "entity_handle" not in keys
-        assert keys == {"doc_id"}
+
+
+# ── 7(과제 2-6). 반려는 (activity_id, doc_id) 쌍에만 매달린다 — 제목이 바뀌면(새 doc_id) ──────
+#    반려 이력과 무관한 새 후보가 정상 생성된다(ADR §4-2 규칙 7, reject_document_mapping 문서화 그대로) ──
+def test_rejection_pinned_to_doc_id_survives_recompute_but_not_a_renamed_title(session):
+    """`reject_document_mapping`은 옛 `doc_id`에만 반려 표시를 남긴다. 제목이 수정되면 ADR §2-1대로
+    `doc_id`가 바뀌어 **다른 문서**가 되므로, 그 새 doc_id는 반려 이력 없이 정상적인 새 후보로 취급돼야
+    한다 — 별도 코드 없이 키 설계에서 이미 그렇게 동작해야 한다는 주장을 실제로 실행해 확인한다."""
+    db.ensure_project(session, PROJECT_ID)
+    title = "리네임 테스트 대상 시공상세도"
+    schedule = Schedule(schedule_id=f"{PROJECT_ID}:rename-test", project_id=PROJECT_ID,
+                        activities=[Activity(activity_id="A-RENAME", name=title, discipline="structure")],
+                        relations=[], source_format="csv")
+    db.save_schedule(session, schedule)
+    make_document(session, PROJECT_ID, "doc-title-v1", title=title, approval_status="APPROVED")
+    session.commit()
+
+    result = map_project_documents(session, PROJECT_ID)
+    session.commit()
+    assert ("A-RENAME", "doc-title-v1") in {(m.activity_id, m.doc_id) for m in result.mappings}
+    review_v1 = db.open_document_mapping_review(session, PROJECT_ID, "A-RENAME", "doc-title-v1")
+    assert review_v1 is not None
+    review_v1_id = review_v1.review_request_id
+
+    # reject_document_mapping 은 매핑 행만 다룬다(그 요청을 status="rejected" 로 닫는 것은 api 소유 —
+    # resolve_review 가 이미 하고 있고, tests/integration/test_15_...가 그 경로를 API 레벨로 고정한다).
+    # 여기서는 document_mapper 자체의 계약(재계산이 반려를 되돌리지 않는다)만 본다.
+    reject_document_mapping(session, PROJECT_ID, "A-RENAME", "doc-title-v1", CM_USER, note="관련 없는 문서")
+    session.commit()
+    row_v1 = session.get(ActivityDocumentMappingRow, ("A-RENAME", "doc-title-v1"))
+    assert row_v1.needs_review is False and row_v1.reviewed_by == CM_USER
+
+    # "매주 재업로드"를 두 번 흉내내도 반려된 쌍은 되살아나지 않는다(과제 2-2 와 같은 불변식): 매핑은
+    # 재생성되지 않고, 그 쌍의 검토요청도 같은 행 그대로다(새로 만들어지거나 중복되지 않는다).
+    for _ in range(2):
+        result = map_project_documents(session, PROJECT_ID)
+        session.commit()
+    assert ("A-RENAME", "doc-title-v1") not in {(m.activity_id, m.doc_id) for m in result.mappings}
+    review_v1_after = db.open_document_mapping_review(session, PROJECT_ID, "A-RENAME", "doc-title-v1")
+    assert review_v1_after is not None and review_v1_after.review_request_id == review_v1_id
+
+    # 문서 제목이 수정된다 -> 새 doc_id. 반려는 옛 doc_id 에만 매달려 있으므로 새 후보가 정상 생성돼야 한다
+    make_document(session, PROJECT_ID, "doc-title-v2", title=title, approval_status="APPROVED")
+    session.commit()
+    result2 = map_project_documents(session, PROJECT_ID)
+    session.commit()
+
+    row_v2 = session.get(ActivityDocumentMappingRow, ("A-RENAME", "doc-title-v2"))
+    assert row_v2 is not None
+    assert row_v2.needs_review is True and row_v2.reviewed_by is None   # 반려 이력이 새 doc_id 로 전혀 새지 않는다
+    assert ("A-RENAME", "doc-title-v2") in {(m.activity_id, m.doc_id) for m in result2.mappings}
+    new_review = db.open_document_mapping_review(session, PROJECT_ID, "A-RENAME", "doc-title-v2")
+    assert new_review is not None and new_review.status == "open"   # 새 후보의 검토요청이 정상 생성된다
+
+    # 옛 doc_id 쪽 반려 표시는 그대로 남아 있다(감사 이력 보존, 새 doc_id 처리가 옛 행을 건드리지 않는다)
+    row_v1_after = session.get(ActivityDocumentMappingRow, ("A-RENAME", "doc-title-v1"))
+    assert row_v1_after.evidence["extra"]["mapping_review_decision"] == "rejected"
