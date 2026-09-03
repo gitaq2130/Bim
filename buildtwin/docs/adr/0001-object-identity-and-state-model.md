@@ -1,6 +1,6 @@
 # ADR 0001 — 객체 식별(Identity)과 상태 모델(State Model)
 
-- 상태: Accepted (개정 1: 2026-09-02 — §2 좌표계 출처·§4-1 역할 매핑·§5 근거 출처 확장 / 개정 2: 2026-09-03 — §4-1 표가 가리키는 역할의 **층**을 명시. 결정 내용은 불변, 용어 참조만 정렬)
+- 상태: Accepted (개정 1: 2026-09-02 — §2 좌표계 출처·§4-1 역할 매핑·§5 근거 출처 확장 / 개정 2: 2026-09-03 — §4-1 표가 가리키는 역할의 **층**을 명시. 결정 내용은 불변, 용어 참조만 정렬 / 개정 3: 2026-09-03 — §6 규칙 2, 시스템이 만드는 `on_hold`의 사유를 "대체된 요청" 하나에서 둘로 확장. 근거는 ADR 0007 §4-2 규칙 6 소유)
 - 작성: architect
 - 날짜: 2026-09-02
 - 관련: CLAUDE.md §0 핵심 원칙, `packages/core/models/`, ADR 0006 §2·규칙 7(§4-1의 "역할"은 프로젝트 역할)
@@ -144,7 +144,11 @@ class StateTransition(BaseModel):
 
 - 축: ① 신고(`DailyReport`) ② 물리적 증거(`ScanVerdict`) ③ 시스템 논리(BIM 수량·선후행·자재 입출고).
 - `rules/verification.yaml`의 패턴에 걸리면 `ReviewRequest(kind="verification")`를 만들고 그 객체의 `system` 전이를 막는다. 상태 자체는 바꾸지 않는다(현 상태 유지 + `has_open_review=True` 파생 필드).
-- `ReviewRequest`의 해소(`approved/rejected`)는 사람(cm)만 한다. 시스템은 대체된 요청(예: 도면 재정합으로 무의미해진 mapping 검토요청)을 `on_hold`로 바꾸고 `resolution_note`에 `superseded_by=<new id>`를 남길 수만 있다.
+- `ReviewRequest`의 해소(`approved/rejected`)는 사람(cm)만 한다. 시스템이 만드는 `on_hold`는 두 사유로 한정된다 —
+  ① 대체된 요청(예: 도면 재정합으로 무의미해진 mapping 검토요청)을 `resolution_note`에 `superseded_by=<new id>`를
+  남기고 닫는 것 ② **(개정 3)** 판단 대상 자체가 소실된 요청(예: `document_mapping` 검토요청이 가리키는 문서가
+  고아가 됨) — 이 사유의 판단 근거·구현은 `ADR 0007 §4-2 규칙 6`이 소유한다. 두 사유 모두 사람의 판단 행위가
+  아니므로 `resolved_by`는 채우지 않으며, 화면·감사는 `resolution_note`의 내용으로 두 사유를 구분한다.
 - `INSPECTION_REQUESTED` 진입 시 상태기계가 `ReviewRequest(kind="inspection")`를 생성하고, cm의 `CONFIRMED`/`IN_PROGRESS`/`MISMATCH` 전이 시 종료한다(소유: progress-engine).
 
 ## Consequences

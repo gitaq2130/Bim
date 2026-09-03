@@ -1,6 +1,8 @@
 # ADR 0007 — 문서관리대장(Document Register) 연동과 `drawing_approval` 근거화
 
-- 상태: Accepted
+- 상태: Accepted (개정 2: 2026-09-03 — 9차 리뷰: 코드가 앞서고 문서가 뒤따르지 못한 동작 4건 반영 — 문서 고아화 시
+  `document_mapping` 검토요청의 `on_hold` 자동 종료·복귀[§4 규칙 6], 매핑 재계산 시점[§4-3 신설], `DOCUMENT_UNMAPPED`
+  경고 등록[§8], `UnsafeConfigOverrideError`[§9 신설])
 - 작성: architect
 - 날짜: 2026-09-03
 - 관련: CLAUDE.md §0(핵심 원칙 — "AI는 추정까지, 확정은 사람" / 모든 판정에 confidence·evidence), §3 규칙 3·5·7·8·10·11,
@@ -271,11 +273,51 @@ class DocumentApprovalStatus(str, Enum):
 
    따라서 `MAPPING_REVIEW_THRESHOLD`(0.7)는 문서 매핑에 적용되지 않는다. confidence는 **검토 큐 정렬과 후보 하한**에만
    쓴다.
-6. `needs_review=True`인 매핑은 `ReviewRequest(kind="document_mapping", assignee_role="cm")`를 만들어 CM 검토 큐로
-   보낸다. **`ReviewKind`에 `document_mapping`을 추가한다** — 기존 `mapping`을 재사용하면
-   `services/sync/review_queue.resolve_mapping_review`가 `conflicting_sources`에서 `drawing_id`/`entity_handle`을
-   기대하므로 `mapping_review_data_corrupt`(500)로 깨진다. 새 kind의 해소는 `services/progress`가 소유한다
-   (CLAUDE.md §3 규칙 11: API는 호출만).
+6. **`document_mapping` 검토요청은 다섯 단계의 생애주기를 가진다**(개정 2 — 이 항목을 확장한다.
+   `services/progress/document_mapper.py`가 전체를 소유하며 API는 호출만 한다, CLAUDE.md §3 규칙 11):
+
+   | 단계 | 트리거 | 구현 | 결과 |
+   |---|---|---|---|
+   | ① 생성 | `map_documents_to_activities`가 만든 후보 중 `needs_review=True`인 것에 아직 열린 요청이 없음 | `_sync_pending_document_mapping_reviews` | `ReviewRequest(kind="document_mapping", status="open", assignee_role="cm")` 신규 저장. **`ReviewKind`에 `document_mapping`을 추가한다** — 기존 `mapping`을 재사용하면 `services/sync/review_queue.resolve_mapping_review`가 `conflicting_sources`에서 `drawing_id`/`entity_handle`을 기대하므로 `mapping_review_data_corrupt`(500)로 깨진다 |
+   | ② 중복 방지 | 같은 `(activity_id, doc_id)`에 이미 열린(`status="open"`) 요청이 있음 — 대장·공정표 재업로드마다 `map_project_documents`가 다시 돌므로(§4-3) 상시 발생 | 위와 동일 함수 | 새로 만들지 않고 기존 행의 `confidence`/`evidence`/`title`만 최신 값으로 갱신한다(재계산으로 근거가 바뀌었을 수 있으므로) |
+   | ③ 확정 시 종료 | CM이 매핑을 확정(`needs_review=False`, `reviewed_by=<user_id>`) | `close_document_mapping_review`(`services/api/usecases.confirm_document_mapping`이 매핑 저장 직후 호출) | `status="approved"`, `resolved_by=<user_id>`, `resolution_note="mapping confirmed by <user_id>"` |
+   | ④ 고아화 시 종료 | 매핑이 가리키는 문서가 `is_orphaned=True`가 되거나(대장 재업로드에서 그 doc_type 안에 더 이상 없음, §2-2 규칙 2) 문서 행 자체가 없어짐 | `_close_reviews_for_orphaned_documents` | `status="on_hold"`, **`resolved_by`는 채우지 않는다**, `resolution_note`에 고아화 사유를 남긴다(아래 판단 근거) |
+   | ⑤ 복귀(재생성) | ④로 닫힌 문서가 이후 대장에 다시 나타나 `is_orphaned=False`가 되고, 매핑 후보 조건(제목 유사도 등, §4-2)을 다시 만족 | `map_documents_to_activities` → ①이 같은 파이프라인을 다시 돈다 | **새** `ReviewRequest(status="open")`가 생긴다(과거 `on_hold` 행을 재사용하지 않는다 — `open_document_mapping_review`는 `status="open"`만 조회하므로) |
+
+   **④의 `on_hold`가 ADR 0001 §6과 맺는 관계 — architect 판단(개정 2).** ADR 0001 §6은 시스템이 만드는 `on_hold`를
+   "대체된 요청(예: 도면 재정합으로 무의미해진 mapping 검토요청, `resolution_note`에 `superseded_by=<new id>`)"으로
+   한정했다. 문서 고아화는 그 사유와 다르다 — 대체 요청이 새로 생기는 것이 아니라 **판단 대상 자체가 사라진다.**
+   그럼에도 별도 `ReviewStatus` 값을 새로 만들지 않고 `on_hold`를 그대로 쓰기로 판단한다. 근거:
+
+   - `ReviewStatus`(글로서리 "개정 1 추가 항목") 집합은 `open`/`approved`/`rejected`/`on_hold` 넷뿐이다.
+     `approved`/`rejected`는 **사람의 판단 행위**를 뜻한다(CLAUDE.md §3 규칙 7 — 전이에는 actor·evidence가 필수이고,
+     ADR 0001 §5가 `StateTransition`에 대해 세운 원칙을 검토요청의 상태 변경에도 같은 무게로 적용한다). 고아화는
+     사람이 아무것도 판단하지 않았다 — 대장에서 그 행이 사라졌을 뿐이다. `resolved_by`를 채우지 않은 채
+     `approved`/`rejected`로 두면 "CM이 이 매핑을 승인/반려했다"는 **거짓 감사 기록**이 생긴다.
+   - 남는 선택지는 `open`(그대로 둠)뿐인데, 그러면 CM 검토 큐에 **판단 자체가 불가능한 항목**(가리키는 문서가
+     이미 없다)이 영구히 남는다 — 이는 8차 리뷰가 지적한 "검토요청이 하나도 안 만들어지는" 실패의 반대쪽이다:
+     이번엔 만들어지지만 절대 닫히지 않는 요청이 쌓인다.
+   - `on_hold`의 두 사유(대체됨 / 판단 대상 소실)는 **"사람이 더 이상 판단할 필요가 없다는 시스템의 선언"이라는
+     한 상위 개념의 서로 다른 하위 사례**다. 무효화된 경로는 다르지만 상태 자체가 다른 종류의 사건은 아니므로,
+     새 `ReviewStatus` 값(예: `voided`)을 만들어 상태 집합을 늘리는 것보다 재사용이 낫다.
+   - **다만 "대체"라는 기존 함의를 지키기 위해 `resolution_note`에 사유를 항상 구분해 남긴다.** 대체 종료는
+     `superseded_by=<id>`(ADR 0001 §6 그대로), 고아화 종료는 `document {doc_id!r} is orphaned or no longer in the
+     register — closed automatically, nothing for cm to confirm`(현재 구현 문구 그대로) — 화면·감사는
+     `resolution_note`의 내용으로 두 사유를 구분한다.
+   - **ADR 0001 §6은 시스템이 만드는 `on_hold`의 사유를 "대체된 요청" 하나에서 "대체된 요청 또는 판단 대상이
+     소실된 요청" 둘로 확장한다(ADR 0001 개정 3).** 확장 자체는 ADR 0001 본문에 짧게 반영하고, 근거·구현
+     세부사항은 이 ADR(§4-2 규칙 6)이 소유한다 — ADR 0001이 상태 모델의 정본이라는 원래 역할은 바뀌지 않는다.
+
+   **⑤ 자동 재생성에 대한 주의.** 문서가 대장에 돌아오면(예: 이번 주 대장에서 실수로 빠졌다가 다음 주 다시 실림)
+   같은 `(activity_id, doc_id)`에 새 검토요청이 자동으로 다시 열린다 — CM이 다시 확인해야 한다. 이는 의도한
+   동작이다: 고아였던 동안 그 문서의 승인 상태가 바뀌었을 수 있어(예: 대장에서 빠진 사이 반려로 바뀜), 옛
+   `on_hold` 요청을 그대로 되살리면 낡은 `evidence`를 신뢰하게 된다. 다만 **이미 사람이 확정한 매핑
+   (`reviewed_by is not None`)은 고아화·복귀를 거쳐도 재생성되지 않는다** — `_drop_already_confirmed`가 확정된
+   기존 매핑 행을 재계산 결과로 덮어쓰지 않기 때문이다(ADR 0001 불변식 2 "`CONFIRMED`에서 나가는 전이도 cm만"과
+   같은 구조 — 확정 이후는 사람만 되돌릴 수 있다). 재생성 대상은 **확정된 적 없이** 고아가 된(고아가 되는 순간까지
+   `needs_review=True`였던) 매핑뿐이다.
+
+   새 kind의 해소는 `services/progress`가 소유한다(CLAUDE.md §3 규칙 11: API는 호출만).
 7. 매핑 `evidence`: `Evidence(source_type="document", source_id=<doc_id>, method="document_title_match",
    note=<title 원문>, extra={"title_similarity": ..., "matched_rules": [...], "excluded_by": [...],
    "discipline_trusted": false})`.
@@ -291,6 +333,34 @@ class DocumentApprovalStatus(str, Enum):
    **초판이 적었던 `method="document_manual_mapping"`, `source_type="user_input"`은 채택하지 않는다
    (개정 1, 2026-09-03 architect 정정).** 어떤 코드도 이 값을 만들지 않으며, 이는 구현 누락이 아니라 위 근거에
    따른 **설계 정정**이다. `Evidence.source_type`/`.method` 어휘(glossary)에서도 제거한다.
+
+#### 4-3. 매핑 재계산 시점 (개정 2 — 신설)
+
+`map_project_documents`(순수 함수가 아니라 DB 읽기·쓰기 + 검토요청 동기화까지 하는 사이드이펙트 함수, §4-2 규칙 6)가
+**언제 다시 도는지**는 지금까지 코드에만 있고 이 ADR 어디에도 없었다(9차 리뷰 지적). 세 지점에서 호출된다:
+
+| 시점 | 호출부 | 목적 |
+|---|---|---|
+| 대장 업로드 시 | `services/api/jobs.run_document_register` | 정상 경로 — 새/갱신된 문서에 대해 매핑 후보를 만든다 |
+| 공정표 업로드 시 | `services/api/jobs.run_schedule` | **회복 경로.** 대장이 공정표보다 먼저 올라오는 순서(현장에서 흔하다 — 대장은 매주, 공정표는 가끔 갱신)에서는 대장 적재 시점에 매핑할 Activity 가 하나도 없어 매핑이 0건으로 남는다. 공정표가 뒤늦게 들어오면 그 자리에서 한 번 더 돌려 회복시킨다 |
+| 수동 요청 시 | `services/api/usecases.generate_document_mappings`(cm만, §7) | 운영자가 명시적으로 재계산을 트리거하는 경로. 자동 두 경로 중 아무것도 아직 안 돌았거나, 설정(`title_matching`·`mapping_weights`)을 바꾼 뒤 다시 확인하고 싶을 때 쓴다 |
+
+세 경로 모두 **같은 함수를 그대로 호출**하므로 §4-2 규칙 6의 다섯 단계(생성/중복 방지/확정 시 종료/고아화 시
+종료/복귀)는 호출 시점과 무관하게 동일하게 적용된다 — 대장 업로드가 만든 검토요청을 공정표 업로드가 다시 돌며
+중복 생성하지 않는 것도, 공정표 업로드가 방금 고아 처리된 문서의 요청을 닫는 것도 같은 코드 경로다.
+
+**부가 회복이 본 작업을 인질로 잡지 않는다.** `run_schedule`의 존재 이유는 공정표를
+적재하는 것이고, 문서 매핑 재계산은 **그 김에 하는 부가 회복**이다. 따라서 문서 매핑 쪽에서 나는 실패(예:
+`document_register.yaml` 오염으로 인한 `UnsafeConfigOverrideError`, §9)가 공정표 적재 자체를 롤백시켜서는
+안 된다 — 공정표는 정상적으로 올라왔는데 부가 기능이 실패했다는 이유로 job 전체가 실패로 뒤집히는 것은
+본말전도다. 이 원칙에 따라 `run_schedule`의 `map_project_documents` 호출은 예외를 잡아 `warnings`로 강등해야
+한다(공정표 적재 결과는 `"done"`으로 남기고, 문서 매핑 실패는 경고로만 보고). **구현됨** — `run_schedule`은
+`map_project_documents` 호출을 `try/except`로 감싸 실패를 `DOCUMENT_MAPPING_RESYNC_FAILED` 경고로 강등하고
+job 을 `"done"`으로 끝낸다(`services/api/jobs.py`, `run_scan_upload`의 `POINT_CLOUD_LOAD_FAILED`와 같은 패턴).
+이 처리 이전에는 문서 매핑 쪽 실패가 `run_job`의 최상위 `except Exception`에 잡혀 공정표 업로드 job 전체가
+`failed`로 끝났고, `session_scope()` 롤백으로 이미 저장된 schedule·activities·relations·객체매핑까지 사라졌다. 같은 원칙이 `run_document_register`에는 적용되지 않는다 — 그 잡의 목적 자체가
+"대장 적재 + 매핑 생성"이라 문서 매핑이 **본 작업의 일부**이므로(§2·§4), 그 잡에서는 실패를 경고로 강등하면
+안 된다.
 
 ### 5. `drawing_approval` 구성요소의 재정의
 
@@ -496,8 +566,92 @@ VER-008(반려, confidence 0.9)과 VER-009(그 외 미승인, confidence 0.6)를
 
 `forbidden_role`(403)의 조건이 확장된다: 대장 업로드는 그 프로젝트의 `cm`만(§7 규칙 1).
 
+6. **적재 경고(warning) code — 실패가 아니라 신호(개정 2 — 신설).** 위 5번 표는 요청을 거부하는 HTTP 오류
+   code다. 이와 별개로 **적재는 성공하되 사람이 봐야 하는 상태**를 `JobRow.warnings`에 `{code, message,
+   context}`로 남기는 경고 code가 있다. 대장 파싱 고유 경고(`duplicate_doc_number`/`doc_number_mismatch`/
+   `document_possibly_renamed`/`header_row_not_found`/`required_column_missing`/`document_status_unmatched`/
+   `sheet_skipped`)는 이미 `config/document_register.yaml`의 `import_warnings` 카탈로그에 등록돼 있다(§2-1
+   규칙 3, §2-5, §3-2 규칙 3). 다음 하나는 **그 카탈로그에도, 이 ADR에도 등록되지 않은 채** 코드에만 있었다
+   (9차 리뷰 지적):
+
+   | code | 발생 위치 | 의미 | 비고 |
+   |---|---|---|---|
+   | `DOCUMENT_UNMAPPED` | `services/progress/document_mapper._unmapped_document_warnings`(`map_project_documents`가 호출, §4-3) | 어떤 Activity 에도 매핑 후보가 없는 문서가 있음을 알린다 — 대장이 공정표보다 먼저 올라왔거나, 제목 유사도가 `title_matching.min_similarity` 미만이거나, Activity 이름에 공유 도메인 명사가 없는 경우 등 | `context`에 `unmapped_count`/`by_doc_type`/`doc_ids`(최대 50개)를 싣는다 |
+
+   **코드 식별자 스타일이 다른 이유.** 대장 파싱 경고들은 `config/document_register.yaml`의 `import_warnings`
+   카탈로그에 `snake_case`로 등록되고 메시지도 그 파일에서 관리된다. `DOCUMENT_UNMAPPED`는 지금
+   `services/progress/document_mapper.py`에 `_UNMAPPED_WARNING_CODE = "DOCUMENT_UNMAPPED"`로 하드코딩돼 있어
+   대문자 스타일이다 — `services/api/jobs.py`의 다른 경고 code(`SCHEDULE_WARNING`/`NO_MODEL`/`MAPPING_NOT_BUILT`
+   등)와 같은 관례를 따른 것으로 보이나, 같은 파일(`document_register.yaml`) 안에서 두 대소문자 스타일이 섞이는
+   것은 바람직하지 않다. 이 정리는 이번 ADR의 범위가 아니다(architect는 코드를 고치지 않는다) — 카탈로그 이관
+   여부는 `progress-engine`이 판단할 문제로 남긴다.
+
+   **발화 조건은 이 ADR이 아니라 config가 소유한다.** `progress-engine`이 현재 이 경고의 발화 조건을 고치고
+   있다(정상 상태에서도 항상 뜨는 신호 대 잡음 문제 때문). 따라서 이 ADR은 "무엇을 알리는 경고인가"만 고정하고
+   구체적 발화 임계값·조건은 명시하지 않는다 — 명시하면 이 ADR이 다음 개정을 기다리지 않고 바로 코드와
+   어긋난다.
+
+### 9. 설정 불변식 보호 — `UnsafeConfigOverrideError` (개정 2 — 신설)
+
+#### 9-1. 무엇이고 왜 있는가
+
+`services/progress/config_loader.py`가 두 로더(`load_readiness_config`/`load_document_register_config`)에
+`_assert_invariant` 검사를 심어 두었다. 이 ADR이 코드에 하드코딩한 **안전 불변식**을, 같은 값으로 config에도
+"문서화"해 둔 자리가 있다 — 예를 들어 `readiness.yaml`의 `document_approval.scoring: all_or_nothing`은
+§5-1("도면 승인은 비율이 아니라 논리곱")을 config가 되풀이해 적어 둔 것일 뿐, `readiness.drawing_component()`는
+이 값을 **읽어서 분기하지 않는다** — 논리곱 계산은 코드에 고정돼 있다. 검사는 이 값이 코드의 실제 불변식과
+**다른 값**으로 바뀌면 로딩 시점에 `UnsafeConfigOverrideError`(`ValueError` 서브클래스)를 던진다.
+
+**왜 조용히 무시하지 않는가.** 이 값들은 코드가 읽지 않으므로, 값을 바꿔도 아무 일도 일어나지 않는 것이
+"안전한 무시"처럼 보인다. 그러나 그것이 정확히 위험한 지점이다 — 운영자가 `scoring: ratio`로 바꾸고 "이제
+비율로 계산되겠지"라고 믿지만 실제로는 아무것도 바뀌지 않는다. 믿음과 실제 동작이 어긋난 채로 조용히
+지나가면 그 어긋남을 알아차릴 방법이 없다. CLAUDE.md §0 핵심 원칙("AI는 추정까지, 확정은 사람")과 같은 구조의
+문제다 — 안전 장치를 끄려는 시도가 겉보기에 성공한 것처럼 보이는 것이, 시도가 요란하게 실패하는 것보다
+훨씬 위험하다. 이 검사는 **"끄는 스위치가 없다"는 사실을 강제로 드러내는 장치**다.
+
+#### 9-2. 대상 키
+
+| config 파일 | 키 | 요구값 | 문서화하는 불변식 |
+|---|---|---|---|
+| `readiness.yaml` | `document_approval.use_confirmed_mappings_only` | `true` | §5-2 규칙 3 — 미확정(`needs_review=True`) 매핑은 readiness 점수에 반영하지 않는다 |
+| `readiness.yaml` | `document_approval.scoring` | `"all_or_nothing"` | §5-1 — 도면 승인은 비율이 아니라 논리곱(AND) |
+| `document_register.yaml` | `title_matching.auto_confirm` | `false` | §4-2 규칙 5 — 문서 매핑은 유사도 값과 무관하게 항상 `needs_review=True` |
+| `document_register.yaml` | `mapping.always_needs_review` | `true` | §4-2 규칙 5(위와 같은 불변식의 다른 표현) |
+
+키가 아예 없으면 검사하지 않는다(하위 호환 — 옛 config 파일에 이 키들이 없어도 로딩은 통과한다). **키가 있는데
+다른 값이면** 실패시킨다. `document_approval` 섹션 전체가 없어도 마찬가지로 통과한다(§5-2 규칙 8의 킬 스위치
+`document_approval.enabled: false`와는 다른 이야기다 — 그건 기능 자체를 끄는 것이고, 이 검사는 "켜져 있는데
+불변식만 몰래 바뀌는 것"을 막는다).
+
+#### 9-3. 폭발 반경(reviewer 실측) — 왜 이 절이 중요한가
+
+설정 오타 하나가 무엇을 멈추는지 운영자가 알아야 한다는 것이 이 ADR이 폭발 반경을 명시하는 이유다.
+
+| 오염된 파일 | 실패 시점 | 관측되는 증상 | 범위 |
+|---|---|---|---|
+| `readiness.yaml` | `load_readiness_config()`를 호출하는 모든 경로 — ① API 요청 경로: `services/progress/readiness.py` readiness 계산, `services/progress/scheduler.py` startable 목록 ② **job 경로(개정 2 정정)**: `services/progress/verification.build_logic_context`가 3중 검증 `logic` 축을 만들 때마다(§6-1) 무조건 호출하고, 이 함수는 `services/api/jobs.run_verdict`가 스캔 verdict 하나마다 부른다 | ①은 그 **요청**이 500으로 실패한다 — `UnsafeConfigOverrideError`가 `services/api/errors.py`에 등록된 전용 핸들러(`ApiError`/`HTTPException`/`InvalidTransitionError`/`TransitionBlockedByReviewError`/`ObjectNotFoundError`) 중 어느 것에도 걸리지 않으므로 FastAPI 기본 처리로 떨어진다. ②는 그 **verdict job 전체**가 `failed`로 끝난다 — `run_verdict`가 예외를 잡지 않으므로 `run_job`의 최상위 `except Exception`에 걸린다(정합·판정 결과 자체가 저장되지 않는다) | ①은 **요청 단위**, ②는 **job 단위**. 어느 쪽도 프로세스/워커를 죽이지 않는다 — 다음 요청·다음 job은 (같은 config를 다시 읽으므로) 똑같이 실패하지만 서버·워커 자체는 살아 있다. reviewer 9차가 실측한 것은 ①(readiness·startable API)뿐이었다 — ②는 이 개정에서 코드를 따라가며 추가로 확인한 것이다 |
+| `document_register.yaml` | `map_project_documents`를 호출하는 모든 경로 — §4-3의 세 지점(대장 업로드 job, 공정표 업로드 job, 수동 재생성 API) | **대장 업로드 job**은 그 job이 `failed`로 끝난다(대장 자체가 못 들어온다). **공정표 업로드 job**은 §4-3의 원칙대로 **`"done"`으로 끝나고 실패는 `DOCUMENT_MAPPING_RESYNC_FAILED` 경고로만 보고된다** — 공정표·activities·relations·객체매핑은 정상 저장된다. 이 처리 이전에는 부가 회복의 예외가 `run_job`의 최상위 `except Exception`에 잡혀 job 전체가 실패로 덮어써지고 롤백으로 공정표까지 사라졌다. 수동 재생성 API는 그 호출이 500 | job 단위. 프로세스는 죽지 않는다. 대장 업로드 job 이 함께 강등되지 않는 것은 의도적이다 — 그 잡에서는 매핑이 부가 효과가 아니라 목적이므로, 실패했는데 `done` 이라고 보고하면 실패를 숨기는 것이 된다 |
+
+**두 파일 모두 프로세스 전체를 죽이지 않는다** — Celery 워커든 API 프로세스든, 다음 요청/다음 job은 다시
+독립적으로 시도되고 다시 같은 이유로 실패할 뿐이다(config 파일이 디스크에서 고쳐지기 전까지). "프로세스가
+죽는다"는 오해를 막기 위해 이 표에 명시한다.
+
+#### 9-4. 무엇을 하면 안 되는가
+
+이 검사가 존재하는 한, §9-2의 네 키를 요구값과 다르게 바꾸는 config 변경은 **설계 자체가 반려 대상**이다.
+같은 불변식을 진짜로 바꾸고 싶다면 이 키의 값을 바꾸는 것이 아니라 **코드의 불변식 자체를 바꾸는 ADR**을
+새로 써야 한다(예: "도면 승인을 비율로 바꾼다"는 §5-1을 대체하는 개정) — 그때는 `_assert_invariant`의 요구값도
+함께 바뀌어야 한다.
+
 ## Consequences
 
+- **(개정 2) 문서 고아화가 검토 큐를 스스로 청소하지만, config 오타 하나가 넓은 반경을 멈출 수 있다.**
+  `document_mapping` 검토요청은 문서가 고아가 되면 자동으로 `on_hold`로 닫히고 문서가 돌아오면 자동으로 다시
+  열린다(§4-2 규칙 6) — CM이 죽은 요청을 손으로 정리할 필요가 없다. 그 대가로 `readiness.yaml`/
+  `document_register.yaml`의 네 안전 불변식 키(§9-2)를 건드리면 로딩이 요란하게 실패한다 — 운영자가 이 ADR을
+  몰라도 실패 메시지 자체가 사유와 요구값을 담고 있지만, **폭발 반경**(readiness·startable 조회는 요청 단위
+  500, 3중 검증을 만드는 verdict job·대장/공정표 업로드 job은 job 단위 `failed`, §9-3)은 실패 메시지만으로는
+  짐작하기 어려워 여기 명시해 둔다.
 - **착수 가능 판단의 15%가 추측에서 근거로 바뀐다.** `drawing_approval`이 발주처가 대장에 적은 사실에서 나오고,
   차단 사유에 **실제 문서번호와 제목**이 실려 CM이 무엇을 쫓아야 하는지 화면에서 바로 안다.
 - **문서 데이터가 없는 프로젝트는 아무것도 바뀌지 않는다.** §5-2 순위 2·3이 기존 동작을 그대로 보존하고,

@@ -104,7 +104,7 @@
 
 | 한국어 | 영어 | 정의 |
 |---|---|---|
-| 검토요청 상태 | `ReviewStatus` = `open` / `approved` / `rejected` / `on_hold` | 해소(approved/rejected)는 cm만. 시스템은 on_hold(대체)만 |
+| 검토요청 상태 | `ReviewStatus` = `open` / `approved` / `rejected` / `on_hold` | 해소(approved/rejected)는 cm만. 시스템이 만드는 on_hold는 두 사유뿐이다 — ① 대체된 요청(`resolution_note`에 `superseded_by=<id>`) ② 판단 대상이 소실된 요청(예: `document_mapping` 요청이 가리키는 문서가 고아가 됨 — ADR 0001 §6 개정 3, 근거는 ADR 0007 §4-2 규칙 6) |
 | 신고 상태 | `claimed_state` = `started` / `in_progress` / `completed` | 작업일보 항목의 시공사 주장 |
 | 작업 종류 | Job `kind` = `ingest` / `scan_upload` / `schedule` / `mapping` / `verdict` / `document_register` | 비동기 작업 분류. `scan_upload`는 스캔 파일 등록(정합 입력 대기), `verdict`가 정합+판정 수행, `document_register`는 문서관리대장(xlsx) 적재+문서↔Activity 매핑 후보 생성(ADR 0007) |
 | 작업 상태 | Job `status` = `queued` / `running` / `done` / `failed` | |
@@ -269,3 +269,12 @@ reviewer 4차 지적 1: 동일 상태코드(특히 409)가 서로 무관한 여�
 올릴 수 있으면 **피검자가 자기 승인 상태를 스스로 기록**하는 구조가 되어 ADR 0001 불변식 1("확정은 cm만")을
 데이터 입력 경로로 우회한다. 문서 조회는 모든 프로젝트 멤버(+admin), 매핑 생성·확정은 `cm`만, 전역 `admin`은
 행위 라우트에서 403 `forbidden_role`(ADR 0006 §2-1).
+
+## ADR 0007 개정 2 추가 항목 (architect, 2026-09-03) — 9차 리뷰: 코드가 앞서고 문서가 뒤따르지 못한 4건
+
+| 한국어 | 영어(식별자) | 정의 |
+|---|---|---|
+| 검토요청 복귀 | `review revival` | `document_mapping` 검토요청이 `on_hold`(고아화)로 닫힌 뒤, 그 문서가 대장에 다시 나타나면 **새** `ReviewRequest`가 자동으로 다시 열리는 것(옛 `on_hold` 행을 재사용하지 않음 — `open_document_mapping_review`는 `status="open"`만 조회). 이미 확정된(`reviewed_by is not None`) 매핑은 복귀 대상이 아니다(ADR 0007 §4-2 규칙 6 개정 2) |
+| 매핑 재계산 시점 | `mapping resync triggers` | `map_project_documents`가 다시 도는 세 지점 — 대장 업로드 시(정상 경로) / 공정표 업로드 시(대장이 먼저 올라온 순서를 회복하는 부가 경로) / 수동 요청 시(`generate_document_mappings`, cm만). 부가 경로(공정표 업로드)의 실패는 본 작업(공정표 적재)을 롤백시키지 않아야 한다는 원칙이 딸려 있다 — "부가 회복이 본 작업을 인질로 잡지 않는다"(ADR 0007 §4-3) |
+| 매핑되지 않은 문서 경고 | `DOCUMENT_UNMAPPED` | 어떤 Activity 에도 매핑 후보가 없는 문서가 있을 때 `JobRow.warnings`에 실리는 경고 code(`services/progress/document_mapper`). 대장이 공정표보다 먼저 올라왔거나 제목 유사도가 임계값 미만인 경우 등을 알린다. 발화 조건은 `progress-engine`이 소유하며 이 ADR은 고정하지 않는다(ADR 0007 §8 규칙 6). `config/document_register.yaml`의 `import_warnings` 카탈로그(snake_case)와 대소문자 스타일이 다르다는 점도 등록해 둔다 |
+| 설정 불변식 위반 예외 | `UnsafeConfigOverrideError` (`services/progress/config_loader`, `ValueError` 서브클래스) | `readiness.yaml`/`document_register.yaml`의 특정 키(§9-2, 4개)가 코드에 하드코딩된 안전 불변식과 다른 값으로 바뀌면 로딩 시점에 던지는 예외. 조용히 무시하지 않는 이유는 "설정했으니 됐다"는 잘못된 믿음이 가장 위험하기 때문(ADR 0007 §9-1). **폭발 반경**(ADR 0007 §9-3): `readiness.yaml` 오염은 readiness·startable API 요청을 500으로(요청 단위) 만들고, 3중 검증 `logic` 축을 만드는 verdict job도 함께 `failed`로 만든다(job 단위 — `build_logic_context`가 무조건 호출). `document_register.yaml` 오염은 대장 업로드 job을 `failed`로 만들며 오늘 코드 기준으로는 공정표 업로드 job도 함께 `failed`가 된다(§4-3의 "부가 회복이 본 작업을 인질로 잡지 않는다" 원칙을 아직 못 지키는 상태 — api가 수정 중). 어느 경우도 프로세스는 안 죽는다 |
