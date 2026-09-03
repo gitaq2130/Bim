@@ -39,7 +39,11 @@ from packages.core.models.progress import DailyReport
 from packages.core.models.state import Actor, InvalidTransitionError, ObjectState
 from services.knowledge import RuleEngine, load_rules, persist_verdicts, record_expert_review
 from services.progress import persistence as db
-from services.progress.document_mapper import close_document_mapping_review, map_project_documents
+from services.progress.document_mapper import (
+    close_document_mapping_review,
+    map_project_documents,
+    reject_document_mapping,
+)
 from services.progress.readiness import compute_readiness
 from services.progress.scheduler import compute_startable
 from services.progress.state_machine import (
@@ -433,14 +437,14 @@ def resolve_review(session: Session, review_request_id: str, decision: str, note
         except MalformedReviewDataError as exc:
             session.rollback()
             raise ServerError(f"review request {review_request_id}: {exc}", code="mapping_review_data_corrupt")
-    elif row.kind == "document_mapping" and decision == "approved":
+    elif row.kind == "document_mapping" and decision in ("approved", "rejected"):
         # 과제 1(9차 리뷰): 이 kind 는 전에 어느 분기에도 걸리지 않아 ReviewRequestRow.status 만 바뀌고
         # ActivityDocumentMappingRow 는 손대지 않았다 — 화면이 약속한 "승인하면 매핑이 CM 확인으로
         # 기록됩니다"가 지켜지지 않았다. ADR 0007 §4 규칙 6: 해소는 services/progress 가 소유하고
         # api 는 호출만 한다 — confirm_document_mapping 이 이미 하는 일(_confirm_document_mapping_row)을
-        # 그대로 재사용한다(로직 복제 금지). rejected/on_hold 는 아래 공통 폴백(요청 status 만 기록)으로
-        # 떨어진다 — 반려된 매핑을 지우거나 표시하는 로직은 services/progress 소유라 여기서 만들지 않는다
-        # (필요한 시그니처는 이 라운드 응답에 적어 progress-engine 에 전달한다).
+        # 그대로 재사용한다(로직 복제 금지). 반려는 progress 의 reject_document_mapping 이 표시를 남겨,
+        # 다음 대장 재업로드가 같은 후보를 다시 만들지 않게 한다 — CM 이 "무관하다"고 판단했는데 매주 같은
+        # 후보가 올라오면 큐가 쓰레기가 된다. on_hold 는 아래 공통 폴백(요청 status 만 기록)으로 떨어진다.
         doc_id = (row.conflicting_sources or {}).get("doc_id")
         if not doc_id or not row.activity_id:
             session.rollback()
@@ -453,7 +457,12 @@ def resolve_review(session: Session, review_request_id: str, decision: str, note
             raise NotFound(f"review request {review_request_id}: document mapping not found: "
                            f"activity_id={row.activity_id!r} doc_id={doc_id!r}",
                            code="document_mapping_target_not_found")
-        _confirm_document_mapping_row(session, mapping_row, user.user_id, note)   # needs_review=False + 검토요청 닫기
+        if decision == "approved":
+            _confirm_document_mapping_row(session, mapping_row, user.user_id, note)   # needs_review=False + 검토요청 닫기
+        else:
+            # 매핑 행은 지우지 않는다 — "왜 반려됐는가"를 나중에 감사할 수 있어야 한다(§4-2 규칙 7 과 같은 원칙).
+            # 표시 로직은 services/progress 소유이므로 호출만 한다(규칙 11).
+            reject_document_mapping(session, row.project_id, row.activity_id, str(doc_id), user.user_id, note=note)
     session.refresh(row)
     if row.status == "open":   # verification / on_hold / 위에서 닫히지 않은 경우: 사람의 결정을 그대로 기록
         row.status, row.resolution_note, row.resolved_by, row.resolved_at = decision, note, user.user_id, datetime.now(UTC)

@@ -14,6 +14,12 @@
 `map_project_documents`는 매핑 저장에 더해 `document_mapping` ReviewRequest 생명주기 전체를 소유한다
 (§4 규칙 6, CLAUDE.md §3 규칙 11): 생성(중복 방지) / 확정 시 종료(`close_document_mapping_review`,
 api 가 호출) / 문서가 고아가 되면 자동 종료. api 는 이 함수들을 호출만 한다.
+
+**반려**(10차 리뷰 후속)도 매핑 생명주기의 일부라 여기서 소유한다: `reject_document_mapping`이 매핑 행에
+반려 표시를 남기면(삭제하지 않음 — ADR §4-2 규칙 7과 같은 evidence 보존 원칙), `_drop_already_confirmed`가
+재계산이 같은 (activity_id, doc_id) 후보를 다시 만들지 않도록 걸러내고, `confirmed_required_documents`가
+반려된 매핑을 readiness/검증 증거에서 제외한다. api 는 대응 검토요청을 `status="rejected"`로 닫는 것까지만
+하고, 매핑 행은 건드리지 않은 채 `reject_document_mapping`을 호출한다.
 """
 from __future__ import annotations
 
@@ -36,6 +42,11 @@ from . import persistence as db
 from .config_loader import load_document_register_config
 
 _UNMAPPED_WARNING_CODE = "DOCUMENT_UNMAPPED"   # config/document_register.yaml import_warnings 의 카탈로그 키(과제 3, 9차 리뷰)
+
+# 매핑 반려 표시 (10차 리뷰 후속, reject_document_mapping 참고). `ActivityDocumentMappingRow`에 컬럼을
+# 더하지 않고 기존 evidence(JSON) 안에 `extra.mapping_review_decision` 로 표시한다 — 없으면(None) 시스템이
+# 제안했거나 확정된 매핑, 이 값이면 CM 이 반려한 매핑이라는 뜻이다.
+_MAPPING_REVIEW_DECISION_REJECTED = "rejected"
 
 
 def _load_document_register_config() -> dict[str, Any]:
@@ -252,13 +263,30 @@ def _document_mapping_review(mapping: ActivityDocumentMapping, project_id: str, 
     )
 
 
+def _is_rejected_mapping(evidence: dict[str, Any] | None) -> bool:
+    """`row.evidence`(JSON dict)에 `reject_document_mapping`이 남긴 반려 표시가 있는지 본다.
+
+    확정(`_confirm_document_mapping_row`, api 소유)은 이 키를 절대 쓰지 않으므로, `reviewed_by is not None`
+    이면서 이 함수가 `False`를 돌려주면 확정된 매핑이고 `True`를 돌려주면 반려된 매핑이다 — 같은
+    `reviewed_by` 필드를 "누가 이 매핑을 검토했는가"로 공유하고, 승인/반려 어느 쪽인지는 evidence 로
+    구분한다(§4-2 규칙 6·7과 같은 결의 확장 — evidence 는 감사 기록이지 상태 저장소가 아니라고 했지만,
+    반려 사유 자체가 감사해야 할 근거이므로 여기 남기는 것이 자연스럽다)."""
+    return bool((evidence or {}).get("extra", {}).get("mapping_review_decision") == _MAPPING_REVIEW_DECISION_REJECTED)
+
+
 def _drop_already_confirmed(session: Session, mappings: Sequence[ActivityDocumentMapping]) -> list[ActivityDocumentMapping]:
-    """재계산된 후보 중, 이미 사람이 확정한(`reviewed_by is not None`) 기존 매핑 행이 있으면 제외한다.
+    """재계산된 후보 중, 이미 사람이 판단한(`reviewed_by is not None` — 확정이든 반려든) 기존 매핑 행이
+    있으면 제외한다.
 
     `map_documents_to_activities`는 순수 함수라 매번 `needs_review=True`인 새 후보를 만든다(§4 규칙 5) —
     그걸 그대로 upsert 하면 대장 재업로드가 CM 이 이미 확정한 매핑을 조용히 다시 미확정으로 되돌리고,
     방금 닫은 document_mapping 검토요청까지 재생성하게 된다. 확정은 사람의 행위이고 시스템 재계산이
-    되돌려서는 안 된다 — ADR 0001 불변식 2("CONFIRMED 에서 나가는 전이도 cm만")와 같은 구조다."""
+    되돌려서는 안 된다 — ADR 0001 불변식 2("CONFIRMED 에서 나가는 전이도 cm만")와 같은 구조다.
+
+    **반려도 같은 이유로 여기서 걸러진다(10차 리뷰 후속, `reject_document_mapping` 참고).**
+    `reject_document_mapping`이 반려된 행에도 `reviewed_by`를 채우므로 이 조건이 그대로 적용된다 —
+    "CM 이 이미 이 (activity_id, doc_id) 쌍을 판단했다"는 확정이든 반려든 시스템 재계산이 뒤집어서는
+    안 되는 같은 종류의 사람의 결정이기 때문이다. 별도 분기를 두지 않는다."""
     kept: list[ActivityDocumentMapping] = []
     for m in mappings:
         existing = session.get(ActivityDocumentMappingRow, (m.activity_id, m.doc_id))
@@ -312,6 +340,14 @@ def _reopen_reviews_for_invalidated_confirmations(
     for row in db.document_mappings_for_project(session, project_id):
         if row.reviewed_by is None:
             continue   # 확정된 매핑만 대상 — 미확정은 재계산이 그대로 덮어쓰므로 여기서 다룰 대상이 아니다
+        if _is_rejected_mapping(row.evidence):
+            # 반려된 매핑은 대상이 아니다(10차 리뷰 후속). CM 은 이미 "이 문서는 이 Activity 와 무관하다"고
+            # 판단했고, Activity 정보가 바뀐다고 그 판단의 근거가 흔들리지 않는다 — 확정과 달리 반려는
+            # readiness/검증 어디에도 "증거"로 쓰이지 않으므로(§ confirmed_required_documents 필터), 낡은
+            # 반려를 되돌리지 않는 것과 같은 무게로 "재확인이 필요한 낡은 근거"도 없다. 여기서 되살리면
+            # CM 이 이미 반려한 항목이 "재확인 필요" 검토요청으로 큐에 다시 나타나 이번 과제가 고치려는
+            # 문제(반려한 매핑이 되살아난다)를 검토요청 쪽에서 재현하게 된다.
+            continue
         doc = docs_by_id.get(row.doc_id)
         activity = acts_by_id.get(row.activity_id)
         if doc is None or activity is None or doc.is_orphaned:
@@ -415,6 +451,58 @@ def close_document_mapping_review(session: Session, project_id: str, activity_id
     return [row.review_request_id]
 
 
+def reject_document_mapping(session: Session, project_id: str, activity_id: str, doc_id: str,
+                            rejected_by: str, note: str | None = None) -> None:
+    """CM 이 이 문서↔Activity 매핑 후보를 반려했다(10차 리뷰 후속). 대응 `document_mapping`
+    ReviewRequest 는 이미 api 가 `status="rejected"`로 닫아 두었다는 전제로, 여기서는 매핑 행만 다룬다.
+
+    **행을 삭제하지 않는다**(ADR §4-2 규칙 7과 같은 이유 — 나중에 "왜 반려됐는가" 감사가 필요하다).
+    `ActivityDocumentMappingRow.reviewed_by`를 `rejected_by`로 채워 "사람이 이미 이 쌍을 판단했다"는
+    사실을 확정과 같은 필드로 남기고(§4 규칙 5의 `needs_review=(reviewed_by is None)` 불변식과
+    호환되므로 `needs_review`도 자연히 `False`가 된다 — 더는 CM 검토 큐의 "대기" 항목이 아니다),
+    `evidence.extra.mapping_review_decision="rejected"`로 확정과 구분한다. `evidence.source_type`/
+    `.method`는 시스템이 제안했을 때의 값(`document`/`document_title_match`)을 그대로 두고 `note`만
+    반려 코멘트로 갱신한다 — `_confirm_document_mapping_row`(services/api/usecases.py)와 같은 관례다.
+
+    **`map_project_documents`의 재계산이 이 쌍을 다시 만들지 않는다**: `_drop_already_confirmed`가
+    `reviewed_by is not None`이면 후보를 버리므로(확정·반려 구분 없이), 대장·공정표를 몇 번 재업로드해도
+    이 (activity_id, doc_id) 매핑 행도 `document_mapping` 검토요청도 재생성되지 않는다. 또한
+    `confirmed_required_documents`가 `evidence.extra.mapping_review_decision` 로 반려된 행을 걸러내므로
+    반려된 매핑은 readiness `drawing_approval`·3중 검증 `logic` 축 어디에도 증거로 들어가지 않는다.
+
+    **반려는 (activity_id, doc_id) 쌍에 대해 영구하다 — Activity 쪽 정보가 바뀌어도 되돌리지 않는다.**
+    확정 매핑은 Activity 가 바뀌면 재확인 검토요청을 다시 연다(`_reopen_reviews_for_invalidated_confirmations`)
+    — 확정은 "이 문서가 이 Activity 의 착수 가능 판단에 쓰일 증거"이므로, 그 근거가 흔들리는데 침묵하면
+    낡은 증거가 계속 AND 조건을 채운다(안전 문제). 반려는 반대다 — 반려된 매핑은 애초에 증거로 쓰이지
+    않으므로(위 문단) Activity 가 바뀌어도 "낡은 증거가 착수 가능 판단을 오염시키는" 위험이 없다. CM 의
+    "이 문서는 이 작업과 무관하다"는 판단은 Activity 이름·층·구역이 다시 표기돼도 뒤집힐 이유가 없는
+    사람의 결정이고, 여기서 자동으로 되살리면 이번에 고치는 문제(반려한 매핑이 되살아난다)를 검토요청
+    쪽에서 그대로 재현하게 된다 — 그래서 `_reopen_reviews_for_invalidated_confirmations`도 반려된 행은
+    건드리지 않도록 걸러 두었다.
+
+    **문서 쪽이 바뀌면(제목 수정 등) 다르다 — 이건 자동으로 이미 대칭이다.** `doc_id`는 title 을 재료로 한
+    결정적 해시(ADR §2-1)이므로 문서 제목이 바뀌면 `doc_id`가 바뀌어 **다른 문서**가 된다. 반려는
+    `(activity_id, doc_id)` 쌍에 매달려 있으므로 새 `doc_id`는 반려 표시가 전혀 없는 완전히 새 매핑
+    후보로 취급된다 — 별도 코드 없이 키 설계에서 이미 그렇게 동작한다.
+
+    대상 매핑 행이 없거나 다른 프로젝트 소속이면 `LookupError`(호출자 사전조건 위반 — api 가 이미
+    존재를 확인했어야 한다, `save_document_mapping`과 같은 관례)."""
+    row = session.get(ActivityDocumentMappingRow, (activity_id, doc_id))
+    if row is None or row.project_id != project_id:
+        raise LookupError(f"document mapping not found: activity_id={activity_id!r} doc_id={doc_id!r} "
+                          f"in project {project_id!r}")
+    before = Evidence(**row.evidence)
+    extra = {**before.extra, "mapping_review_decision": _MAPPING_REVIEW_DECISION_REJECTED,
+            "rejected_by": rejected_by, "rejected_at": datetime.now(UTC).isoformat()}
+    if note:
+        extra["rejection_note"] = note
+    evidence = before.model_copy(update={"note": note or before.note, "extra": extra})
+    row.evidence = evidence.model_dump(mode="json")
+    row.reviewed_by = rejected_by
+    row.needs_review = False
+    session.flush()
+
+
 def _unmapped_document_warnings(session: Session, project_id: str, documents: Sequence[Document],
                                 cfg: dict[str, Any]) -> list[dict[str, Any]]:
     """과제 2 선택지 2, 과제 3(9차 리뷰 후속) — 어떤 Activity 에도 매핑 후보가 없는 상태를 경고로 노출한다.
@@ -498,7 +586,10 @@ def confirmed_required_documents(session: Session, project_id: str, activity_ids
     ignore_orphaned = bool(doc_cfg.get("ignore_orphaned_documents", True))
 
     mappings = db.document_mappings_for_activities(session, project_id, list(activity_ids))
-    confirmed = [m for m in mappings if not m.needs_review]
+    # 반려된 매핑은 needs_review=False 지만(§ reject_document_mapping — "사람이 이미 판단했다") "확정"이
+    # 아니다. 여기서 걸러내지 않으면 CM 이 "이 문서는 무관하다"고 반려한 매핑이 도면 승인 AND 조건의
+    # 증거로 도로 들어가 버린다(10차 리뷰 후속).
+    confirmed = [m for m in mappings if not m.needs_review and not _is_rejected_mapping(m.evidence)]
     pending_count = sum(1 for m in mappings if m.needs_review)
 
     doc_ids = [m.doc_id for m in confirmed]
@@ -517,4 +608,5 @@ def confirmed_required_documents(session: Session, project_id: str, activity_ids
 __all__ = [
     "DocumentEvidence", "DocumentMappingSyncResult", "close_document_mapping_review",
     "confirmed_required_documents", "map_documents_to_activities", "map_project_documents",
+    "reject_document_mapping",
 ]
