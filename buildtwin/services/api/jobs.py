@@ -211,13 +211,28 @@ def run_schedule(session: Session, job: JobRow, file_row: FileRow, options: dict
     # 대장이 공정표보다 먼저 올라온 경우(현장에서 흔하다 — 대장은 매주, 공정표는 가끔 갱신된다) 그때는
     # 매핑할 Activity 가 없어 문서 매핑이 0건으로 남는다. 여기서 다시 돌려 회복시킨다. map_project_documents 는
     # 여러 번 불러도 안전하다 — 확정된 매핑은 보존하고 열린 검토요청을 중복 생성하지 않는다(ADR 0007 §4 규칙 6).
-    doc_sync = map_project_documents(session, job.project_id)
-    warnings.extend(doc_sync.warnings)
+    #
+    # 과제 2(9차 리뷰): 이 재생성은 순서 역전을 회복시키는 **부가 기능**이다 — 본 작업(공정표 적재: schedule·
+    # activities·relations·객체 매핑 저장)이 이미 위에서 끝났다. `config/document_register.yaml`이 오염되면
+    # `load_document_register_config`가 `UnsafeConfigOverrideError`/`ValueError`/`FileNotFoundError`/
+    # `yaml.YAMLError` 등을 던지는데, 이 세션은 `session_scope()` 아래 있어 잡지 않은 예외가 새면 이미 커밋
+    # 대기 중인 schedule 저장분까지 통째로 롤백된다(run_scan_upload 의 POINT_CLOUD_LOAD_FAILED 와 같은 이유·
+    # 같은 패턴으로 넓게 잡는다 — noqa: BLE001). 부가 회복 실패는 경고로 강등하고 본 작업은 성공시킨다.
+    try:
+        doc_sync = map_project_documents(session, job.project_id)
+    except Exception as exc:  # noqa: BLE001 — 문서 매핑 재생성 실패가 공정표 적재를 인질로 잡지 않는다
+        log.warning("document mapping resync failed after schedule import (project=%s): %s",
+                   job.project_id, exc, exc_info=True)
+        warnings.append(_warning("DOCUMENT_MAPPING_RESYNC_FAILED", str(exc), project_id=job.project_id))
+        doc_mapping_count = None
+    else:
+        warnings.extend(doc_sync.warnings)
+        doc_mapping_count = len(doc_sync.mappings)
     return "done", {"status": "ok", "source_kind": file_row.kind, "schedule_id": schedule.schedule_id,
                     "source_format": schedule.source_format, "activity_count": len(schedule.activities),
                     "relation_count": len(schedule.relations), "mapping_count": len(mappings),
                     "needs_review_count": sum(1 for m in mappings if m.needs_review),
-                    "document_mapping_count": len(doc_sync.mappings)}, warnings
+                    "document_mapping_count": doc_mapping_count}, warnings
 
 
 def run_document_register(session: Session, job: JobRow, file_row: FileRow, options: dict[str, Any]) -> tuple[str, dict[str, Any], list[dict]]:

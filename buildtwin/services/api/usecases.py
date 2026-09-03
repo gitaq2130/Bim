@@ -278,30 +278,43 @@ def generate_document_mappings(session: Session, project_id: str) -> list[Activi
     return sync.mappings
 
 
-def confirm_document_mapping(session: Session, activity_id: str, doc_id: str, user: CurrentUser,
-                             note: str | None = None) -> ActivityDocumentMapping:
-    """문서 매핑 확정: needs_review=False, reviewed_by=user_id(ADR 0007 §4 규칙 5 — 확정은 사람의 행위이므로
-    누가 했는지 반드시 기록한다). surrogate id 라우트(ADR 0006 규칙 6): 매핑 행(activity_id, doc_id)을
-    먼저 읽어 그 project_id 로 cm 인가를 검사한다. 대상 매핑이 없으면 404 document_mapping_target_not_found
-    (ADR 0007 §8 규칙 5) — 매핑은 반드시 먼저 generate_document_mappings 로 제안돼 있어야 확정할 수 있다."""
-    row = session.get(ActivityDocumentMappingRow, (activity_id, doc_id))
-    if row is None:
-        raise NotFound(f"document mapping not found: activity_id={activity_id!r} doc_id={doc_id!r}",
-                       code="document_mapping_target_not_found")
-    project_role(session, row.project_id, user, CONFIRM_ROLE)
+def _confirm_document_mapping_row(session: Session, row: ActivityDocumentMappingRow, user_id: str,
+                                  note: str | None = None) -> ActivityDocumentMapping:
+    """문서 매핑 확정의 공유 본체: needs_review=False, reviewed_by=user_id 로 저장하고 그 매핑의
+    document_mapping 검토요청을 닫는다(ADR 0007 §4 규칙 5·6). commit 은 호출자 책임 — `confirm_document_mapping`
+    (전용 엔드포인트)은 여기서 바로 커밋하고, `resolve_review`(검토 큐 승인)는 검토요청 상태 갱신까지
+    끝낸 뒤 자신의 트랜잭션 경계에서 한 번에 커밋한다(과제 1 — 두 경로가 같은 로직을 복제하지 않는다).
+    인가는 호출자가 이미 끝낸 것으로 가정한다(이 함수는 인가하지 않는다)."""
+    activity_id, doc_id = row.activity_id, row.doc_id
     before = db.document_mapping_row_to_model(row)
     # confirm_mapping(services.sync.review_queue)과 같은 패턴: evidence 는 보존하고 reviewed_by 만 얹는다.
     # ActivityDocumentMapping 모델이 reviewed_by 가 채워지면 needs_review=False 를 항상 강제한다
     # (packages/core/models/document.py — confidence 와 무관, ADR §4 규칙 5).
     evidence = before.evidence.model_copy(update={"note": note or before.evidence.note})
     new = ActivityDocumentMapping(activity_id=activity_id, doc_id=doc_id, confidence=before.confidence,
-                                  evidence=evidence, reviewed_by=user.user_id)
+                                  evidence=evidence, reviewed_by=user_id)
     db.save_document_mapping(session, new)
     # 확정되면 그 매핑의 검토요청을 닫는다. 해소 로직은 services/progress 소유이고 여기서는 호출만 한다
     # (CLAUDE.md §3 규칙 11, ADR 0007 §4 규칙 6).
-    close_document_mapping_review(session, row.project_id, activity_id, doc_id, user.user_id, note=note)
+    close_document_mapping_review(session, row.project_id, activity_id, doc_id, user_id, note=note)
     record_expert_review(session, "activity_document_mapping", f"{activity_id}:{doc_id}",
-                         before.model_dump(mode="json"), new.model_dump(mode="json"), user.user_id)
+                         before.model_dump(mode="json"), new.model_dump(mode="json"), user_id)
+    return new
+
+
+def confirm_document_mapping(session: Session, activity_id: str, doc_id: str, user: CurrentUser,
+                             note: str | None = None) -> ActivityDocumentMapping:
+    """문서 매핑 확정: needs_review=False, reviewed_by=user_id(ADR 0007 §4 규칙 5 — 확정은 사람의 행위이므로
+    누가 했는지 반드시 기록한다). surrogate id 라우트(ADR 0006 규칙 6): 매핑 행(activity_id, doc_id)을
+    먼저 읽어 그 project_id 로 cm 인가를 검사한다. 대상 매핑이 없으면 404 document_mapping_target_not_found
+    (ADR 0007 §8 규칙 5) — 매핑은 반드시 먼저 generate_document_mappings 로 제안돼 있어야 확정할 수 있다.
+    본체는 `_confirm_document_mapping_row` — `resolve_review`(검토 큐 승인)와 공유한다(과제 1)."""
+    row = session.get(ActivityDocumentMappingRow, (activity_id, doc_id))
+    if row is None:
+        raise NotFound(f"document mapping not found: activity_id={activity_id!r} doc_id={doc_id!r}",
+                       code="document_mapping_target_not_found")
+    project_role(session, row.project_id, user, CONFIRM_ROLE)
+    _confirm_document_mapping_row(session, row, user.user_id, note)
     session.commit()
     session.refresh(row)
     return db.document_mapping_row_to_model(row)
@@ -360,7 +373,9 @@ def plan_section(session: Session, model: ModelRow, level: str | None, offset: f
 
 # ------------------------------------------------------------------ review requests
 def resolve_review(session: Session, review_request_id: str, decision: str, note: str | None, user: CurrentUser) -> ReviewRequestRow:
-    """cm 의 검토요청 처리. inspection → 상태기계 전이가 요청을 닫고, mapping → sync 가 닫는다. 그 외(verification/on_hold)는 상태만 갱신.
+    """cm 의 검토요청 처리. inspection → 상태기계 전이가 요청을 닫고, mapping → sync 가 닫는다,
+    document_mapping(승인만) → progress.document_mapper 가 매핑을 확정하고 닫는다(과제 1, ADR 0007 §4 규칙 6).
+    그 외(verification/on_hold, document_mapping 의 반려·보류)는 상태만 갱신.
 
     ADR 0006 규칙 6·7: 이 라우트는 `project_id` 를 경로에 갖지 않는다 — 대상 행(`ReviewRequestRow`, 이미
     `project_id` 보유)을 먼저 읽고 **그 프로젝트의** 역할을 검사한다(전역 역할 아님). 대상이 없으면 멤버십
@@ -418,6 +433,27 @@ def resolve_review(session: Session, review_request_id: str, decision: str, note
         except MalformedReviewDataError as exc:
             session.rollback()
             raise ServerError(f"review request {review_request_id}: {exc}", code="mapping_review_data_corrupt")
+    elif row.kind == "document_mapping" and decision == "approved":
+        # 과제 1(9차 리뷰): 이 kind 는 전에 어느 분기에도 걸리지 않아 ReviewRequestRow.status 만 바뀌고
+        # ActivityDocumentMappingRow 는 손대지 않았다 — 화면이 약속한 "승인하면 매핑이 CM 확인으로
+        # 기록됩니다"가 지켜지지 않았다. ADR 0007 §4 규칙 6: 해소는 services/progress 가 소유하고
+        # api 는 호출만 한다 — confirm_document_mapping 이 이미 하는 일(_confirm_document_mapping_row)을
+        # 그대로 재사용한다(로직 복제 금지). rejected/on_hold 는 아래 공통 폴백(요청 status 만 기록)으로
+        # 떨어진다 — 반려된 매핑을 지우거나 표시하는 로직은 services/progress 소유라 여기서 만들지 않는다
+        # (필요한 시그니처는 이 라운드 응답에 적어 progress-engine 에 전달한다).
+        doc_id = (row.conflicting_sources or {}).get("doc_id")
+        if not doc_id or not row.activity_id:
+            session.rollback()
+            raise ServerError(f"review request {review_request_id}: malformed document_mapping "
+                              f"conflicting_sources (missing doc_id) or activity_id: {row.conflicting_sources!r}",
+                              code="mapping_review_data_corrupt")
+        mapping_row = session.get(ActivityDocumentMappingRow, (row.activity_id, str(doc_id)))
+        if mapping_row is None:
+            session.rollback()
+            raise NotFound(f"review request {review_request_id}: document mapping not found: "
+                           f"activity_id={row.activity_id!r} doc_id={doc_id!r}",
+                           code="document_mapping_target_not_found")
+        _confirm_document_mapping_row(session, mapping_row, user.user_id, note)   # needs_review=False + 검토요청 닫기
     session.refresh(row)
     if row.status == "open":   # verification / on_hold / 위에서 닫히지 않은 경우: 사람의 결정을 그대로 기록
         row.status, row.resolution_note, row.resolved_by, row.resolved_at = decision, note, user.user_id, datetime.now(UTC)
