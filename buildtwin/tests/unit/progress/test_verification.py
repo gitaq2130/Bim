@@ -11,6 +11,8 @@ from services.progress import persistence as db
 from services.progress.state_machine import ObjectStateMachine
 from services.progress.verification import build_logic_context, load_patterns, run_verification
 
+from .conftest import ensure_scan_chain
+
 SCAN_EV = Evidence(source_type="scan", source_id="scan-1")
 
 
@@ -19,6 +21,7 @@ def _report(project_id: str, items: list[DailyReportItem], report_id: str = "DR-
 
 
 def _store_scan(session, project_id: str, gid: str, state: ScanState) -> None:
+    ensure_scan_chain(session, project_id, "scan-1")
     session.add(ScanVerdictRow(scan_id="scan-1", global_id=gid, project_id=project_id, state=state.value, confidence=0.9,
                                evidence=SCAN_EV.model_dump(mode="json")))
     session.flush()

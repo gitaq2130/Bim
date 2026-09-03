@@ -23,6 +23,8 @@ from services.progress.state_machine import (
     actor_for_role,
 )
 
+from .conftest import ensure_model_chain
+
 GID = "OBJ0000000000000000001"
 PID = "P"
 EV = Evidence(source_type="cm_action", source_id="user-cm-1", note="test")
@@ -33,6 +35,7 @@ ALL_COMBOS = [(f, t, a) for f, t, a in itertools.product(ObjectState, ObjectStat
 @pytest.fixture
 def obj(session) -> BimObjectRow:
     db.ensure_project(session, "P")
+    ensure_model_chain(session, "P", "M")
     rows = db.save_objects(session, "P", "M", [BimObjectDraft(global_id=GID, ifc_type="IfcColumn", level="1F")])
     session.commit()
     return rows[0]
@@ -197,6 +200,8 @@ def test_transition_is_scoped_to_project(session):
     project_a, project_b = "P-A", "P-B"
     db.ensure_project(session, project_a)
     db.ensure_project(session, project_b)
+    ensure_model_chain(session, project_a, "M-A")
+    ensure_model_chain(session, project_b, "M-B")
     db.save_objects(session, project_a, "M-A", [BimObjectDraft(global_id=GID, ifc_type="IfcColumn", level="1F")])
     db.save_objects(session, project_b, "M-B", [BimObjectDraft(global_id=GID, ifc_type="IfcColumn", level="1F")])
     session.commit()
@@ -236,6 +241,8 @@ def test_daily_report_activity_from_other_project_is_skipped_not_transitioned(se
     project_a, project_b = "P-A", "P-B"
     db.ensure_project(session, project_a)
     db.ensure_project(session, project_b)
+    ensure_model_chain(session, project_a, "M-A")
+    ensure_model_chain(session, project_b, "M-B")
     # 두 프로젝트 모두 우연히 같은 global_id 를 쓰는 객체를 갖는다(ADR 0005: 서로 다른 IFC 라도 GlobalId 재사용 가능).
     db.save_objects(session, project_a, "M-A", [BimObjectDraft(global_id=GID, ifc_type="IfcColumn", level="1F")])
     db.save_objects(session, project_b, "M-B", [BimObjectDraft(global_id=GID, ifc_type="IfcColumn", level="1F")])
