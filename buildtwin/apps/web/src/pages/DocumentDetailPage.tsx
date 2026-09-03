@@ -8,7 +8,7 @@
  */
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { useConfirmDocumentMapping, useDocument, useGenerateDocumentMappings, useProjectRole } from "../api/hooks";
+import { useConfirmDocumentMapping, useDocument, useGenerateDocumentMappings, useProjectRole, useReviewRequests } from "../api/hooks";
 import type { ActivityDocumentMapping, ProjectRole } from "../api/types";
 import { ApprovalStatusBadge, ApprovalStatusNote } from "../components/ApprovalStatusBadge";
 import { ConfidenceBadge } from "../components/ConfidenceBadge";
@@ -153,6 +153,18 @@ function MappingSection({
   const confirm = useConfirmDocumentMapping(projectId, docId);
   const generate = useGenerateDocumentMappings(projectId);
   const [pending, setPending] = useState<ActivityDocumentMapping | null>(null);
+  // ADR 0007 §4-2 규칙 6 ⑤: 확정된 매핑도 나중에 재계산으로 무효화되면 검토요청이 다시 open 된다 — 매핑
+  // 행(reviewed_by/needs_review) 자체는 그대로다(§4-2 규칙 6). 이 화면만 보면 "확정됨"만 보이고 큐에 다시
+  // 뜬 재확인 요청이 안 보이는 어긋남이 있었다(과제 2) — ReviewsPage 와 같은 신호(evidence.extra.
+  // invalidated_activity_signature)로 맞춘다.
+  const reopenReviews = useReviewRequests(projectId, "document_mapping", "open");
+  const reopenedActivityIds = new Set(
+    (reopenReviews.data ?? [])
+      .filter((r) => r.evidence?.source_type === "document" && r.evidence.source_id === docId
+        && typeof r.evidence.extra?.invalidated_activity_signature === "string")
+      .map((r) => r.activity_id)
+      .filter((id): id is string => !!id),
+  );
 
   return (
     <>
@@ -175,14 +187,20 @@ function MappingSection({
       ) : (
         <ul className="list">
           {mappings.map((m) => (
-            <MappingRow key={m.activity_id} mapping={m} canConfirm={role === "cm"} onConfirm={() => setPending(m)} />
+            <MappingRow
+              key={m.activity_id}
+              mapping={m}
+              canConfirm={role === "cm"}
+              onConfirm={() => setPending(m)}
+              reopened={reopenedActivityIds.has(m.activity_id)}
+            />
           ))}
         </ul>
       )}
       <ConfirmDialog
         open={pending !== null}
         title={pending ? `매핑 확정 — Activity ${pending.activity_id}` : ""}
-        message="이 문서가 해당 Activity의 도면 승인 근거로 확정됩니다(needs_review=False). 되돌리려면 사유가 필요합니다."
+        message="이 문서가 해당 Activity의 도면 승인 근거로 확정됩니다(needs_review=False). 확정 이후에는 시스템이 이 매핑을 되돌리지 않습니다 — 나중에 이 Activity 정보가 바뀌어 매핑이 더는 맞지 않게 되면, 매핑은 확정 상태로 남긴 채 검토요청만 다시 열려 재확인을 요청합니다(ADR 0007 §4-2 규칙 6 ⑤)."
         confirmLabel="확정"
         busy={confirm.isPending}
         onCancel={() => setPending(null)}
@@ -199,10 +217,14 @@ function MappingRow({
   mapping: m,
   canConfirm,
   onConfirm,
+  reopened,
 }: {
   mapping: ActivityDocumentMapping;
   canConfirm: boolean;
   onConfirm: () => void;
+  /** ADR 0007 §4-2 규칙 6 ⑤: 확정된 이 매핑을 무효화한 재계산이 검토 큐에 재확인 요청을 다시 열어 두었다 —
+   * 매핑 자체(needs_review=False)는 그대로다. "확정됨"만 보고 "왜 큐에 또 있지"를 묻지 않도록 표시한다. */
+  reopened: boolean;
 }) {
   const extra = (m.evidence.extra ?? {}) as { title_similarity?: number; matched_rules?: string[] };
   return (
@@ -211,6 +233,11 @@ function MappingRow({
         <strong>Activity {m.activity_id}</strong>
         <ConfidenceBadge confidence={m.confidence} evidence={m.evidence} />
         {m.needs_review ? <span className="badge status-open">검토 대기</span> : <span className="badge status-approved">확정됨</span>}
+        {reopened && (
+          <span className="badge" style={{ background: "#fde68a" }} data-testid="reopened-badge">
+            재확인 필요
+          </span>
+        )}
         <div className="spacer" />
         {canConfirm && m.needs_review && (
           <button type="button" className="primary" onClick={onConfirm}>
@@ -218,6 +245,12 @@ function MappingRow({
           </button>
         )}
       </div>
+      {reopened && (
+        <p className="notice strong small">
+          확정 후 Activity 정보가 바뀌어 이 매핑을 더는 지지하지 않습니다. 매핑은 확정 상태로 남아 있습니다 — 검토요청
+          목록에서 재확인해 주세요.
+        </p>
+      )}
       <div className="small">
         {typeof extra.title_similarity === "number" && <span>제목 유사도: {Math.round(extra.title_similarity * 100)}% · </span>}
         {extra.matched_rules && extra.matched_rules.length > 0 && <span>일치 규칙: {extra.matched_rules.join(", ")}</span>}

@@ -192,4 +192,50 @@ describe("DocumentDetailPage", () => {
     expect(screen.queryByRole("button", { name: /일괄/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /자동/ })).not.toBeInTheDocument();
   });
+
+  // 과제 2/3: 이 화면(문서 상세)과 검토 큐가 같은 재오픈 사실을 다르게 말하면 안 된다. 확정된 매핑이
+  // 재계산으로 무효화돼 검토요청이 다시 open 되면(ADR 0007 §4-2 규칙 6 ⑤), 매핑 행 자체는 "확정됨"으로
+  // 남으므로 이 화면만 보면 왜 큐에 다시 떴는지 알 수 없다 — evidence.extra.invalidated_activity_signature
+  // 가 있는 open 상태 document_mapping 검토요청과 대조해 "재확인 필요"로 구분해 보여준다.
+  it("확정된 매핑이 재계산으로 무효화되어 검토요청이 다시 열리면 '재확인 필요'로 표시한다", async () => {
+    const CONFIRMED = { ...PENDING_MAPPING, needs_review: false, reviewed_by: "user-cm" };
+    mockFetch((url) => {
+      if (url.includes("/api/documents/doc-aaa")) return { body: detail([CONFIRMED]) };
+      if (url.includes("/api/projects/p1/review-requests")) {
+        return {
+          body: [
+            {
+              review_request_id: "rr-reopen-1", project_id: "p1", kind: "document_mapping", activity_id: "ACT-100",
+              title: "문서 매핑 재확인 필요: Activity ACT-100 → doc-aaa", conflicting_sources: {}, confidence: 0.58,
+              evidence: {
+                source_type: "document", source_id: "doc-aaa", method: "document_title_match", note: DOC.title,
+                extra: { invalidated_activity_signature: "9F 기둥|9F||전기|", invalidation_reason: "confirmed_mapping_no_longer_a_recompute_candidate" },
+              },
+              assignee_role: "cm", status: "open", created_at: "2026-09-02T00:00:00Z",
+            },
+          ],
+        };
+      }
+      return mockProjectRole("cm")(url);
+    });
+    renderPage();
+
+    const row = await screen.findByTestId("mapping-row");
+    expect(within(row).getByText("확정됨")).toBeInTheDocument();
+    expect(await within(row).findByTestId("reopened-badge")).toBeInTheDocument();
+  });
+
+  it("무효화 표식이 없는 보통의 확정 매핑에는 '재확인 필요' 배지를 붙이지 않는다", async () => {
+    const CONFIRMED = { ...PENDING_MAPPING, needs_review: false, reviewed_by: "user-cm" };
+    mockFetch((url) => {
+      if (url.includes("/api/documents/doc-aaa")) return { body: detail([CONFIRMED]) };
+      if (url.includes("/api/projects/p1/review-requests")) return { body: [] };
+      return mockProjectRole("cm")(url);
+    });
+    renderPage();
+
+    const row = await screen.findByTestId("mapping-row");
+    expect(within(row).getByText("확정됨")).toBeInTheDocument();
+    expect(within(row).queryByTestId("reopened-badge")).not.toBeInTheDocument();
+  });
 });

@@ -3,17 +3,48 @@
  */
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { useProjectRole, useResolveReview, useReviewRequests } from "../api/hooks";
+import { useDocument, useProjectRole, useResolveReview, useReviewRequests } from "../api/hooks";
 import type { ConflictingSource, ReviewDecision, ReviewKind, ReviewRequest, ReviewStatus } from "../api/types";
 import { ConfidenceBadge } from "../components/ConfidenceBadge";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ErrorBox } from "../components/ErrorBox";
-import { REVIEW_KIND_LABELS, REVIEW_STATUS_LABELS, SOURCE_AXIS_LABELS, labelForAnyState } from "../domain/labels";
+import { DOC_TYPE_LABELS, REVIEW_KIND_LABELS, REVIEW_STATUS_LABELS, SOURCE_AXIS_LABELS, labelForAnyState } from "../domain/labels";
 import { fmtDate } from "../lib/format";
 import { useStore } from "../store";
 
 const DECISION_LABELS: Record<ReviewDecision, string> = { approved: "승인", rejected: "반려", on_hold: "보류" };
 const AXES = ["daily_report", "scan", "system_logic"] as const;
+
+/**
+ * kind 마다 승인/반려/보류가 실제로 무엇을 바꾸는지가 다르다(9차 리뷰 지적 — 한 문장으로 뭉뚱그리면 반드시
+ * 하나는 거짓이 된다). 여기 문구는 각 kind 의 해소 로직(services/api/usecases.resolve_review,
+ * services/sync/review_queue.resolve_mapping_review)이 실제로 하는 일과 정확히 대응해야 한다 — 화면이
+ * 다시 지키지 못할 약속을 하지 않도록.
+ */
+function reviewDecisionMessage(kind: ReviewKind, decision: ReviewDecision): string {
+  if (decision === "on_hold") {
+    // 세 kind 모두 on_hold 는 검토요청 상태만 바꾼다(usecases.resolve_review 공통 폴백) — 객체 상태·매핑 어느 것도 건드리지 않는다.
+    return "보류하면 검토요청 상태만 '보류'로 기록됩니다. 객체 상태·매핑은 바뀌지 않습니다.";
+  }
+  switch (kind) {
+    case "inspection":
+      return decision === "approved"
+        ? "승인하면 이 객체 상태가 확정(CONFIRMED)으로 전이됩니다."
+        : "반려하면 객체를 재작업 상태로 되돌리려 시도합니다 — 현재 상태에서 그 전이가 불가능하면 객체 상태는 바뀌지 않고 검토요청만 처리됩니다.";
+    case "mapping":
+      return decision === "approved"
+        ? "승인하면 이 2D 엔티티 ↔ 3D 객체 매핑이 확정됩니다(needs_review=False)."
+        : "반려하면 검토요청만 닫히고 매핑은 확정되지 않습니다.";
+    case "document_mapping":
+      return decision === "approved"
+        ? "승인하면 이 문서 ↔ Activity 매핑이 확정됩니다(needs_review=False) — 도면 승인 근거(readiness)로 반영됩니다. 확정 이후에는 사람만 되돌릴 수 있습니다."
+        : "반려해도 매핑 행은 아직 바뀌지 않습니다 — 검토요청 상태만 기록되고, 매핑은 검토 대기 상태로 남습니다.";
+    case "verification":
+    default:
+      // verification 은 신고/스캔/논리 3축 불일치를 사람이 확인했다는 기록일 뿐, 어떤 상태 전이도 일으키지 않는다(ADR 0001 §6).
+      return "이 종류(검증)는 상태 전이를 일으키지 않습니다 — 검토요청 상태만 기록됩니다.";
+  }
+}
 
 export function ReviewsPage() {
   const { id: projectId = "" } = useParams();
@@ -110,7 +141,7 @@ export function ReviewsPage() {
       <ConfirmDialog
         open={pending !== null}
         title={pending ? `${DECISION_LABELS[pending.decision]} — ${pending.r.title}` : ""}
-        message={pending?.decision === "approved" ? "승인하면 해당 객체/매핑이 CM 확인으로 기록됩니다." : undefined}
+        message={pending ? reviewDecisionMessage(pending.r.kind, pending.decision) : undefined}
         confirmLabel={pending ? DECISION_LABELS[pending.decision] : "확인"}
         requireNote={pending?.decision === "rejected"}
         busy={resolve.isPending}
@@ -127,22 +158,51 @@ export function ReviewsPage() {
 /**
  * 문서↔Activity 매핑 검토요청(ADR 0007 §4). 시스템이 만든 매핑은 confidence 와 무관하게 항상
  * needs_review=True 이므로(§4 규칙 5), CM 이 "왜 이 매핑이 제안됐는가"를 보고 판단해야 한다 —
- * evidence.extra.title_similarity/matched_rules 를 팝오버 뒤에 숨기지 않고 바로 드러낸다.
- * 문서 링크는 evidence.source_id(= doc_id, §4 규칙 7)로 문서 상세로 이동한다.
+ * evidence.extra.title_similarity/matched_rules/excluded_by 를 팝오버 뒤에 숨기지 않고 바로 드러낸다.
+ * 문서 링크는 evidence.source_id(= doc_id, §4 규칙 7)로 문서 상세로 이동한다. 문서번호·제목·종류는
+ * `useDocument`(DocumentDetailPage 와 같은 훅)로 문서 행 자체를 읽어 보여준다 — evidence.note(문서 제목
+ * 원문)만으로는 문서번호가 없고, 검토요청 title 산문에서 파싱하는 것은 ADR 0007 §5-3 개정 1이 이미 걷어낸
+ * 패턴(기계 판독을 문구 부분일치에 의존)을 반복하는 것이라 피한다.
  */
 function DocumentMappingCard({ review, projectId }: { review: ReviewRequest; projectId: string }) {
   const ev = review.evidence;
-  const extra = (ev?.extra ?? {}) as { title_similarity?: number; matched_rules?: string[]; excluded_by?: string[] };
+  const extra = (ev?.extra ?? {}) as {
+    title_similarity?: number;
+    matched_rules?: string[];
+    excluded_by?: string[];
+    invalidated_activity_signature?: string;
+    invalidation_reason?: string;
+  };
   const docId = ev?.source_type === "document" ? ev.source_id : undefined;
+  const doc = useDocument(projectId, docId);
+  const docRow = doc.data?.document;
+  // ADR 0007 §4-2 규칙 6 ⑤(개정 2): 확정된(reviewed_by 있음) 매핑이 재계산으로 더는 후보가 아니게 되면
+  // 검토요청이 다시 open 된다 — 매핑 자체는 확정 상태로 남는다. 이 evidence.extra 필드가 서버가 남기는
+  // 유일한 구조적 표식이다(과제 3). title 산문("문서 매핑 재확인 필요: …")으로 분류하지 않는 이유는 위 참고.
+  const reopened = typeof extra.invalidated_activity_signature === "string";
   return (
     <div className="source-card" data-testid="document-mapping-card">
+      {reopened && (
+        <div className="notice strong" data-testid="reopened-notice">
+          <strong>재확인 필요</strong> — CM이 이미 확정한 매핑입니다. 확정 이후 이 Activity 정보가 바뀌어(층·구역·차수
+          등) 지금 다시 계산하면 더는 이 매핑을 지지하지 않습니다. <strong>매핑 자체는 여전히 확정 상태입니다</strong>
+          — 시스템은 사람의 확정을 되돌리지 않으며, 지금 필요한 것은 이 매핑이 여전히 맞는지 재확인하는 것입니다.
+        </div>
+      )}
       <div className="source-title">매핑 근거</div>
       <div>
         문서:{" "}
         {docId ? (
-          <Link to={`/projects/${projectId}/documents/${encodeURIComponent(docId)}`}>{ev?.note ?? docId}</Link>
+          <Link to={`/projects/${projectId}/documents/${encodeURIComponent(docId)}`}>{docRow?.title ?? ev?.note ?? docId}</Link>
         ) : (
           <span className="muted">알 수 없음</span>
+        )}
+        {docRow?.doc_number && <span className="muted small"> · 문서번호 {docRow.doc_number}</span>}
+        {docRow?.doc_type && <span className="badge neutral small">{DOC_TYPE_LABELS[docRow.doc_type]}</span>}
+        {docRow?.is_orphaned && (
+          <span className="badge" style={{ background: "#fecaca" }}>
+            고아 문서
+          </span>
         )}
       </div>
       {review.activity_id && <div className="small">Activity: {review.activity_id}</div>}
@@ -151,6 +211,9 @@ function DocumentMappingCard({ review, projectId }: { review: ReviewRequest; pro
       )}
       {extra.matched_rules && extra.matched_rules.length > 0 && (
         <div className="small">일치 규칙: {extra.matched_rules.join(", ")}</div>
+      )}
+      {extra.excluded_by && extra.excluded_by.length > 0 && (
+        <div className="small">감점 요인(불일치): {extra.excluded_by.join(", ")}</div>
       )}
     </div>
   );
