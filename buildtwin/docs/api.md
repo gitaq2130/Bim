@@ -187,3 +187,23 @@
 | WeeklySummary | `project_id`*, `week_start`*, `week_end`*, `state_distribution`*, `confirmed_this_week`*, `open_reviews`*, `open_reviews_by_kind`*, `startable`*, `state_counts_by_level`*, `state_counts_by_group`*, `open_review_requests`*, `estimated_done_count`*, `object_total`*, `startable_set`*, `extra` |
 
 `*` = 필수.
+
+## 오류 응답
+
+이 계약은 OpenAPI 스키마가 아니라 `services/api/errors.py`의 예외 핸들러가 만든다(생성 시 고정 삽입).
+
+`ApiError` 계열 예외(및 상태기계의 `InvalidTransitionError` / `TransitionBlockedByReviewError` /
+`ObjectNotFoundError`)는 도메인에 맞는 HTTP 상태코드와 함께 다음 본문을 반환한다:
+
+```json
+{"detail": "사람이 읽는 문자열(문구·상태코드 불변)", "code": "안정적 식별자(snake_case)"}
+```
+
+일부 `code`는 부가 필드를 더 싣는다(`invalid_transition` → `from_state`/`to_state`/`actor`,
+`transition_blocked_by_review` → `review_request_ids`) — 어떤 호출 경로로 발생했든 같은 `code`는 같은
+모양의 응답을 낸다. 인증 실패(401)도 `code: "unauthorized"`를 싣는다. FastAPI 자체 요청 검증 실패
+(422, `RequestValidationError`)는 이 계약 밖으로, `code` 없이 FastAPI 기본 형식(`{"detail": [...]}` )을
+그대로 반환한다.
+
+전체 `code` 어휘와 발생 조건, HTTP 상태코드는 `docs/glossary.md`의 "오류 응답 code 어휘" 표를 참고한다.
+모르는 `code`를 받은 클라이언트는 `detail`을 그대로 보여주면 된다(신규 code 추가가 기존 분기를 깨지 않는다).

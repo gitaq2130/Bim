@@ -162,3 +162,27 @@ reviewer 4차 지적 1: 동일 상태코드(특히 409)가 서로 무관한 여�
 | `daily_report_missing_field` | 422 | multipart 작업일보 업로드에 `report` JSON 필드가 없음 |
 | `daily_report_invalid` | 422 | 작업일보 본문이 스키마 검증에 실패함 |
 | `alignment_input_insufficient` | 422 | 스캔 정합 입력이 기준점·마커 최소 조건(각 ≥3)을 못 채움 |
+| `unauthorized` | 401 | 인증 실패(토큰 없음/무효/만료, 알 수 없는 사용자). `auth/router.py`(`/auth/login`)와 `deps.py`(`get_optional_user`/`get_current_user`)가 던지는 raw `HTTPException(401)`에 `errors.py`의 `HTTPException` 전용 핸들러가 공통으로 부여한다 |
+| `not_found` | 404 | `NotFound`의 중립 기본값(호출부가 `code=`를 지정하지 않았을 때만 나타남). 오늘 기준 모든 `raise NotFound(...)`가 위 표의 구체적 404 code 중 하나를 명시하므로 실제로는 아직 관측되지 않는다 — 다음에 추가되는 raise 지점이 code 지정을 빠뜨렸을 때의 안전망이다 |
+| `bad_request` | 400 | `ApiError`의 중립 기본값(호출부가 `code=` 미지정 시). 오늘 기준 모든 400 raise 지점이 구체적 code를 지정한다 |
+| `conflict` | 409 | `Conflict`의 중립 기본값(호출부가 `code=` 미지정 시). 오늘 기준 모든 409 raise 지점이 구체적 code를 지정한다 |
+| `unprocessable_entity` | 422 | `Unprocessable`의 중립 기본값(호출부가 `code=` 미지정 시). 오늘 기준 모든 422 raise 지점이 구체적 code를 지정한다 |
+| `unsupported_media_type` | 415 | `UnsupportedMedia`의 중립 기본값(호출부가 `code=` 미지정 시). 오늘 기준 모든 415 raise 지점은 `unsupported_file_kind`를 명시한다 |
+| `mapping_review_data_corrupt` | 500 | mapping ReviewRequest 처리 중 저장된 `conflicting_sources`에 `drawing_id`/`entity_handle`이 없어 파싱할 수 없음(`services.sync.review_queue.resolve_mapping_review`) — 대상 객체가 없는 것(`mapping_target_not_found`, 404)이 아니라 서버에 저장된 검토요청 데이터 자체의 손상이므로 5xx로 구분한다 |
+
+### 부칙 — reviewer 5차 지적 반영 (api, 2026-09-03)
+
+이 절은 위 "오류 응답 code 어휘" 표·서문에 대한 추가 설명이며, 기존 문장·행은 그대로 둔 채 덧붙인다(append-only).
+
+- **적용 범위 정정**: 위 서문의 "모든 오류 응답 본문은 code를 싣는다"는 `ApiError` 계열(및 `install_handlers`에 등록된
+  `InvalidTransitionError`/`TransitionBlockedByReviewError`/`ObjectNotFoundError`)과, 이제 `code="unauthorized"`를
+  함께 싣는 인증 401(`HTTPException`)에 한정된다. FastAPI 자체 422(`RequestValidationError`, 요청 스키마 검증
+  실패)는 이 계약 밖이며 `code` 없이 FastAPI 기본 형식(`{"detail": [...]}`)을 그대로 반환한다 — 반려 3번 선택지 중
+  "401에 code 부여 + 스키마 검증 422는 문장에서 제외"를 택했다.
+- **응답 모양 일관성**(반려 5번): `invalid_transition`/`transition_blocked_by_review`는 어느 경로로 발생하든(직접
+  전이 요청이든 검토요청 처리 경로든) 같은 부가 필드(`from_state`/`to_state`/`actor` 또는 `review_request_ids`)를
+  싣는다. `transition_object`가 더 이상 이 예외들을 `Conflict`로 재포장하지 않고 `errors.py`의 전용 핸들러까지
+  그대로 전파하도록 고쳤다.
+- **`drawing_not_found`(404, 위 표) 사용처 확장**: mapping ReviewRequest 승인 처리 중 `confirm_mapping_row`가
+  참조하는 도면이 그 사이 삭제된 경우(`services.sync.persistence._project_id_of_drawing`의 `LookupError`)도
+  이 code로 보고한다 — `confirm_entity_mapping`(직접 확정 경로)과 같은 code.
