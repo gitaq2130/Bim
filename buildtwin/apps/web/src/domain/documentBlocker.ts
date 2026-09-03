@@ -1,7 +1,13 @@
 /**
- * `drawing_approval` blocker(ADR 0007 §5-3) 문구 분류. `Blocker` 모델은 바뀌지 않았으므로(component/reason/
- * related_ids/severity 그대로) 화면은 `reason`의 고정 한국어 문구로 세 갈래를 구분한다 — 이 문구들은
- * `services/progress/readiness.py`(_unapproved_reason, drawing_component)가 커밋한 정확한 표현이다.
+ * `drawing_approval` blocker(ADR 0007 §5-3, 개정 1) 세 갈래 분류. 정본 판정 근거는 서버가 보내는
+ * `Blocker.kind`(선택 필드) — 값은 `services/progress/readiness.py`의 `BLOCKER_KIND_*` 상수(document_unapproved
+ * / document_status_unknown / document_mapping_pending)와 그대로 대응한다. `reason` 문구 매칭은 `kind`가
+ * 없던 시절 응답을 위한 **폴백일 뿐**이다.
+ *
+ * `reason`을 부분 문자열로 분류하지 않는 이유: 그 값은 CM이 읽는 산문이라 다듬어지기 마련이고, 문구가 바뀌는
+ * 순간 조용히 "other"로 떨어져 다음 행동 안내를 잃는다(§5-3 개정 1 — 이 저장소가 오류 응답에 기계 판독 `code`를
+ * 둔 것과 같은 이유). `kind` 도입은 정확히 이 상태로 되돌아가는 것을 막기 위한 것이므로, 여기를 고칠 때
+ * 문구 매칭을 정본으로 삼지 말 것.
  *
  * 셋은 CM이 해야 할 행동이 다르다: 미승인 문서는 그 문서를 쫓고, 미확정 매핑은 매핑을 확정하고,
  * 처리결과 미기재(UNKNOWN)는 대장을 갱신해야 한다. related_ids 는 세 경우 모두 doc_id 다(§5-3 — "doc_number가
