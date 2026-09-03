@@ -5,7 +5,12 @@
 - apply_daily_report(): contractor actor 로 REPORTED / IN_PROGRESS, 완료 신고는 3중 검증 통과 시에만 INSPECTION_REQUESTED.
 - 검측 ReviewRequest(kind=inspection) 생명주기(ADR 0001 §6, CLAUDE.md §3-11): INSPECTION_REQUESTED 진입 시 생성,
   cm 의 CONFIRMED/IN_PROGRESS/MISMATCH 전이 시 종료(approved/rejected). API 는 호출만 한다.
-- 역할→actor 매핑(ADR 0001 §4-1): contractor→contractor, cm→cm 뿐. client/admin 은 RoleNotAllowedError(→ API 403).
+- 프로젝트 역할→actor 매핑(ADR 0001 §4-1, ADR 0006 §2·규칙 7): contractor→contractor, cm→cm 뿐. 아래
+  `actor_for_role`/`next_actions`가 받는 `role`은 `project_members.role`(그 프로젝트에서의 역할)이며 전역
+  `users.role`(시스템 역할)이 아니다 — 호출자(`services/api/usecases.py`)가 `caller_project_role()`로 구한 값을
+  넘긴다. client 는 물론 admin 도 이 함수로는 행위 역할을 얻지 못한다: admin 은 애초에 어떤 프로젝트의 멤버도
+  될 수 없으므로(ADR 0006 §2-1) 여기 들어오는 role 값 자체가 admin 일 수 없고, 설령 들어와도 ROLE_TO_ACTOR 에
+  키가 없어 RoleNotAllowedError(→ API 403)이다.
 """
 from __future__ import annotations
 
@@ -41,7 +46,10 @@ class ObjectNotFoundError(LookupError):
 
 
 class RoleNotAllowedError(PermissionError):
-    """ADR 0001 §4-1: client/admin 은 상태 전이·검측 승인·검토요청 처리 권한이 없다(API 는 403 으로 매핑)."""
+    """ADR 0001 §4-1: 프로젝트 역할(project role) client 는 상태 전이·검측 승인·검토요청 처리 권한이 없다.
+    admin 은 프로젝트 역할 자체를 가질 수 없으므로(ADR 0006 §2-1) 여기 오는 값은 client 뿐이거나, 멤버가
+    아니라 프로젝트 역할이 없는 호출(빈 문자열 등)이다 — 어느 쪽이든 ROLE_TO_ACTOR 에 없어 이 예외가 난다
+    (API 는 403 으로 매핑)."""
 
     def __init__(self, role: str):
         self.role = role
@@ -68,7 +76,10 @@ CLAIMED_TO_OBJECT_STATE: dict[str, ObjectState] = {
     "in_progress": ObjectState.IN_PROGRESS,
     "completed": ObjectState.INSPECTION_REQUESTED,
 }
-ROLE_TO_ACTOR: dict[str, Actor] = {"contractor": Actor.CONTRACTOR, "cm": Actor.CM}     # ADR 0001 §4-1 — admin/client 없음
+# 키는 프로젝트 역할(project role, project_members.role) — 전역 users.role 이 아니다(ADR 0006 §2·규칙 7).
+# ADR 0001 §4-1: contractor/cm 만 행위 actor 를 가진다. client 는 프로젝트 역할이지만 없고, admin 은 애초에
+# 프로젝트 역할이 될 수 없어(ADR 0006 §2-1) 여기 등장할 수조차 없다.
+ROLE_TO_ACTOR: dict[str, Actor] = {"contractor": Actor.CONTRACTOR, "cm": Actor.CM}
 ACTOR_TO_ROLES: dict[Actor, list[str]] = {Actor.CONTRACTOR: ["contractor"], Actor.CM: ["cm"], Actor.SYSTEM: []}
 NEXT_ACTION_KINDS: frozenset[str] = frozenset({
     "confirm", "request_inspection", "reject_inspection", "report_progress", "accept_rework", "order_rework",
@@ -79,7 +90,11 @@ INSPECTION_DECISIONS: dict[ObjectState, str] = {ObjectState.CONFIRMED: "approved
 
 
 def actor_for_role(role: str) -> Actor:
-    """UserRole → Actor. client/admin 은 RoleNotAllowedError."""
+    """프로젝트 역할(project role, `project_members.role`) → Actor. 전역 `users.role`(시스템 역할)을 받는
+    함수가 아니다 — 호출자는 `caller_project_role()`로 구한 값을 넘겨야 한다(ADR 0006 §2·규칙 7). client 와,
+    프로젝트 역할이 없는 호출(빈 문자열 등)은 RoleNotAllowedError. admin 은 애초에 프로젝트 역할을 가질 수
+    없으므로(ADR 0006 §2-1) 이 함수에 도달할 role 값이 될 수 없다 — 그럼에도 들어온다면 ROLE_TO_ACTOR 에
+    키가 없어 마찬가지로 RoleNotAllowedError 다."""
     actor = ROLE_TO_ACTOR.get(str(role).lower())
     if actor is None:
         raise RoleNotAllowedError(role)
@@ -264,7 +279,9 @@ class ObjectStateMachine:
         return [db.transition_row_to_model(r) for r in db.load_transitions(session, project_id, global_id)]
 
     def next_actions(self, session: Session, project_id: str, global_id: str, role: str) -> list[dict]:
-        """역할별 다음 행동. kind 는 NEXT_ACTION_KINDS(glossary) 안에서만. client/admin 은 빈 목록(조회 전용)."""
+        """role 이 가리키는 프로젝트 역할(project role)별 다음 행동. kind 는 NEXT_ACTION_KINDS(glossary)
+        안에서만. client, 그리고 프로젝트 역할이 없는 호출(admin 등)은 빈 목록(조회 전용) — `actor_for_role`
+        참조."""
         row = self._load(session, project_id, global_id)
         from_state = ObjectState(row.state)
         try:

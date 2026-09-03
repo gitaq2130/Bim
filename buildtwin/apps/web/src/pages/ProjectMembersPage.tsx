@@ -75,6 +75,7 @@ export function ProjectMembersPage() {
 
       <fieldset className="card">
         <legend>멤버 추가</legend>
+        <p className="muted small">admin 계정은 멤버로 추가할 수 없습니다(별도의 cm/contractor 계정을 발급하세요).</p>
         <form className="row gap" onSubmit={submit}>
           <label className="field">
             <span>사용자 ID</span>
