@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from packages.core.models.evidence import Evidence
 from packages.core.models.identity import BimObject
 from packages.core.models.orm import (
+    ActivityDocumentMappingRow,
     ActivityRelationRow,
     ActivityRow,
     BimObjectRow,
@@ -114,6 +115,14 @@ def material_ids_for_object(session: Session, project_id: str, global_id: str) -
 
 def activity_ids_for_object(session: Session, project_id: str, global_id: str) -> list[str]:
     return db.activity_ids_for_object(session, project_id, global_id)
+
+
+def document_mappings_for_document(session: Session, project_id: str, doc_id: str) -> list[ActivityDocumentMappingRow]:
+    """그 문서에 걸린 Activity 매핑 전부(ADR 0007 §2-3: project_id 를 항상 함께 건다).
+    객체 상세가 entity_handles/activity_ids 를 함께 주듯, 문서 상세도 이걸로 매핑을 같이 준다."""
+    return list(session.scalars(select(ActivityDocumentMappingRow).where(
+        ActivityDocumentMappingRow.project_id == project_id, ActivityDocumentMappingRow.doc_id == doc_id)
+        .order_by(ActivityDocumentMappingRow.activity_id)))
 
 
 def latest_report_item(session: Session, project_id: str, global_id: str) -> DailyReportItem | None:

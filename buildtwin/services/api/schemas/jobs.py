@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from packages.core.models.ingest import FileKind
 
 JobStatus = Literal["queued", "running", "done", "failed"]
-JobKind = Literal["ingest", "scan_upload", "schedule", "mapping", "verdict"]   # glossary "작업 종류"
+JobKind = Literal["ingest", "scan_upload", "schedule", "mapping", "verdict", "document_register"]   # glossary "작업 종류"
 
 
 class UploadResponse(BaseModel):

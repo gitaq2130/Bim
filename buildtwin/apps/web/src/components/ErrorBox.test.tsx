@@ -62,6 +62,23 @@ describe("errorText", () => {
     expect(msg).toContain("권한이 없습니다");
   });
 
+  // ADR 0007 §8: 문서관리대장 연동 오류 code.
+  it("document_not_found 는 문서를 찾을 수 없다는 문구를 반환한다", () => {
+    const msg = errorText(apiError(404, "not found", "document_not_found"));
+    expect(msg).toContain("문서를 찾을 수 없습니다");
+  });
+
+  it("document_register_invalid 는 사용자가 고칠 수 있게 무엇을 확인해야 하는지 안내한다", () => {
+    const msg = errorText(apiError(422, "no valid sheet", "document_register_invalid"));
+    expect(msg).toContain("헤더 행");
+    expect(msg).toContain("제목");
+  });
+
+  it("document_mapping_target_not_found 는 매핑 대상을 찾을 수 없다는 문구를 반환한다", () => {
+    const msg = errorText(apiError(404, "not found", "document_mapping_target_not_found"));
+    expect(msg).toContain("매핑 대상");
+  });
+
   // code 가 없거나(구버전 서버) 알 수 없는 값이면 원인을 지어내지 않고 서버가 준 detail 을 그대로 보여준다.
   it("code 가 없는 409 는 detail 을 그대로 보여주며 '여러 프로젝트' 를 지어내지 않는다", () => {
     const msg = errorText(apiError(409, "ambiguous global_id across projects"));

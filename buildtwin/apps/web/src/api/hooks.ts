@@ -5,9 +5,14 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from "@tanstack/react-query";
 import { api } from "./client";
 import type {
+  ActivityDocumentMapping,
   AlignmentInput,
+  ConfirmDocumentMappingRequest,
   DailyReport,
   DailyReportCreate,
+  Document,
+  DocumentDetail,
+  DocumentsQuery,
   DrawingEntitiesResponse,
   DrawingSummary,
   EntityObjectMapping,
@@ -56,6 +61,9 @@ export const queryKeys = {
   reviews: (pid: string, kind?: ReviewKind | "", status?: ReviewStatus | "") =>
     ["projects", pid, "review-requests", kind ?? "", status ?? ""] as const,
   members: (pid: string) => ["projects", pid, "members"] as const,
+  /** ADR 0007 §2-3: 문서는 (project_id, doc_id) 복합 키 — 캐시 키도 항상 둘 다 담는다 */
+  documents: (pid: string, q?: DocumentsQuery) => ["projects", pid, "documents", q ?? {}] as const,
+  document: (pid: string, docId: string) => ["projects", pid, "documents", docId] as const,
   readiness: (aid: string) => ["activities", aid, "readiness"] as const,
   startable: (pid: string) => ["projects", pid, "startable"] as const,
   weeklySummary: (pid: string) => ["projects", pid, "weekly-summary"] as const,
@@ -382,5 +390,57 @@ export function useRemoveProjectMember(projectId: string) {
   return useMutation({
     mutationFn: (userId: string) => api.del<void>(`/projects/${projectId}/members/${userId}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.members(projectId) }),
+  });
+}
+
+// ---- 문서관리대장 (ADR 0007) ----
+// 경로·쿼리·응답 모양은 services/api/routers/documents.py, schemas/documents.py 기준(api 에이전트 구현 확인됨).
+export function useDocuments(projectId: string | null | undefined, q: DocumentsQuery = {}) {
+  return useQuery({
+    queryKey: queryKeys.documents(projectId ?? "", q),
+    queryFn: async () => toPaginated(await api.get<Document[] | Paginated<Document>>(`/projects/${projectId}/documents`, { ...q })),
+    enabled: !!projectId,
+  });
+}
+
+/**
+ * 문서 상세 = 문서 한 건 + 그 문서에 걸린 Activity 매핑 전부(DocumentDetail). (project_id, doc_id) 복합 키
+ * (ADR 0005/0007과 같은 프로젝트 범위 원칙) — doc_id 단독 조회 금지, project_id 를 쿼리로 함께 보낸다.
+ */
+export function useDocument(projectId: string | null | undefined, docId: string | null | undefined) {
+  return useQuery<DocumentDetail>({
+    queryKey: queryKeys.document(projectId ?? "", docId ?? ""),
+    queryFn: () => api.get<DocumentDetail>(`/documents/${encodeURIComponent(docId ?? "")}`, { project_id: projectId ?? undefined }),
+    enabled: !!projectId && !!docId,
+  });
+}
+
+/**
+ * 문서↔Activity 매핑 확정(needs_review=False, reviewed_by 기록) — cm만(ADR 0007 §4 규칙 5·§7). confidence
+ * 값과 무관하게 항상 사람 확인을 요구하므로 이 훅 외에 "일괄 확정" 경로는 만들지 않는다.
+ * 확정은 drawing_approval readiness 를 바꿀 수 있어 요약·착수가능 쿼리도 함께 무효화한다.
+ */
+export function useConfirmDocumentMapping(projectId: string, docId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ activityId, note }: { activityId: string; note?: string }) =>
+      api.post<ActivityDocumentMapping>(
+        `/documents/mappings/${encodeURIComponent(activityId)}/${encodeURIComponent(docId)}/confirm`,
+        { note: note || null } satisfies ConfirmDocumentMappingRequest,
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.document(projectId, docId) });
+      qc.invalidateQueries({ queryKey: queryKeys.weeklySummary(projectId) });
+      qc.invalidateQueries({ queryKey: queryKeys.startable(projectId) });
+    },
+  });
+}
+
+/** 문서↔Activity 매핑 후보 (재)생성 — cm만(ADR 0007 §7 규칙 2). 결과는 항상 needs_review=True. */
+export function useGenerateDocumentMappings(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<ActivityDocumentMapping[]>(`/projects/${projectId}/documents/mappings`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.documents(projectId) }),
   });
 }

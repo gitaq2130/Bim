@@ -32,6 +32,15 @@
 | POST | `/api/projects/{project_id}/daily-reports` | Create Daily Report | project_id*(path) | json: DailyReportCreate; form-data: object | DailyReportResponse |
 | GET | `/api/projects/{project_id}/daily-reports` | List Daily Reports | project_id*(path) | - | DailyReportView[] |
 
+### documents
+
+| 메서드 | 경로 | 요약 | 파라미터 | 요청 본문 | 응답 |
+|---|---|---|---|---|---|
+| POST | `/api/documents/mappings/{activity_id}/{doc_id}/confirm` | Confirm Document Mapping | activity_id*(path), doc_id*(path) | json: ConfirmDocumentMappingRequest | null | ActivityDocumentMapping |
+| GET | `/api/documents/{doc_id}` | Get Document | doc_id*(path), project_id*(query) | - | DocumentDetail |
+| GET | `/api/projects/{project_id}/documents` | List Documents | project_id*(path), doc_type(query), approval_status(query), include_orphaned(query), page(query), page_size(query), size(query) | - | DocumentList |
+| POST | `/api/projects/{project_id}/documents/mappings` | Generate Document Mappings | project_id*(path) | - | ActivityDocumentMapping[] |
+
 ### drawings
 
 | 메서드 | 경로 | 요약 | 파라미터 | 요청 본문 | 응답 |
@@ -118,6 +127,7 @@
 
 | 이름 | 필드 |
 |---|---|
+| ActivityDocumentMapping | `activity_id`*, `doc_id`*, `confidence`*, `evidence`*, `needs_review`, `reviewed_by` |
 | ActivityView | `activity_id`*, `schedule_id`*, `project_id`*, `name`*, `wbs_code`, `discipline`, `level`, `zone`, `planned_start`, `planned_finish`, `duration_days`, `resources`, `percent_complete`, `source_ref`, `mapped_global_ids`, `predecessor_ids` |
 | Actor | enum: system, contractor, cm |
 | AlignmentInput | `control_points`, `marker_observations`, `marker_definitions`, `scanner_position` |
@@ -128,12 +138,18 @@
 | BimObjectView | `global_id`*, `ifc_type`*, `group`*, `name`, `level`, `level_elevation`, `zone`, `bbox`, `mesh_ref`, `psets`, `material`, `quantity`, `express_id`, `project_id`*, `model_id`*, `model_version`*, `state`*, `is_orphaned`, `has_open_review` |
 | Blocker | `component`*, `reason`*, `related_ids`, `severity` |
 | Body_upload_file_api_projects__project_id__files_post | `file`*, `kind`, `level` |
+| ConfirmDocumentMappingRequest | `note` |
 | ConfirmMappingRequest | `global_id`*, `note` |
 | ControlPoint | `name`*, `scan_xyz`*, `model_xyz`* |
 | CoordinateSystem | `source`*, `origin`, `rotation_deg`, `scale`, `unit`, `epsg`, `extent`, `notes` |
 | CoordinateTransform | `matrix`, `from_source`*, `to_source`, `rmse`, `method` |
 | DailyReportResponse | `report_id`*, `project_id`*, `report_date`*, `reporter_id`*, `crew_count`, `equipment`, `items`, `note`, `submitted_at`, `transitions`, `review_requests`, `inspection_review_ids`, `skipped` |
 | DailyReportView | `report_id`*, `project_id`*, `report_date`*, `reporter_id`*, `crew_count`, `equipment`, `items`, `note`, `submitted_at` |
+| DocumentApprovalStatus | enum: APPROVED, APPROVED_WITH_COMMENTS, REJECTED, RESUBMIT_REQUIRED, IN_REVIEW, UNKNOWN |
+| DocumentDetail | `document`*, `mappings` |
+| DocumentList | `items`*, `total`*, `page`*, `page_size`* |
+| DocumentType | enum: TFA, TFR, FI, SCAR, NCR, DN, VE, RFI, other |
+| DocumentView | `project_id`*, `doc_id`*, `doc_type`*, `sender`*, `sender_normalized`*, `discipline_raw`, `discipline_normalized`, `seq_raw`, `seq_normalized`, `doc_number`, `title`*, `title_normalized`*, `issued_on`, `result_raw`, `approval_status`, `approval_confidence`*, `approval_evidence`*, `completed_on`, `file_id`*, `sheet_name`*, `source_row`*, `needs_review`, `is_orphaned`, `imported_at` |
 | DrawingEntitiesResponse | `drawing_id`*, `project_id`*, `level`, `entities`*, `coordinate_system`*, `alignment`, `svg_uri` |
 | DrawingEntityView | `handle`*, `layer`*, `dxftype`*, `points`, `bbox`, `block_name`, `insert_point`, `rotation_deg`, `scale`, `text`, `radius`, `attrs` |
 | DrawingSummary | `drawing_id`*, `project_id`*, `name`, `level`, `coordinate_system`*, `alignment`, `svg_uri`, `file_id`, `stats` |

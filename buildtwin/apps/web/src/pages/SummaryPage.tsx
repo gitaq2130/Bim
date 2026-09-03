@@ -3,9 +3,10 @@
  */
 import { Link, useParams } from "react-router-dom";
 import { useWeeklySummary } from "../api/hooks";
-import { OBJECT_STATES } from "../api/types";
+import { OBJECT_STATES, type Blocker } from "../api/types";
 import { ConfidenceBadge } from "../components/ConfidenceBadge";
 import { ErrorBox } from "../components/ErrorBox";
+import { DRAWING_APPROVAL_BLOCKER_ACTIONS, DRAWING_APPROVAL_BLOCKER_LABELS, classifyDrawingApprovalBlocker } from "../domain/documentBlocker";
 import { REVIEW_KIND_LABELS, STATE_COLORS, STATE_LABELS_KO } from "../domain/labels";
 import { pct } from "../lib/format";
 
@@ -111,10 +112,7 @@ export function SummaryPage() {
                 ) : (
                   <ul className="blockers">
                     {a.blockers.map((b, i) => (
-                      <li key={i} className={`sev-${b.severity ?? "medium"}`}>
-                        [{b.component}] {b.reason}
-                        {b.related_ids?.length ? <span className="muted small"> ({b.related_ids.join(", ")})</span> : null}
-                      </li>
+                      <BlockerLine key={i} blocker={b} projectId={projectId} />
                     ))}
                   </ul>
                 )}
@@ -124,5 +122,35 @@ export function SummaryPage() {
         </tbody>
       </table>
     </div>
+  );
+}
+
+/**
+ * 착수 차단 사유 한 줄. `drawing_approval`(ADR 0007)은 `related_ids`가 `doc_id` 목록이므로 문서 상세로
+ * 링크한다. 세 갈래(미승인 문서 / 미확정 매핑 / 처리결과 미기재)는 CM이 해야 할 행동이 다르므로 뭉개지
+ * 않고 갈래 이름 + 다음 행동을 함께 보여준다(§5-3). 다른 구성요소(predecessor 등)는 기존대로 텍스트만.
+ */
+function BlockerLine({ blocker: b, projectId }: { blocker: Blocker; projectId: string }) {
+  const isDrawingApproval = b.component === "drawing_approval";
+  const kind = isDrawingApproval ? classifyDrawingApprovalBlocker(b.reason) : "other";
+  const kindLabel = DRAWING_APPROVAL_BLOCKER_LABELS[kind];
+  const action = DRAWING_APPROVAL_BLOCKER_ACTIONS[kind];
+  return (
+    <li className={`sev-${b.severity ?? "medium"}`}>
+      [{b.component}]{kindLabel && <span className="badge neutral doc-blocker-kind"> {kindLabel} </span>} {b.reason}
+      {action && <div className="muted small">다음 행동: {action}</div>}
+      {b.related_ids?.length ? (
+        <span className="muted small">
+          {" ("}
+          {b.related_ids.map((id, i) => (
+            <span key={id}>
+              {i > 0 && ", "}
+              {isDrawingApproval ? <Link to={`/projects/${projectId}/documents/${encodeURIComponent(id)}`}>{id}</Link> : id}
+            </span>
+          ))}
+          {")"}
+        </span>
+      ) : null}
+    </li>
   );
 }

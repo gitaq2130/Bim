@@ -1,5 +1,6 @@
 import type { ObjectState, ScanState } from "../api/types";
 import { SCAN_STATE_LABELS, STATE_COLORS, STATE_LABELS_KO } from "../domain/labels";
+import { textColorFor } from "../lib/color";
 
 export function StateBadge({ state }: { state: ObjectState | null | undefined }) {
   if (!state) return <span className="badge">-</span>;
@@ -26,12 +27,4 @@ export function ScanStateBadge({ state }: { state: ScanState | null | undefined 
       {SCAN_STATE_LABELS[state]}
     </span>
   );
-}
-
-function textColorFor(hex: string): string {
-  const n = parseInt(hex.replace("#", ""), 16);
-  const r = (n >> 16) & 255,
-    g = (n >> 8) & 255,
-    b = n & 255;
-  return 0.299 * r + 0.587 * g + 0.114 * b > 150 ? "#111" : "#fff";
 }

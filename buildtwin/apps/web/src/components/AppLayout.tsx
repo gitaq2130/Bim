@@ -15,6 +15,7 @@ interface ProjectLink {
 const PROJECT_LINKS: ProjectLink[] = [
   { seg: "upload", label: "업로드", roles: PROJECT_ROUTE_ROLES.upload },
   { seg: "viewer", label: "2D|3D 뷰" },
+  { seg: "documents", label: "문서관리대장" },
   { seg: "daily-report", label: "작업일보", roles: PROJECT_ROUTE_ROLES["daily-report"] },
   { seg: "reviews", label: "검토요청", roles: PROJECT_ROUTE_ROLES.reviews },
   { seg: "summary", label: "주간요약" },

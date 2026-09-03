@@ -4,6 +4,7 @@
 """
 from .activities import ActivityView, StartableActivityView, StateDistributionRow, WeeklySummary
 from .auth import LoginRequest, LoginResponse, RegisterRequest, UserView
+from .documents import ConfirmDocumentMappingRequest, DocumentDetail, DocumentList, DocumentView
 from .drawings import (
     AlignmentRequest,
     ConfirmMappingRequest,
@@ -36,10 +37,14 @@ __all__ = [
     "AlignmentJobResponse",
     "AlignmentRequest",
     "BimObjectView",
+    "ConfirmDocumentMappingRequest",
     "ConfirmMappingRequest",
     "DailyReportCreate",
     "DailyReportResponse",
     "DailyReportView",
+    "DocumentDetail",
+    "DocumentList",
+    "DocumentView",
     "DrawingEntitiesResponse",
     "DrawingEntityView",
     "DrawingSummary",

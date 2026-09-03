@@ -79,11 +79,17 @@ export function ReviewsPage() {
               {r.activity_id && ` · Activity ${r.activity_id}`}
               {r.rule_id && ` · 규칙 ${r.rule_id}`}
             </div>
-            <div className="sources">
-              {AXES.map((axis) => (
-                <SourceCard key={axis} axis={axis} src={r.conflicting_sources?.[axis] ?? null} />
-              ))}
-            </div>
+            {/* ADR 0007 §4 규칙 6: document_mapping 은 신고/스캔/논리 3축 충돌이 아니라 문서↔Activity 매핑
+                제안 하나다 — 축 카드 대신 매핑 근거(제목유사도·일치 규칙)와 문서 링크를 보여준다. */}
+            {r.kind === "document_mapping" ? (
+              <DocumentMappingCard review={r} projectId={projectId} />
+            ) : (
+              <div className="sources">
+                {AXES.map((axis) => (
+                  <SourceCard key={axis} axis={axis} src={r.conflicting_sources?.[axis] ?? null} />
+                ))}
+              </div>
+            )}
             {r.resolution_note && (
               <p className="small">
                 처리 메모: {r.resolution_note} {r.resolved_by && `(${r.resolved_by})`}
@@ -114,6 +120,38 @@ export function ReviewsPage() {
           resolve.mutate({ reviewRequestId: pending.r.review_request_id, decision: pending.decision, note: note || undefined }, { onSettled: () => setPending(null) });
         }}
       />
+    </div>
+  );
+}
+
+/**
+ * 문서↔Activity 매핑 검토요청(ADR 0007 §4). 시스템이 만든 매핑은 confidence 와 무관하게 항상
+ * needs_review=True 이므로(§4 규칙 5), CM 이 "왜 이 매핑이 제안됐는가"를 보고 판단해야 한다 —
+ * evidence.extra.title_similarity/matched_rules 를 팝오버 뒤에 숨기지 않고 바로 드러낸다.
+ * 문서 링크는 evidence.source_id(= doc_id, §4 규칙 7)로 문서 상세로 이동한다.
+ */
+function DocumentMappingCard({ review, projectId }: { review: ReviewRequest; projectId: string }) {
+  const ev = review.evidence;
+  const extra = (ev?.extra ?? {}) as { title_similarity?: number; matched_rules?: string[]; excluded_by?: string[] };
+  const docId = ev?.source_type === "document" ? ev.source_id : undefined;
+  return (
+    <div className="source-card" data-testid="document-mapping-card">
+      <div className="source-title">매핑 근거</div>
+      <div>
+        문서:{" "}
+        {docId ? (
+          <Link to={`/projects/${projectId}/documents/${encodeURIComponent(docId)}`}>{ev?.note ?? docId}</Link>
+        ) : (
+          <span className="muted">알 수 없음</span>
+        )}
+      </div>
+      {review.activity_id && <div className="small">Activity: {review.activity_id}</div>}
+      {typeof extra.title_similarity === "number" && (
+        <div className="small">제목 유사도: {Math.round(extra.title_similarity * 100)}%</div>
+      )}
+      {extra.matched_rules && extra.matched_rules.length > 0 && (
+        <div className="small">일치 규칙: {extra.matched_rules.join(", ")}</div>
+      )}
     </div>
   );
 }

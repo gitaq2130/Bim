@@ -51,7 +51,11 @@ export type KnownApiErrorCode =
   | "user_not_found"
   | "duplicate_member"
   | "member_not_found"
-  | "admin_cannot_be_member";
+  | "admin_cannot_be_member"
+  // ADR 0007 §8: 문서관리대장 연동.
+  | "document_not_found"
+  | "document_register_invalid"
+  | "document_mapping_target_not_found";
 
 /**
  * 서버 에러 바디의 안정적 원인 식별자. `detail` 은 사람이 읽는 문구(오늘의 동작 유지),

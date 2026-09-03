@@ -95,6 +95,15 @@ const CODE_MESSAGES: Record<KnownApiErrorCode, string> = {
   // ADR 0006 §2-1: 멤버 추가 대상 user_id 가 전역 admin 계정일 때. admin 은 어떤 프로젝트의 멤버도 될 수 없다.
   admin_cannot_be_member:
     "admin 계정은 프로젝트 멤버로 추가할 수 없습니다. 현장 판단이 필요하면 별도의 cm 계정을 발급하세요.",
+  // ADR 0007 §8: (project_id, doc_id) 로 문서를 찾을 수 없을 때. 문서 조회는 언제나 두 키를 함께 건다.
+  document_not_found: "해당 문서를 찾을 수 없습니다. 삭제되었거나 최근 대장 재업로드로 바뀌었을 수 있습니다.",
+  // 업로드한 대장(xlsx)에서 헤더 행을 찾지 못했거나 필수 컬럼(제목)이 없어 어떤 시트도 읽지 못했을 때.
+  // 사용자가 고칠 수 있는 오류이므로 무엇을 확인해야 하는지 알려준다.
+  document_register_invalid:
+    "문서관리대장 파일을 읽을 수 없습니다. 헤더 행(문서발생일/발신/공종/번호/제목 등)이 1~10행 안에 있는지, " +
+    "그리고 '제목' 컬럼이 각 시트에 있는지 확인한 뒤 다시 업로드하세요.",
+  // 문서↔Activity 매핑 생성·확정이 가리키는 doc_id 또는 activity_id 가 그 프로젝트에 없을 때.
+  document_mapping_target_not_found: "매핑 대상 문서 또는 공정 Activity를 찾을 수 없습니다. 목록을 새로고침해 확인하세요.",
 };
 
 export function errorText(e: unknown): string {

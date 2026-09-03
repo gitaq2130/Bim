@@ -85,7 +85,9 @@ export type EvidenceSourceType =
   | "schedule"
   | "material"
   | "system_logic"
-  | "user_input";
+  | "user_input"
+  /** ADR 0007 §3-2 규칙 4: 문서관리대장에서 온 근거. 기존 어느 축에도 속하지 않는 별도 출처 */
+  | "document";
 
 export interface Evidence {
   source_type: EvidenceSourceType;
@@ -158,6 +160,97 @@ export interface EntityObjectMapping {
   reviewed_by?: string | null;
 }
 
+// ---- document.py (ADR 0007) ----
+export type DocumentType = "TFA" | "TFR" | "FI" | "SCAR" | "NCR" | "DN" | "VE" | "RFI" | "other";
+export const DOCUMENT_TYPES: readonly DocumentType[] = ["TFA", "TFR", "FI", "SCAR", "NCR", "DN", "VE", "RFI", "other"] as const;
+
+/**
+ * 대장 `처리결과`(result_raw)를 정규화한 값. `ObjectState`와 무관하며 어떤 상태 전이도 일으키지 않는다(§3-1).
+ * 공란·해석 불가는 UNKNOWN이고 절대 승인으로 추측하지 않는다(§3-2 규칙 1). APPROVED_WITH_COMMENTS(조건부승인)는
+ * 기본적으로 승인으로 보지 않는다(§3-3) — 조건 충족 여부가 대장에 없다.
+ */
+export type DocumentApprovalStatus =
+  | "APPROVED"
+  | "APPROVED_WITH_COMMENTS"
+  | "REJECTED"
+  | "RESUBMIT_REQUIRED"
+  | "IN_REVIEW"
+  | "UNKNOWN";
+export const DOCUMENT_APPROVAL_STATUSES: readonly DocumentApprovalStatus[] = [
+  "APPROVED",
+  "APPROVED_WITH_COMMENTS",
+  "REJECTED",
+  "RESUBMIT_REQUIRED",
+  "IN_REVIEW",
+  "UNKNOWN",
+] as const;
+
+/** 대장 한 행. PK = `(project_id, doc_id)`(ADR 0005 규칙과 같은 프로젝트 범위 키) — doc_id 단독 조회 금지 */
+export interface Document {
+  project_id: string;
+  doc_id: string;
+  doc_type: DocumentType;
+  sender: string;
+  sender_normalized: string;
+  /** 대장 `공종` 원문. 신뢰 불가 필드(ADR 0007 §4 규칙 2) — 단독 매핑 근거가 될 수 없다 */
+  discipline_raw?: string | null;
+  discipline_normalized?: string | null;
+  seq_raw?: string | null;
+  seq_normalized?: string | null;
+  /** 표시·검색 전용. 되파싱하지 않는다(§2-4) */
+  doc_number?: string | null;
+  title: string;
+  title_normalized: string;
+  issued_on?: string | null;
+  /** 처리결과 원문 그대로(공백 포함). 화면은 이 값을 해석하지 않고 그대로 보여준다 */
+  result_raw?: string | null;
+  approval_status: DocumentApprovalStatus;
+  approval_confidence: number;
+  approval_evidence: Evidence;
+  completed_on?: string | null;
+  file_id: string;
+  sheet_name: string;
+  source_row: number;
+  /** 처리결과를 해석하지 못했을 때 true(§3-2 규칙 3) */
+  needs_review: boolean;
+  /** 최근 대장 업로드에 없던 문서. 삭제하지 않고 표시만(§2-2). readiness 계산에서 제외 */
+  is_orphaned: boolean;
+  imported_at?: string;
+}
+
+/** GET /projects/{pid}/documents 쿼리(services/api/routers/documents.py). 기본은 고아 문서를 숨긴다 —
+ * objects 목록과 같은 관례. "고아만" 필터는 서버에 없다(include_orphaned 은 포함 여부만 토글) */
+export interface DocumentsQuery {
+  doc_type?: DocumentType;
+  approval_status?: DocumentApprovalStatus;
+  include_orphaned?: boolean;
+  page?: number;
+  page_size?: number;
+}
+
+/** GET /documents/{doc_id} 응답. 문서 상세 = 문서 한 건 + 그 문서에 걸린 Activity 매핑 전부 —
+ * 객체 상세가 linked.activity_ids 를 함께 주는 것과 같은 이유로 화면이 한 번의 호출로 그린다. */
+export interface DocumentDetail {
+  document: Document;
+  mappings: ActivityDocumentMapping[];
+}
+
+/** POST /documents/mappings/{activity_id}/{doc_id}/confirm 본문. note 는 선택 */
+export interface ConfirmDocumentMappingRequest {
+  note?: string | null;
+}
+
+/** 문서 ↔ Activity 매핑. 문서 ↔ 객체 직접 매핑은 만들지 않는다(§4-1 규칙 1) */
+export interface ActivityDocumentMapping {
+  activity_id: string;
+  doc_id: string;
+  confidence: number;
+  evidence: Evidence;
+  /** confidence 값과 무관하게 항상 true로 시작한다(§4 규칙 5) — 자동 확정 없음 */
+  needs_review: boolean;
+  reviewed_by?: string | null;
+}
+
 // ---- scan.py ----
 export type ScanState = "NOT_BUILT" | "IN_PROGRESS" | "ESTIMATED_DONE" | "MISMATCH" | "UNVERIFIABLE";
 
@@ -209,7 +302,8 @@ export interface ScanVerdict {
 }
 
 // ---- review.py ----
-export type ReviewKind = "mapping" | "verification" | "inspection";
+/** `document_mapping`(ADR 0007 §4 규칙 6): 미확정 문서↔Activity 매핑의 CM 검토요청. 해소는 services/progress 소유 */
+export type ReviewKind = "mapping" | "verification" | "inspection" | "document_mapping";
 export type ReviewStatus = "open" | "approved" | "rejected" | "on_hold";
 
 /** 3중 검증 축별 근거. 서버는 자유 dict 를 주지만 화면은 이 키들을 기대한다. */
@@ -306,7 +400,8 @@ export interface DailyReport extends DailyReportCreate {
 
 // ---- ingest.py ----
 export type IngestStatus = "ok" | "partial" | "failed" | "needs_ifc_export";
-export type FileKind = "ifc" | "dxf" | "dwg" | "rvt" | "e57" | "las" | "ply" | "csv" | "xml" | "xer" | "unknown";
+/** `xlsx`(ADR 0007 §8 규칙 1): 문서관리대장. 업로드는 그 프로젝트의 cm만(§7 규칙 1) — 다른 종류와 다르다 */
+export type FileKind = "ifc" | "dxf" | "dwg" | "rvt" | "e57" | "las" | "ply" | "csv" | "xml" | "xer" | "xlsx" | "unknown";
 export interface IngestWarning {
   code: string;
   message: string;
@@ -356,11 +451,15 @@ export interface UploadResponse {
   job_id: string;
   file_id?: string;
   kind?: FileKind;
+  job_kind?: JobKind;
 }
 
 export type JobStatus = "queued" | "running" | "done" | "failed";
-/** glossary 개정 1: scan_upload = 스캔 파일 등록(정합 입력 대기), verdict = 정합+판정 */
-export type JobKind = "ingest" | "scan_upload" | "schedule" | "mapping" | "verdict";
+/**
+ * glossary 개정 1: scan_upload = 스캔 파일 등록(정합 입력 대기), verdict = 정합+판정.
+ * document_register(ADR 0007 §8 규칙 2): 문서관리대장(xlsx) 적재 + 문서↔Activity 매핑 후보 생성
+ */
+export type JobKind = "ingest" | "scan_upload" | "schedule" | "mapping" | "verdict" | "document_register";
 export interface Job {
   job_id: string;
   kind?: JobKind;

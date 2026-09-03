@@ -6,6 +6,8 @@ import { RequireProjectAccess } from "./components/RequireProjectAccess";
 import { RequireRole } from "./components/RequireRole";
 import { PROJECT_ROUTE_ROLES } from "./domain/projectRoutes";
 import { DailyReportPage } from "./pages/DailyReportPage";
+import { DocumentDetailPage } from "./pages/DocumentDetailPage";
+import { DocumentsPage } from "./pages/DocumentsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProjectMembersPage } from "./pages/ProjectMembersPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
@@ -29,6 +31,9 @@ export function App() {
               <Route index element={<UploadPage />} />
             </Route>
             <Route path="viewer" element={<ViewerPage />} />
+            {/* ADR 0007 §7: 문서 조회는 모든 프로젝트 멤버(+admin) — RequireProjectAccess 통과만으로 충분하다. */}
+            <Route path="documents" element={<DocumentsPage />} />
+            <Route path="documents/:docId" element={<DocumentDetailPage />} />
             <Route path="daily-report" element={<RequireRole roles={PROJECT_ROUTE_ROLES["daily-report"]} />}>
               <Route index element={<DailyReportPage />} />
             </Route>

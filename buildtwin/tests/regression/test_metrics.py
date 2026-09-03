@@ -9,6 +9,14 @@
 - scan_verdict_accuracy     : reality-capture "합성 점군 판정이 기대 enum 과 일치" (verdict.expected.json)
 - registration_rmse_max     : reality-capture "기준점 3점으로 정합 후 rmse < max_rmse"
 - activity_mapping_accuracy : progress-engine Activity↔객체 매핑 (schedule.expected.json, 3개 포맷 중 최솟값)
+- document_mapping_count / document_mapping_accuracy / document_mapping_false_positives_max :
+  progress-engine 문서↔Activity 매핑(ADR 0007 §4, document_register.xlsx + schedule.csv 6쌍).
+
+  ** 이 세 지표는 정확도의 증거가 아니라 회귀 감지용이다. ** 표본이 합성 픽스처 6쌍뿐이라 "실제
+  현장 정확도"를 대표하지 않는다(title_matching.min_similarity 주석 참고 — 실측은 실제 대장이 들어온
+  뒤 다시 잰다). 이 지표들의 유일한 목적은 "임계값·정규화 설정이 바뀌어 매핑이 조용히 0건이 되는"
+  실패 모드를 CI 가 잡는 것이다 — 실제로 min_similarity 를 0.55 로 되돌리면 매핑이 0건이 되어
+  document_mapping_count 가 0.0 < baseline(6.0) 으로 실패한다(과제 4 뮤테이션 검증으로 확인됨).
 """
 from __future__ import annotations
 
@@ -18,7 +26,9 @@ from pathlib import Path
 import pytest
 
 from services.progress.activity_mapper import map_activities_to_objects, mapping_accuracy
+from services.progress.document_mapper import map_documents_to_activities
 from services.progress.importers import import_schedule
+from services.progress.importers.document_register import import_document_register
 from services.scan.config import load_scan_config
 from services.scan.pipeline import run_scan_pipeline
 from services.sync.matcher import build_mappings
@@ -159,6 +169,46 @@ def test_activity_mapping_accuracy(measured, baseline):
     worst = min(per_format.values())
     print(f"\nactivity_mapping_accuracy={worst:.3f} per_format={per_format}")
     _check(measured, baseline, "activity_mapping_accuracy", worst)
+
+
+# ADR 0007 §4 정답 쌍(document_register.xlsx ↔ schedule.csv, task 1 명세 그대로) — activity_id -> doc_number
+DOCUMENT_MAPPING_EXPECTED: dict[str, str] = {
+    "A100": "동부-HG-TFA-구조-26-049",   # 1F 기둥 배근도 (Z1)
+    "A110": "동부-HG-TFA-구조-26-050",   # 1F 보 배근도 (Z1)
+    "A120": "동부-HG-TFA-구조-26-051",   # 1F 슬래브 배근도 (Z1)
+    "A200": "동부-HG-TFA-토목-26-011",   # 외벽 조적 벽돌 (1F Z1)
+    "A300": "중원-HG-TFA-기계-26023",    # 1F 덕트 경로도 (Z1)
+    "A400": "동부-HG-TFA-구조-26-052",   # 2F 기둥 배근도 (Z1)
+}
+
+
+def test_document_mapping_metrics(measured, baseline):
+    """문서↔Activity 매핑 회귀 감지(파일 docstring 참고 — 정확도의 증거가 아니라 회귀 감지용).
+
+    합성 픽스처 기준 정답 6/6, 오탐 0건이 이 라운드의 실측값이다. 이전에는 min_similarity(0.55)가
+    도달 불가능한 값이라 매핑이 0건이었고 그 상태로도 545개 테스트가 전부 통과했다 — 그 침묵하는
+    실패를 여기서 봉인한다: document_mapping_count 가 baseline(6.0) 아래로 떨어지면(0건 포함) 실패한다.
+    """
+    documents = import_document_register(pf.FIXTURES / "document_register.xlsx", "P-REG-DOC", "f-doc-reg").documents
+    schedule = import_schedule(pf.FIXTURES / "schedule.csv", "P-REG-DOC")
+    mappings = map_documents_to_activities(documents, schedule.activities)
+    doc_by_id = {d.doc_id: d for d in documents}
+
+    got = {m.activity_id: doc_by_id[m.doc_id].doc_number for m in mappings}
+    hits = sum(1 for activity_id, doc_number in DOCUMENT_MAPPING_EXPECTED.items() if got.get(activity_id) == doc_number)
+    accuracy = hits / len(DOCUMENT_MAPPING_EXPECTED)
+    print(f"\ndocument_mapping_accuracy={accuracy:.3f} ({hits}/{len(DOCUMENT_MAPPING_EXPECTED)}) count={len(mappings)}")
+
+    _check(measured, baseline, "document_mapping_count", float(len(mappings)))
+    _check(measured, baseline, "document_mapping_accuracy", accuracy)
+
+    wrong = [(a, dn) for a, dn in got.items() if DOCUMENT_MAPPING_EXPECTED.get(a) != dn]
+    extra = [a for a in got if a not in DOCUMENT_MAPPING_EXPECTED]   # 정답 목록에 없는 Activity 가 후보를 받은 경우
+    _check(measured, baseline, "document_mapping_false_positives_max", float(len(wrong) + len(extra)))
+    assert wrong == [] and extra == [], (wrong, extra)
+    # 매핑이 조용히 사라지는(0건) 실패 모드를 명시적으로도 봉인한다 — baseline 비교만으로는 baseline 이
+    # 실수로 낮아지면 놓칠 수 있으므로, "0건이면 무조건 실패"를 별도 하드 assert 로 둔다.
+    assert len(mappings) > 0, "document mapping produced 0 rows — the whole ADR 0007 chain is silently dead"
 
 
 # ----------------------------------------------------------------- 무결성 (파일 순서상 마지막)

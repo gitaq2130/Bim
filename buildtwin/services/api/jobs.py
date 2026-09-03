@@ -8,6 +8,13 @@
 - schedule    : CSV/XML/XER → progress.import_schedule + save_schedule + map_activities_to_objects
 - mapping     : 도면 재정합 후 매핑 재구성(usecases.realign_drawing 가 동기 실행하며 기록)
 - verdict     : scan.run_scan_pipeline → Registration/ScanVerdictRow 저장 → 상태기계 apply_scan_verdict → 3중 검증
+- document_register : xlsx → progress.importers.document_register.import_document_register(파싱)
+                → ingest.persistence.persist_document_register_import(적재·재업로드·orphan 규칙)
+                → progress.document_mapper.map_project_documents(문서↔Activity 매핑 후보, 항상 needs_review=True)
+                (ADR 0007 §2·§4). 헤더/필수 컬럼을 못 찾아 **어떤 시트도** 읽지 못하는 경우(422
+                `document_register_invalid`)는 이 잡 실행 전에 업로드 라우트가 동기적으로 걸러낸다
+                (routers/files.py — 이 코드는 HTTP 응답이라 비동기 잡 결과로는 표현할 수 없다). 이 러너는
+                그 가드를 통과한 뒤에만 실행되므로 같은 파일을 여기서 다시 파싱해도 항상 문서가 나온다.
 """
 from __future__ import annotations
 
@@ -43,7 +50,8 @@ INGEST_KINDS: frozenset[str] = frozenset({"ifc", "dxf", "dwg", "rvt"})
 SCAN_KINDS: frozenset[str] = frozenset({"e57", "las", "ply"})
 SCHEDULE_KINDS: frozenset[str] = frozenset({"csv", "xml", "xer"})
 SCHEDULE_FORMAT: dict[str, str] = {"csv": "csv", "xml": "msproject_xml", "xer": "p6_xer"}
-JOB_KINDS: tuple[str, ...] = ("ingest", "scan_upload", "schedule", "mapping", "verdict")
+DOCUMENT_REGISTER_KINDS: frozenset[str] = frozenset({"xlsx"})
+JOB_KINDS: tuple[str, ...] = ("ingest", "scan_upload", "schedule", "mapping", "verdict", "document_register")
 
 
 class JobError(Exception):
@@ -57,6 +65,8 @@ def job_kind_for(file_kind: FileKind | str) -> str:
         return "scan_upload"
     if file_kind in SCHEDULE_KINDS:
         return "schedule"
+    if file_kind in DOCUMENT_REGISTER_KINDS:
+        return "document_register"
     raise JobError(f"unsupported file kind: {file_kind}")
 
 
@@ -202,6 +212,25 @@ def run_schedule(session: Session, job: JobRow, file_row: FileRow, options: dict
                     "needs_review_count": sum(1 for m in mappings if m.needs_review)}, warnings
 
 
+def run_document_register(session: Session, job: JobRow, file_row: FileRow, options: dict[str, Any]) -> tuple[str, dict[str, Any], list[dict]]:
+    """대장 xlsx → Document 적재 → 문서↔Activity 매핑 후보(ADR 0007 §2·§4). 세 서비스 함수를 순서대로 호출만
+    한다(CLAUDE.md §3 규칙 11) — 정규화·재업로드/orphan 규칙·매핑 판정은 모두 그 함수들이 소유.
+    "어떤 시트도 못 읽음"(422 document_register_invalid) 가드는 업로드 라우트가 이미 통과시켰으므로 여기서는
+    다시 검사하지 않는다(재업로드 경쟁을 생각해도, 그 사이 파일이 바뀔 수 없다 — file_id 는 불변 저장 파일이다)."""
+    from services.ingest.persistence import persist_document_register_import
+    from services.progress.document_mapper import map_project_documents
+    from services.progress.importers.document_register import import_document_register
+
+    path = _file_path(file_row)
+    import_result = import_document_register(path, job.project_id, file_row.file_id, file_uri=file_row.uri)
+    persisted = persist_document_register_import(session, job.project_id, file_row.file_id, import_result)
+    mappings = map_project_documents(session, job.project_id)
+    warnings = [_warning("DOCUMENT_REGISTER_WARNING", w) for w in persisted.warnings]
+    summary = {"status": "ok", "source_kind": file_row.kind, **persisted.model_dump(exclude={"warnings"}),
+               "mapping_count": len(mappings), "mapping_needs_review_count": sum(1 for m in mappings if m.needs_review)}
+    return "done", summary, warnings
+
+
 def run_verdict(session: Session, job: JobRow, options: dict[str, Any]) -> tuple[str, dict[str, Any], list[dict]]:
     """정합 + 객체 판정 + 상태기계 + 3중 검증. scan 모듈은 지연 import(테스트 격리)."""
     from services.scan.pipeline import run_scan_pipeline
@@ -266,10 +295,11 @@ def run_job(job_id: str, options: dict[str, Any] | None = None) -> dict[str, Any
             file_row = session.get(FileRow, job.file_id) if job.file_id else None
             if job.kind == "verdict":
                 status, result, warnings = run_verdict(session, job, options)
-            elif job.kind in ("ingest", "scan_upload", "schedule"):
+            elif job.kind in ("ingest", "scan_upload", "schedule", "document_register"):
                 if file_row is None:
                     raise JobError(f"{job.kind} job has no file")
-                runner = {"ingest": run_ingest, "scan_upload": run_scan_upload, "schedule": run_schedule}[job.kind]
+                runner = {"ingest": run_ingest, "scan_upload": run_scan_upload, "schedule": run_schedule,
+                         "document_register": run_document_register}[job.kind]
                 status, result, warnings = runner(session, job, file_row, options)
             else:
                 raise JobError(f"unknown job kind: {job.kind} (expected one of {JOB_KINDS})")

@@ -3,5 +3,8 @@
   "mapping_overall_accuracy": 0.80,
   "scan_verdict_accuracy": 0.85,
   "registration_rmse_max": 0.03,
-  "activity_mapping_accuracy": 0.90
+  "activity_mapping_accuracy": 0.90,
+  "document_mapping_count": 6.0,
+  "document_mapping_accuracy": 1.0,
+  "document_mapping_false_positives_max": 0.0
 }

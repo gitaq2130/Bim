@@ -19,13 +19,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from packages.core.models.coordinate import CoordinateSystem
+from packages.core.models.document import ActivityDocumentMapping
 from packages.core.models.evidence import Evidence
 from packages.core.models.identity import IFC_TYPE_GROUP, BimObjectDraft
 from packages.core.models.knowledge import Rule
 from packages.core.models.mapping import EntityObjectMapping
 from packages.core.models.orm import (
+    ActivityDocumentMappingRow,
     BimObjectRow,
     DailyReportRow,
+    DocumentRow,
     DrawingRow,
     JobRow,
     ModelRow,
@@ -36,6 +39,7 @@ from packages.core.models.progress import DailyReport
 from packages.core.models.state import Actor, InvalidTransitionError, ObjectState
 from services.knowledge import RuleEngine, load_rules, persist_verdicts, record_expert_review
 from services.progress import persistence as db
+from services.progress.document_mapper import map_project_documents
 from services.progress.readiness import compute_readiness
 from services.progress.scheduler import compute_startable
 from services.progress.state_machine import (
@@ -55,6 +59,7 @@ from . import jobs, queries
 from .deps import CurrentUser, project_role
 from .errors import Conflict, Forbidden, NotFound, ServerError
 from .schemas.activities import StartableActivityView, StateDistributionRow, WeeklySummary
+from .schemas.documents import DocumentDetail, DocumentView
 from .schemas.drawings import AlignmentRequest, PlanSectionPolyline, PlanSectionView
 from .schemas.objects import (
     BimObjectView,
@@ -247,6 +252,56 @@ def submit_daily_report(session: Session, project_id: str, payload: DailyReportC
                                items=list(row.items or []), note=row.note, submitted_at=row.submitted_at,
                                transitions=outcome.transitions, review_requests=outcome.review_requests,
                                inspection_review_ids=list(outcome.inspection_review_ids), skipped=outcome.skipped)
+
+
+# ------------------------------------------------------------------ documents (ADR 0007)
+def document_view(row: DocumentRow) -> DocumentView:
+    return DocumentView(**db.document_row_to_model(row).model_dump(), imported_at=row.imported_at)
+
+
+def document_detail(session: Session, project_id: str, doc_id: str) -> DocumentDetail:
+    """상세 = 문서 + 그 문서에 걸린 Activity 매핑 전부(호출자는 이미 project_role 로 인가됨)."""
+    row = db.load_document(session, project_id, doc_id)
+    if row is None:
+        raise NotFound(f"document not found: ({project_id}, {doc_id})", code="document_not_found")
+    mappings = [db.document_mapping_row_to_model(m) for m in queries.document_mappings_for_document(session, project_id, doc_id)]
+    return DocumentDetail(document=document_view(row), mappings=mappings)
+
+
+def generate_document_mappings(session: Session, project_id: str) -> list[ActivityDocumentMapping]:
+    """문서↔Activity 매핑 후보를 (재)생성한다(cm 만, 호출자가 이미 인가됨). 판정은 전부
+    services.progress.document_mapper.map_project_documents 소유 — 여기서는 호출과 commit 만 한다
+    (CLAUDE.md §3 규칙 11). 시스템이 만든 매핑은 confidence 와 무관하게 항상 needs_review=True 다
+    (ADR 0007 §4 규칙 5) — 확정은 별도(`confirm_document_mapping`, cm 만)."""
+    mappings = map_project_documents(session, project_id)
+    session.commit()
+    return mappings
+
+
+def confirm_document_mapping(session: Session, activity_id: str, doc_id: str, user: CurrentUser,
+                             note: str | None = None) -> ActivityDocumentMapping:
+    """문서 매핑 확정: needs_review=False, reviewed_by=user_id(ADR 0007 §4 규칙 5 — 확정은 사람의 행위이므로
+    누가 했는지 반드시 기록한다). surrogate id 라우트(ADR 0006 규칙 6): 매핑 행(activity_id, doc_id)을
+    먼저 읽어 그 project_id 로 cm 인가를 검사한다. 대상 매핑이 없으면 404 document_mapping_target_not_found
+    (ADR 0007 §8 규칙 5) — 매핑은 반드시 먼저 generate_document_mappings 로 제안돼 있어야 확정할 수 있다."""
+    row = session.get(ActivityDocumentMappingRow, (activity_id, doc_id))
+    if row is None:
+        raise NotFound(f"document mapping not found: activity_id={activity_id!r} doc_id={doc_id!r}",
+                       code="document_mapping_target_not_found")
+    project_role(session, row.project_id, user, CONFIRM_ROLE)
+    before = db.document_mapping_row_to_model(row)
+    # confirm_mapping(services.sync.review_queue)과 같은 패턴: evidence 는 보존하고 reviewed_by 만 얹는다.
+    # ActivityDocumentMapping 모델이 reviewed_by 가 채워지면 needs_review=False 를 항상 강제한다
+    # (packages/core/models/document.py — confidence 와 무관, ADR §4 규칙 5).
+    evidence = before.evidence.model_copy(update={"note": note or before.evidence.note})
+    new = ActivityDocumentMapping(activity_id=activity_id, doc_id=doc_id, confidence=before.confidence,
+                                  evidence=evidence, reviewed_by=user.user_id)
+    db.save_document_mapping(session, new)
+    record_expert_review(session, "activity_document_mapping", f"{activity_id}:{doc_id}",
+                         before.model_dump(mode="json"), new.model_dump(mode="json"), user.user_id)
+    session.commit()
+    session.refresh(row)
+    return db.document_mapping_row_to_model(row)
 
 
 # ------------------------------------------------------------------ mappings / drawings

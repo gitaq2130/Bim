@@ -66,4 +66,34 @@ describe("UploadPage", () => {
     expect(screen.getByTestId("pre-upload-notice")).toHaveTextContent("DXF 권장");
     expect(await screen.findByText("40%")).toBeInTheDocument();
   });
+
+  // ADR 0007 §7 규칙 1: 대장(xlsx) 업로드는 cm만. 서버가 403을 주기 전에 화면이 먼저 막아야 한다 —
+  // "UI가 보여주는 것과 서버가 허용하는 것이 일치"해야 하므로 여기서 직접 확인한다.
+  it("contractor 프로젝트 역할은 xlsx(문서관리대장)를 올리려 하면 서버 호출 없이 막힌다", async () => {
+    const { calls } = mockFetch((url) => {
+      if (url.endsWith("/api/projects/p1")) return { body: { project_id: "p1", name: "P", my_role: "contractor" } };
+      return undefined;
+    });
+    renderUpload();
+    const user = userEvent.setup();
+    await user.upload(screen.getByTestId("file-input"), new File(["a,b"], "register.xlsx"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("CM");
+    expect(calls.some((c) => c.url.endsWith("/api/projects/p1/files") && c.init?.method === "POST")).toBe(false);
+  });
+
+  it("cm 프로젝트 역할은 xlsx(문서관리대장)를 업로드할 수 있다", async () => {
+    mockFetch((url, init) => {
+      if (url.endsWith("/api/projects/p1")) return { body: { project_id: "p1", name: "P", my_role: "cm" } };
+      if (url.endsWith("/api/projects/p1/files") && init?.method === "POST") return { body: { job_id: "job-3", kind: "xlsx" } };
+      if (url.endsWith("/api/jobs/job-3")) return { body: { job_id: "job-3", kind: "document_register", status: "done", progress: 1 } };
+      return undefined;
+    });
+    renderUpload();
+    const user = userEvent.setup();
+    await user.upload(screen.getByTestId("file-input"), new File(["a,b"], "register.xlsx"));
+
+    expect(await screen.findByTestId("job-progress")).toHaveAttribute("data-status", "done");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
 });
