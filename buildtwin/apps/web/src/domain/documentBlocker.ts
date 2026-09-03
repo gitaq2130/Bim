@@ -9,7 +9,22 @@
  */
 export type DrawingApprovalBlockerKind = "unapproved" | "pending_mapping" | "unknown_only" | "other";
 
-export function classifyDrawingApprovalBlocker(reason: string): DrawingApprovalBlockerKind {
+/** 서버 `Blocker.kind`(services/progress/readiness.py 의 BLOCKER_KIND_*) → 화면 갈래. */
+const SERVER_KIND_TO_LOCAL: Record<string, DrawingApprovalBlockerKind> = {
+  document_unapproved: "unapproved",
+  document_status_unknown: "unknown_only",
+  document_mapping_pending: "pending_mapping",
+};
+
+/**
+ * 갈래 판정. **`kind` 가 있으면 그것만 믿는다.**
+ *
+ * 문구 매칭은 `kind` 가 없는 응답(이 필드 도입 이전 서버)만을 위한 폴백이다. 산문을 부분 문자열로
+ * 분류하면 서버가 문구를 다듬는 순간 조용히 "other" 로 떨어져 CM 이 다음 행동 안내를 잃는다 —
+ * 오류 응답에 기계 판독 code 를 둔 것과 같은 이유로 `kind` 를 우선한다.
+ */
+export function classifyDrawingApprovalBlocker(reason: string, kind?: string | null): DrawingApprovalBlockerKind {
+  if (kind) return SERVER_KIND_TO_LOCAL[kind] ?? "other";
   if (reason.includes("CM 검토 대기")) return "pending_mapping";
   if (reason.includes("건의 필수 문서가 미승인")) return "unapproved";
   if (reason.includes("처리결과 미기재(UNKNOWN)")) return "unknown_only";

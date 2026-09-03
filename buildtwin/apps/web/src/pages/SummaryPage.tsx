@@ -132,7 +132,7 @@ export function SummaryPage() {
  */
 function BlockerLine({ blocker: b, projectId }: { blocker: Blocker; projectId: string }) {
   const isDrawingApproval = b.component === "drawing_approval";
-  const kind = isDrawingApproval ? classifyDrawingApprovalBlocker(b.reason) : "other";
+  const kind = isDrawingApproval ? classifyDrawingApprovalBlocker(b.reason, b.kind) : "other";
   const kindLabel = DRAWING_APPROVAL_BLOCKER_LABELS[kind];
   const action = DRAWING_APPROVAL_BLOCKER_ACTIONS[kind];
   return (

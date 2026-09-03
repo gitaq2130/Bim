@@ -238,6 +238,7 @@ reviewer 4차 지적 1: 동일 상태코드(특히 409)가 서로 무관한 여�
 
 | 한국어 | 영어(식별자) | 정의 |
 |---|---|---|
+| 차단 갈래 | `Blocker.kind` = `document_unapproved` / `document_status_unknown` / `document_mapping_pending` | 착수 차단 사유의 **기계 판독** 갈래(ADR 0007 §5-3 개정 1). `reason` 은 사람이 읽는 산문이라 다듬어지면 화면 분류가 조용히 깨지므로, 오류 응답의 `code` 와 같은 이유로 갈래를 따로 내보낸다. 셋은 CM 이 할 일이 다르다 — 문서를 쫓는다 / 대장을 갱신한다 / 매핑을 확정한다. 선택 필드이며 없으면 기존 blocker 와 동일 |
 | 문서관리대장 | `DocumentRegister` (`document_register`) | 현장의 문서 발신·회신을 기록한 xlsx 대장. **BuildTwin이 아니라 이 파일이 정본**이며 우리는 읽기만 한다(ADR 0007 §1). 시트 하나가 문서 종류 하나 |
 | 문서 | `Document` (`documents`) | 대장의 한 행을 적재한 것. PK = **`(project_id, doc_id)` 복합 키**(ADR 0005와 같은 프로젝트 범위 키). `doc_id` 단독 조회 금지 |
 | 문서 식별자 | `doc_id` | `"doc-" + sha256("{doc_type}\|{sender_normalized}\|{seq_normalized}\|{title_normalized}")[:16]`의 결정적 대리키. **공종이 산출식에 들어가지 않는다** — 신뢰할 수 없는 필드가 문서의 정체성에 관여하면 안 되기 때문(ADR 0007 §2-1). 주간 재업로드가 그대로 upsert 가 된다 |

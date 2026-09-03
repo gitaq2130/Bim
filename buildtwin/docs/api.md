@@ -136,7 +136,7 @@
 | BBox2D | `min`*, `max`* |
 | BBox3D | `min`*, `max`* |
 | BimObjectView | `global_id`*, `ifc_type`*, `group`*, `name`, `level`, `level_elevation`, `zone`, `bbox`, `mesh_ref`, `psets`, `material`, `quantity`, `express_id`, `project_id`*, `model_id`*, `model_version`*, `state`*, `is_orphaned`, `has_open_review` |
-| Blocker | `component`*, `reason`*, `related_ids`, `severity` |
+| Blocker | `component`*, `reason`*, `related_ids`, `severity`, `kind` |
 | Body_upload_file_api_projects__project_id__files_post | `file`*, `kind`, `level` |
 | ConfirmDocumentMappingRequest | `note` |
 | ConfirmMappingRequest | `global_id`*, `note` |

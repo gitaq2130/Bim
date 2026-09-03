@@ -47,6 +47,10 @@ class Blocker(BaseModel):
     reason: str
     related_ids: list[str] = Field(default_factory=list)
     severity: Literal["low", "medium", "high"] = "medium"
+    # 기계 판독 갈래(ADR 0007 §5-3 개정 1). reason 은 사람이 읽는 산문이라 문구가 다듬어질 수 있고,
+    # 화면이 그것을 부분 문자열로 분류하면 문구가 바뀌는 순간 조용히 오분류된다 — 오류 응답에
+    # 기계 판독 code 를 둔 것과 같은 이유다. 값이 없으면(None) 기존 blocker 와 동일하게 취급한다.
+    kind: str | None = None
 
 
 class ReadinessScore(BaseModel):

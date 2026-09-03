@@ -70,6 +70,7 @@ class ComponentResult:
     reason: str | None = None
     related_ids: list[str] = field(default_factory=list)
     note: str | None = None
+    kind: str | None = None   # Blocker.kind 로 전달되는 기계 판독 갈래(ADR 0007 §5-3)
 
 
 def predecessor_completion(session: Session, project_id: str, activity_id: str) -> tuple[ComponentResult, float, list[ActivityProgress]]:
@@ -122,8 +123,18 @@ def _drawing_component_legacy(resources: dict[str, float], defaults: dict[str, f
     return ComponentResult(0.0, reason="drawing not approved")
 
 
-def _unapproved_reason(unapproved: list[DocumentRow], limit: int) -> str:
-    """case① "n건의 필수 문서가 미승인: ..." 또는 case③ UNKNOWN 전용 문구(ADR 0007 §5-3)."""
+BLOCKER_KIND_UNAPPROVED = "document_unapproved"          # 미승인 문서가 있다 → 그 문서를 쫓는다
+BLOCKER_KIND_STATUS_UNKNOWN = "document_status_unknown"  # 처리결과 미기재 → 대장을 갱신한다
+BLOCKER_KIND_MAPPING_PENDING = "document_mapping_pending"  # 미확정 매핑만 → 매핑을 확정한다
+
+
+def _unapproved_reason(unapproved: list[DocumentRow], limit: int) -> tuple[str, str]:
+    """(문구, 갈래)를 돌려준다. case① "n건의 필수 문서가 미승인: ..." / case③ UNKNOWN 전용(ADR 0007 §5-3).
+
+    갈래를 문구와 함께 내보내는 이유: 셋은 CM 이 해야 할 행동이 다르므로(문서를 쫓는다 / 매핑을 확정한다 /
+    대장을 갱신한다) 화면이 반드시 구분해야 하는데, 산문을 부분 문자열로 분류하면 문구를 다듬는 순간
+    조용히 깨진다.
+    """
     all_unknown = all(d.approval_status == "UNKNOWN" for d in unapproved)
     shown = unapproved[:limit]
     frags = []
@@ -132,7 +143,9 @@ def _unapproved_reason(unapproved: list[DocumentRow], limit: int) -> str:
         frags.append(f"{label} 처리결과 미기재(UNKNOWN)" if all_unknown else f"{label} ({d.approval_status})")
     overflow = len(unapproved) - len(shown)
     joined = "; ".join(frags) + (f" 외 {overflow}건" if overflow > 0 else "")
-    return joined if all_unknown else f"{len(unapproved)}건의 필수 문서가 미승인: {joined}"
+    if all_unknown:
+        return joined, BLOCKER_KIND_STATUS_UNKNOWN
+    return f"{len(unapproved)}건의 필수 문서가 미승인: {joined}", BLOCKER_KIND_UNAPPROVED
 
 
 def drawing_component(session: Session, project_id: str, activity_id: str, resources: dict[str, float],
@@ -155,13 +168,13 @@ def drawing_component(session: Session, project_id: str, activity_id: str, resou
         unapproved = [d for d in evidence.confirmed_required if d.approval_status not in approved_statuses]
         value = 1.0 if not unapproved else 0.0
         note = f"approved={len(approved)}/{total}; pending_mappings={evidence.pending_count}"
-        reason = _unapproved_reason(unapproved, limit) if unapproved else None
+        reason, kind = _unapproved_reason(unapproved, limit) if unapproved else (None, None)
         if unapproved:
             flag = resources.get("drawing_approved")   # 규칙: 문서 근거가 수동 플래그를 이긴다. 충돌은 조용히 무시하지 않는다
             if flag is not None and float(flag) >= 1.0:
                 extra["manual_flag_overridden"] = True
         result = ComponentResult(value, missing=evidence.pending_count > 0, reason=reason,
-                                 related_ids=[d.doc_id for d in unapproved], note=note)
+                                 related_ids=[d.doc_id for d in unapproved], note=note, kind=kind)
         return result, extra
 
     legacy = _drawing_component_legacy(resources, defaults)
@@ -172,7 +185,8 @@ def drawing_component(session: Session, project_id: str, activity_id: str, resou
                                  reason=pending_reason if legacy.value < 1.0 else None,
                                  related_ids=[m.doc_id for m in db.document_mappings_for_activity(session, project_id, activity_id)
                                               if m.needs_review],
-                                 note=f"approved=0/0; pending_mappings={evidence.pending_count}")
+                                 note=f"approved=0/0; pending_mappings={evidence.pending_count}",
+                                 kind=BLOCKER_KIND_MAPPING_PENDING if legacy.value < 1.0 else None)
         return result, extra
     return legacy, extra   # 순위 2·3: 완전히 기존 동작
 
@@ -231,7 +245,7 @@ def compute_readiness(session: Session, activity_id: str, weights: dict[str, flo
     score = sum(float(weights.get(c, 0.0)) * r.value for c, r in results.items()) / total_weight if total_weight else 0.0
     blockers = [
         Blocker(component=c, reason=r.reason or f"{c} below 1.0", related_ids=r.related_ids,
-                severity=_severity(r.value, severity_cfg))   # type: ignore[arg-type]
+                severity=_severity(r.value, severity_cfg), kind=r.kind)   # type: ignore[arg-type]
         for c, r in results.items() if r.value < 1.0
     ]
     missing = [c for c, r in results.items() if r.missing]

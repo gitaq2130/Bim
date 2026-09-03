@@ -352,6 +352,8 @@ export interface Blocker {
   reason: string;
   related_ids?: string[];
   severity?: "low" | "medium" | "high";
+  /** 기계 판독 갈래(ADR 0007 §5-3). reason 산문 대신 이 값으로 분류한다. 구버전 응답에는 없다. */
+  kind?: string | null;
 }
 export interface ReadinessScore {
   activity_id: string;
