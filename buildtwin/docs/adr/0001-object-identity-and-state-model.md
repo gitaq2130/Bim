@@ -31,10 +31,10 @@ BuildTwin의 핵심은 3D 뷰어가 아니라 "계획 / 신고 / 물리적 증�
 | `activity_object_mappings` | `(activity_id, global_id)` PK | **복합 FK `(project_id, global_id)`** |
 | `scan_verdicts` | `(scan_id, global_id)` PK | **복합 FK `(project_id, global_id)`** |
 | `state_transitions` | `transition_id` PK | **복합 FK `(project_id, global_id)`** |
-| `materials` / `material_movements` | `material_id` | `global_id` 평문 컬럼(FK 아님, nullable). 조회 시 `project_id`를 함께 건다 |
+| `material_movements` | `id` PK (autoincrement) | `global_id` 평문 컬럼(FK 아님, nullable). 행이 `project_id`를 직접 보유 |
 | `review_requests` | `review_request_id` PK | `global_id` 평문 컬럼(FK 아님, nullable: 프로젝트 단위 요청). 행이 `project_id`를 직접 보유 |
 | `rule_verdicts` | `id` PK | `global_id` 평문 컬럼(FK 아님, nullable). 행이 `project_id`를 직접 보유 |
-| `daily_reports` / `daily_report_items` | `report_id` PK | 항목 JSON 안의 `global_id`. 행이 `project_id`를 직접 보유 |
+| `daily_reports` | `report_id` PK | 항목(`items` JSON) 안의 `global_id`. 행이 `project_id`를 직접 보유 |
 
 - 매핑 테이블(`entity_object_mappings`, `activity_object_mappings`)은 반드시 `confidence`(0~1)·`evidence`·`needs_review`를 가진다.
 
