@@ -70,6 +70,14 @@ CLAUDE.md §0의 MVP 5기능을 실제 동작 코드로 구현한다. 벤치마�
 - [x] [sync] 존재 검증의 근거 주석을 사실에 맞게 갱신(외래키 강제가 켜진 뒤에도 필요한 이유)
 - [x] [qa] 검토요청 통합 테스트를 자체 프로젝트로 격리 — 공유 픽스처를 지웠다 되돌리지 않음
 
+### 리뷰 5차 APPROVE 후 정리 (2026-09-03)
+- [x] [architect] ADR 0001 §1 표에서 구현에 없는 테이블 제거, `material_movements` PK 정정
+- [x] [api] 오류 코드 어휘 신뢰성 — 중립 기본값 등록, 401에 `unauthorized` 부여, "모든 응답에 code" 문장을 실제 범위로 축소, 손상 데이터(500)와 대상 없음(404) 분리, 전이 예외의 부가 필드(`from_state`/`to_state`/`review_request_ids`) 보존, `docs/api.md`에 오류 봉투 계약 명시
+- [x] [sync] 타입 예외 도입(`MalformedReviewDataError`/`MappingTargetNotFoundError`/`DrawingNotFoundError`, 각각 기존 builtin의 하위 클래스)
+- [x] [api] 예외 메시지 문자열 비교를 타입 기반 catch로 전환 — 문구 수정이 HTTP 상태를 바꾸지 않는다
+- [x] [frontend] 오류 코드 타입 분리(알려진 코드 union + 미지 코드 허용), 캐스트 제거
+- [x] [qa] 픽스처 파일 종류 어휘 정정, 중복 프로젝트 테스트가 남기던 영구 행 정리
+
 ### 관측된 개선 후보 (미착수)
 - **ORM에 `relationship()`이 없다.** 순수 FK 컬럼만 있어 SQLAlchemy가 한 flush 안에서 테이블 간 INSERT 순서를 보장하지 못한다. 운영 코드는 부모마다 `flush()`를 호출해 우회하고 있으나, 새 코드가 이 규칙을 모르면 외래키 위반이 난다. `relationship()` 도입은 cascade 영향 검토가 필요해 별도 사이클로 (담당: architect)
 - 프로젝트 멤버십·인가가 없다. 도입 시 `resolve_object`의 후보 조회와 명시 `project_id` 경로 양쪽에 필터 필요(ADR 0005 §3 전제)

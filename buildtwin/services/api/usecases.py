@@ -38,6 +38,7 @@ from services.progress.state_machine import (
     actor_for_role,
 )
 from services.progress.verification import build_logic_context
+from services.sync.errors import DrawingNotFoundError, MalformedReviewDataError, MappingTargetNotFoundError
 from services.sync.persistence import row_to_mapping
 from services.sync.plan_section import plan_section_from_objects
 from services.sync.review_queue import confirm_mapping_row, resolve_mapping_review
@@ -223,9 +224,11 @@ def confirm_entity_mapping(session: Session, drawing_id: str, handle: str, globa
     proposal: dict[str, Any] = (row_to_mapping(prev_row).model_dump(mode="json") if prev_row is not None
                                 else {"drawing_id": drawing_id, "entity_handle": handle, "global_id": None, "confidence": None})
     try:
-        # 대상 객체 존재 확인은 confirm_mapping_row(services.sync) 소유 — ValueError 를 여기서만 404 로 옮긴다.
+        # 대상 객체 존재 확인은 confirm_mapping_row(services.sync) 소유 — MappingTargetNotFoundError 를
+        # 여기서만 404 로 옮긴다. 타입으로만 잡는다(다른 ValueError, 예: user_id 공백 같은 호출자 사전조건
+        # 위반은 흡수하지 않고 처리되지 않은 예외로 드러낸다).
         new = confirm_mapping_row(session, drawing_id, handle, global_id, user.user_id, note)
-    except ValueError as exc:
+    except MappingTargetNotFoundError as exc:
         raise NotFound(str(exc), code="mapping_target_not_found")
     record_expert_review(session, "entity_object_mapping", f"{drawing_id}:{handle}", proposal, new.model_dump(mode="json"),
                          user.user_id)
@@ -294,25 +297,31 @@ def resolve_review(session: Session, review_request_id: str, decision: str, note
             raise NotFound(f"review request {review_request_id}: object not found: {exc}", code="review_object_not_found")
     elif row.kind == "mapping" and decision in ("approved", "rejected"):
         try:
-            # resolve_mapping_review(services.sync.review_queue)가 던지는 두 예외를 구분한다(reviewer 5차 지적 4):
-            # - LookupError: confirm_mapping_row 가 참조한 도면이 그 사이 삭제됨(services.sync.persistence.
-            #   _project_id_of_drawing) — drawing_not_found 로 옮긴다(confirm_entity_mapping 과 같은 code).
-            # - ValueError "malformed mapping review conflicting_sources...": candidate_global_id 가 없는 게
-            #   아니라 저장된 ReviewRequest.conflicting_sources 자체가 손상됨 — "대상 없음"(404)이 아니라
-            #   서버 데이터 손상(500)이다. 문자열 접두어로만 구분 가능한 건 services.sync 가 이 두 원인을
-            #   타입으로 구분해 던지지 않기 때문 — 아래 "필요한 타입 예외" 참고.
-            # - 그 외 ValueError: candidate_global_id 가 가리키는 객체가 사라짐(confirm_mapping_row) —
-            #   500 대신 404 로 옮긴다(sync-2d3d 소유 로직, api 는 매핑만 한다).
+            # resolve_mapping_review(services.sync.review_queue)가 던지는 타입별 원인을 구분한다
+            # (reviewer 5차 지적 4, 6차: services.sync.errors 의 타입 예외로 교체 — 메시지 접두어 매칭 금지,
+            # 문구를 바꿔도 상태코드가 안 바뀌어야 한다). most-specific-first:
+            # - DrawingNotFoundError(LookupError): confirm_mapping_row 가 참조한 도면이 그 사이 삭제됨
+            #   (services.sync.persistence._project_id_of_drawing) — drawing_not_found(404),
+            #   confirm_entity_mapping 과 같은 code.
+            # - MappingTargetNotFoundError(ValueError): candidate_global_id 가 가리키는 (project_id, global_id)
+            #   객체가 사라짐(confirm_mapping_row) — mapping_target_not_found(404).
+            # - MalformedReviewDataError(ValueError): candidate 가 없는 게 아니라 저장된
+            #   ReviewRequest.conflicting_sources 자체가 손상됨 — "대상 없음"이 아니라 서버 데이터 손상이므로
+            #   mapping_review_data_corrupt(500).
+            # 의도적으로 잡지 않는 것: row.kind != "mapping" 이면 resolve_mapping_review 가 평범한 ValueError 를
+            # 던진다(호출자 사전조건 위반 — 이 분기는 row.kind == "mapping" 일 때만 들어오므로 여기선 버그).
+            # 이를 흡수하는 넓은 except ValueError/LookupError 를 두지 않는다 — 처리되지 않은 채 500 으로
+            # 드러나 로그에 남아야 한다(sync-2d3d 소유 버그를 404 로 감추지 않는다).
             resolve_mapping_review(session, row, decision, user.user_id, note)  # type: ignore[arg-type]
-        except LookupError as exc:
+        except DrawingNotFoundError as exc:
             session.rollback()
             raise NotFound(f"review request {review_request_id}: {exc}", code="drawing_not_found")
-        except ValueError as exc:
+        except MappingTargetNotFoundError as exc:
             session.rollback()
-            msg = str(exc)
-            if msg.startswith("malformed mapping review conflicting_sources"):
-                raise ServerError(f"review request {review_request_id}: {msg}", code="mapping_review_data_corrupt")
-            raise NotFound(f"review request {review_request_id}: {msg}", code="mapping_target_not_found")
+            raise NotFound(f"review request {review_request_id}: {exc}", code="mapping_target_not_found")
+        except MalformedReviewDataError as exc:
+            session.rollback()
+            raise ServerError(f"review request {review_request_id}: {exc}", code="mapping_review_data_corrupt")
     session.refresh(row)
     if row.status == "open":   # verification / on_hold / 위에서 닫히지 않은 경우: 사람의 결정을 그대로 기록
         row.status, row.resolution_note, row.resolved_by, row.resolved_at = decision, note, user.user_id, datetime.now(UTC)
