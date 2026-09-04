@@ -407,7 +407,7 @@ function ActionsTab({ d, projectId }: { d: ObjectDetail; projectId?: string }) {
               // 사유 요건을 지우고 그때 참이던 것(이탈 actor 가 cm)만 남겼다. 이제 요건이 실제로 섰으므로
               // (a16f434 의 모델 불변식 + 아래 REVOCATION_KINDS 의 화면 강제) 새 사실로 갱신한다.
               // 두 절 모두 지금 참이다 — 실측: CONFIRMED 이탈 2개 전이만 note 없이 거부되고,
-              // `leaving CONFIRMED requires actor=cm` 도 그대로다(state.py:112).
+              // `leaving CONFIRMED requires actor=cm` 도 그대로다(packages/core/models/state.py:151).
               "이 객체를 '확정(CONFIRMED)' 상태로 전이합니다. CM 승인 행위로 기록되며, 되돌리는 것도 CM 만 할 수 있고 그때는 사유를 남겨야 합니다."
             : pending?.to_state
               ? `'${STATE_LABELS_KO[pending.to_state]}' 상태로 전이를 요청합니다.`
