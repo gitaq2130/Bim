@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import { vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { Route, Routes } from "react-router-dom";
@@ -448,7 +448,6 @@ describe("ReviewsPage — document_mapping (ADR 0007)", () => {
     spy.mockRestore();
   });
 });
-
 // ════════════════════════════════════════════════════════════════════════════
 // ADR 0009 §5-2·§5-3 — `document_identity_drift`(확인 전용 kind).
 //
@@ -458,27 +457,45 @@ describe("ReviewsPage — document_mapping (ADR 0007)", () => {
 // 적으면 그 순간 없는 기능을 약속하는 것이 된다 — 이 저장소가 세 번 겪은 결함이고, 그 중 하나는
 // 존재한 적 없는 "되돌리기" 엔드포인트를 약속한 승인 다이얼로그였다.
 //
+// **경위(`lost_decisions[].cause`)** 는 셋이고 사람이 해야 할 일이 서로 다르다(ADR 0009 §3):
+// `merge_overwritten` 은 행도 `reviewed_by` 도 살아 있는 채 그 문서의 **내용(승인 상태)** 만 다른 대장
+// 행의 것으로 바뀐 것이라 고아가 아니고 다시 확정할 새 doc_id 도 없다. 셋을 한 목록으로 뭉뚱그리면 CM 은
+// 그 항목을 "고아가 됐으니 새 doc_id 에서 다시 확정하면 되겠네"로 읽고, 문서 상세를 열기 전까지 승인
+// 상태가 뒤집힌 것을 알 수 없다.
+//
 // 아래 테스트는 **문구 문자열을 통째로 고정하지 않는다**(그렇게 하면 거짓 문구도 계약이 된다 — 10차
-// 리뷰). 대신 약속의 **내용**을 하나씩 따로 고정한다: ① 복구되지 않는다 ② 매핑이 바뀌지 않는다
-// ③ 사람이 재확정해야 한다 ④ 어느 문서를 재확정해야 하는지 보인다. 각 절을 하나씩 지우면
-// 정확히 그 테스트 하나만 실패한다(뮤테이션으로 확인함).
+// 리뷰). 대신 약속의 **내용**을 하나씩 따로 고정한다. 각 방어를 **하나씩** 지우면 정확히 그 테스트
+// 하나만 실패한다(뮤테이션으로 개별 확인함).
+//
+// 픽스처의 `title` 은 서버 `document_mapper._identity_drift_review_title` 을 같은 payload 로 **실행해서**
+// 받아 적은 실제 출력이다(문구를 상상해 적으면 화면이 서버와 어긋나도 테스트가 통과한다).
 // ════════════════════════════════════════════════════════════════════════════
+
+/** 경위가 섞인 적재: 병합으로 내용이 바뀐 판단 1건 + 고아가 된 판단 2건. */
 const DRIFT_REVIEW: ReviewRequest = {
   review_request_id: "rr-drift-1",
   project_id: "p1",
   kind: "document_identity_drift",
   title:
-    "문서 식별 드리프트: 대장은 그대로인데 doc_id 가 6건 이동했고, CM 판단 2건(확정 1 · 반려 1)이 고아 문서에 남았습니다",
+    "문서 식별 드리프트: 서로 다른 대장 행이 한 doc_id 로 병합돼, CM 이 판단한 문서 1건의 내용이 다른 대장 행으로 " +
+    "바뀌었습니다(CM 판단 1건 · 확정 1 · 반려 0). 화면의 승인 상태는 CM 이 보고 판단한 그 문서의 것이 아닙니다" +
+    "(도면 승인 근거가 뒤집혔을 수 있습니다). 또한 대장은 그대로인데 doc_id 가 1건 이동했고, CM 판단 2건" +
+    "(확정 1 · 반려 1)이 고아 문서에 남았습니다 — 확인용 요청입니다(매핑은 복구되지 않습니다). " +
+    "식별 규칙 config 를 되돌리고 대장을 다시 올리거나, 의도한 변경이면 그대로 두고 고아가 된 판단 2건만 " +
+    "새 doc_id 위에서 다시 확정하십시오(병합된 문서에는 새 doc_id 가 없습니다)",
   // ADR 0009 §5-2 의 실제 모양(services/progress/document_mapper.open_identity_drift_review).
   // 3축(신고/스캔/논리)은 **아예 없다**.
   conflicting_sources: {
     previous_fingerprint: "aaaaaaaaaaaaaaaa",
     current_fingerprint: "bbbbbbbbbbbbbbbb",
     moved: [{ previous_doc_id: "doc-v1-old1", new_doc_id: "doc-v1-new1", title: "1F 기둥 배근도 승인요청" }],
-    merged: [],
+    merged: [{ doc_id: "doc-v1-live1", titles: ["1F 슬래브 배근도 승인요청 1차", "1F 슬래브 배근도 승인요청 2차"] }],
+    // `cause` 는 services/ingest/persistence._CAUSE_* 값이다. 목록 순서를 일부러 "위험한 것이 뒤"로 둔다 —
+    // 화면이 스스로 위험 순으로 다시 세우는지 확인하기 위해서다.
     lost_decisions: [
-      { activity_id: "A100", doc_id: "doc-v1-old1", decision: "confirmed" },
-      { activity_id: "A400", doc_id: "doc-v1-old2", decision: "rejected" },
+      { activity_id: "A100", doc_id: "doc-v1-old1", decision: "confirmed", cause: "orphaned" },
+      { activity_id: "A400", doc_id: "doc-v1-old2", decision: "rejected", cause: "orphaned" },
+      { activity_id: "A300", doc_id: "doc-v1-live1", decision: "confirmed", cause: "merge_overwritten" },
     ],
   },
   confidence: 1.0,
@@ -487,16 +504,63 @@ const DRIFT_REVIEW: ReviewRequest = {
     source_id: "file-register-2",
     method: "identity_surface_drift",
     note: "DOCUMENT_IDENTITY_DRIFT",
-    extra: { moved_count: 1, merged_count: 0, lost_decision_count: 2 },
+    extra: { moved_count: 1, merged_count: 1, lost_decision_count: 3 },
   },
   assignee_role: "cm",
   status: "open",
   created_at: "2026-09-04T00:00:00Z",
 };
 
-function mockDriftQueue() {
+/**
+ * 병합만 있는 적재(ADR 0009 §3 (나) — 되돌릴 수 없는 쪽). 고아가 **하나도 없다**: `moved` 는 비어 있고
+ * `merge_overwritten` 행은 살아 있다. 이 적재에서 화면이 "고아가 됐다"거나 "새 doc_id 위에서 다시
+ * 확정하라"고 적으면 그 문장이 곧 거짓이다.
+ */
+const MERGE_ONLY_DRIFT_REVIEW: ReviewRequest = {
+  ...DRIFT_REVIEW,
+  review_request_id: "rr-drift-2",
+  title:
+    "문서 식별 드리프트: 서로 다른 대장 행이 한 doc_id 로 병합돼, CM 이 판단한 문서 1건의 내용이 다른 대장 행으로 " +
+    "바뀌었습니다(CM 판단 1건 · 확정 1 · 반려 0). 화면의 승인 상태는 CM 이 보고 판단한 그 문서의 것이 아닙니다" +
+    "(도면 승인 근거가 뒤집혔을 수 있습니다). 또한 CM 판단 1건(확정 0 · 반려 1)이 가리키던 문서 1건이 다른 " +
+    "doc_id 에 흡수돼 사라졌습니다 — 확인용 요청입니다(매핑은 복구되지 않습니다). 식별 규칙 config 를 " +
+    "되돌리고 대장을 다시 올리십시오",
+  conflicting_sources: {
+    previous_fingerprint: "cccccccccccccccc",
+    current_fingerprint: "dddddddddddddddd",
+    moved: [],
+    merged: [{ doc_id: "doc-v1-live1", titles: ["1F 슬래브 배근도 승인요청 1차", "1F 슬래브 배근도 승인요청 2차"] }],
+    lost_decisions: [
+      { activity_id: "A300", doc_id: "doc-v1-live1", decision: "confirmed", cause: "merge_overwritten" },
+      { activity_id: "A500", doc_id: "doc-v1-gone1", decision: "rejected", cause: "merge_absorbed" },
+    ],
+  },
+};
+
+/**
+ * 경위를 모르는 적재. 서버가 `cause` 를 싣지 못했거나(구버전 응답) 이 화면이 모르는 새 경위를 보낸 경우다.
+ * 서버도 이 경우를 `orphaned` 로 떨어뜨리지 않고 "이 문구가 설명할 수 없는 경위"라고 적는다
+ * (`document_mapper._CAUSE_UNSPECIFIED`) — 화면도 같아야 한다.
+ */
+const UNKNOWN_CAUSE_DRIFT_REVIEW: ReviewRequest = {
+  ...DRIFT_REVIEW,
+  review_request_id: "rr-drift-3",
+  title:
+    "문서 식별 드리프트: CM 판단 1건(확정 1 · 반려 0)이 이번 적재의 식별 드리프트에 걸렸습니다" +
+    "(경위 'unspecified' — 이 문구가 설명할 수 없는 경위입니다. lost_decisions 를 직접 보십시오) — " +
+    "확인용 요청입니다(매핑은 복구되지 않습니다). 식별 규칙 config 를 되돌리고 대장을 다시 올리십시오",
+  conflicting_sources: {
+    previous_fingerprint: "eeeeeeeeeeeeeeee",
+    current_fingerprint: "ffffffffffffffff",
+    moved: [],
+    merged: [{ doc_id: "doc-v1-live1", titles: ["a", "b"] }],
+    lost_decisions: [{ activity_id: "A700", doc_id: "doc-v1-x", decision: "confirmed" }],
+  },
+};
+
+function mockDriftQueue(review: ReviewRequest = DRIFT_REVIEW) {
   return mockFetch((url) => {
-    if (url.includes("/api/projects/p1/review-requests")) return { body: [DRIFT_REVIEW] };
+    if (url.includes("/api/projects/p1/review-requests")) return { body: [review] };
     if (url.endsWith("/api/projects/p1")) return { body: { project_id: "p1", name: "P", my_role: "cm" } };
     return undefined;
   });
@@ -514,6 +578,19 @@ async function openDecisionDialog(decision: "승인" | "반려"): Promise<string
   return within(dialog).getByTestId("confirm-message").textContent ?? "";
 }
 
+/** 근거 카드가 CM 에게 실제로 보여주는 글자 전부. 절 단위로 걸지 않고 통째로 읽는 이유는 위와 같다. */
+async function driftCardText(): Promise<string> {
+  const card = await screen.findByTestId("identity-drift-card");
+  return card.textContent ?? "";
+}
+
+function setupDrift(review: ReviewRequest = DRIFT_REVIEW) {
+  resetStore();
+  loginAs("cm");
+  mockDriftQueue(review);
+  renderPage();
+}
+
 describe("ReviewsPage — document_identity_drift (ADR 0009 §5-3)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -521,10 +598,7 @@ describe("ReviewsPage — document_identity_drift (ADR 0009 §5-3)", () => {
   });
 
   it("새 kind 에 한국어 라벨이 있다 — 배지와 종류 필터가 undefined 로 뜨지 않는다", async () => {
-    resetStore();
-    loginAs("cm");
-    mockDriftQueue();
-    renderPage();
+    setupDrift();
 
     const row = await screen.findByTestId("review-row");
     // REVIEW_KIND_LABELS 에서 값을 빼면 라벨이 undefined 가 되어 배지가 비고 이 단언이 깨진다.
@@ -535,11 +609,8 @@ describe("ReviewsPage — document_identity_drift (ADR 0009 §5-3)", () => {
     ).toBeInTheDocument();
   });
 
-  it("해소해도 끊어진 확정·반려가 복구되지 않는다고 말한다 — 복구를 약속하지 않는다", async () => {
-    resetStore();
-    loginAs("cm");
-    mockDriftQueue();
-    renderPage();
+  it("해소해도 오염된 확정·반려가 복구되지 않는다고 말한다 — 복구를 약속하지 않는다", async () => {
+    setupDrift();
 
     const text = await openDecisionDialog("승인");
     expect(text).toMatch(/복구되지 않으며|복구되지 않습니다/);
@@ -548,10 +619,7 @@ describe("ReviewsPage — document_identity_drift (ADR 0009 §5-3)", () => {
   });
 
   it("승인·반려 어느 쪽을 눌러도 매핑 행이 바뀌지 않는다고 말한다", async () => {
-    resetStore();
-    loginAs("cm");
-    mockDriftQueue();
-    renderPage();
+    setupDrift();
 
     // 반려 쪽에서 확인한다 — 두 결정이 같은 폴백으로 떨어진다는 사실 자체가 계약이다.
     const text = await openDecisionDialog("반려");
@@ -559,37 +627,130 @@ describe("ReviewsPage — document_identity_drift (ADR 0009 §5-3)", () => {
     expect(text).toMatch(/상태만 기록됩니다/);
   });
 
-  it("CM 이 실제로 해야 할 일(사람이 다시 확정 / config 되돌리기)을 안내한다", async () => {
-    resetStore();
-    loginAs("cm");
-    mockDriftQueue();
-    renderPage();
+  it("어느 경위에서도 참인 복구 경로(config 되돌리고 대장 재업로드)를 안내한다", async () => {
+    setupDrift();
 
     const text = await openDecisionDialog("승인");
-    expect(text).toMatch(/사람이 직접 되살려야 합니다/);
-    expect(text).toMatch(/재확정/);
     expect(text).toMatch(/config.*되돌린 뒤 대장을 다시 올리십시오/);
   });
 
-  it("끊어진 CM 판단이 어느 Activity·문서인지 보여준다 — 3축 '근거 없음' 카드를 그리지 않는다", async () => {
-    resetStore();
-    loginAs("cm");
-    mockDriftQueue();
-    renderPage();
+  it("오염된 CM 판단이 어느 Activity·문서인지 보여준다 — 3축 '근거 없음' 카드를 그리지 않는다", async () => {
+    setupDrift();
 
     const card = await screen.findByTestId("identity-drift-card");
-    const lost = within(card).getByTestId("lost-decisions");
-    // 재확정 대상이 무엇인지가 이 목록에만 있다. 없으면 "재확정하라"는 안내가 실행 불가능해진다.
-    expect(within(lost).getByRole("link", { name: "doc-v1-old1" })).toHaveAttribute(
+    // 무엇을 확인해야 하는지가 이 목록에만 있다. 없으면 안내가 실행 불가능해진다.
+    expect(within(card).getByRole("link", { name: "doc-v1-old1" })).toHaveAttribute(
       "href",
       "/projects/p1/documents/doc-v1-old1",
     );
-    expect(within(lost).getByText(/A100/)).toBeInTheDocument();
-    expect(within(lost).getByText("확정")).toBeInTheDocument();
-    expect(within(lost).getByText("반려")).toBeInTheDocument();
+    expect(within(card).getByText(/A100/)).toBeInTheDocument();
+    expect(within(card).getAllByText("확정").length).toBeGreaterThan(0);
+    expect(within(card).getAllByText("반려").length).toBeGreaterThan(0);
     // 이 kind 의 conflicting_sources 에는 3축이 없다 — 축 카드를 그리면 "근거 없음"만 세 장 뜬다.
     expect(screen.queryByText("신고(작업일보)")).not.toBeInTheDocument();
     // 카드 자체도 복구를 약속하지 않는다.
     expect(within(card).getByText(/복구되지 않습니다/)).toBeInTheDocument();
+  });
+
+  // ── 방어 1: 항목마다 경위가 보인다 ─────────────────────────────────────────
+  it("오염된 판단 항목마다 경위가 붙는다 — 경위 없이 나열하지 않는다", async () => {
+    setupDrift();
+
+    await screen.findByTestId("identity-drift-card");
+    const rows = screen.getAllByTestId("lost-decision-row");
+    expect(rows).toHaveLength(3);
+    // 항목 하나만 떼어 읽어도 그 판단이 어느 경위로 오염됐는지 알 수 있어야 한다. 세 항목 전부.
+    const merge = rows.filter((r) => (r.textContent ?? "").includes("A300"));
+    const orphan = rows.filter((r) => /A100|A400/.test(r.textContent ?? ""));
+    expect(merge).toHaveLength(1);
+    expect(orphan).toHaveLength(2);
+    expect(merge[0].textContent).toMatch(/병합/);
+    for (const r of orphan) expect(r.textContent).toMatch(/고아/);
+  });
+
+  // ── 방어 2: merge_overwritten 이 무슨 일인지 말한다 ────────────────────────
+  it("merge_overwritten 은 '승인 상태가 다른 대장 행의 것으로 바뀌었다'를 문서 상세를 열기 전에 말한다", async () => {
+    setupDrift();
+
+    await screen.findByTestId("identity-drift-card");
+    const group = screen
+      .getAllByTestId("drift-cause-group")
+      .find((g) => g.dataset.cause === "merge_overwritten");
+    expect(group).toBeDefined();
+    const text = group?.textContent ?? "";
+    // 약속의 내용: ① 지금 보이는 승인 상태가 그 문서의 것이 아니다 ② 도면 승인 근거가 뒤집혔을 수 있다.
+    expect(text).toMatch(/승인 상태/);
+    expect(text).toMatch(/다른 대장 행/);
+    expect(text).toMatch(/도면 승인 근거|drawing_approval/);
+  });
+
+  // ── 방어 3: 가장 위험한 경위가 맨 위 ──────────────────────────────────────
+  it("가장 위험한 경위(merge_overwritten)가 목록 맨 위에 온다 — 서버가 준 순서와 무관하게", async () => {
+    // 픽스처의 lost_decisions 는 orphaned 두 건이 **먼저** 온다. 화면이 다시 세우지 않으면 되돌릴 수
+    // 없는 경위가 아래로 밀린다. (정렬 자체는 domain/identityDrift.test.ts 가 단위로도 고정한다.)
+    setupDrift();
+
+    await screen.findByTestId("identity-drift-card");
+    const causes = screen.getAllByTestId("drift-cause-group").map((g) => g.dataset.cause);
+    expect(causes).toEqual(["merge_overwritten", "orphaned"]);
+  });
+
+  // ── 방어 3-b: 되돌릴 수 없는 경위만 강조된다 ───────────────────────────────
+  it("merge_overwritten 묶음만 강조 표시된다 — 자리가 아니라 경위로 고른다", async () => {
+    setupDrift();
+
+    await screen.findByTestId("identity-drift-card");
+    const groups = screen.getAllByTestId("drift-cause-group");
+    const merge = groups.find((g) => g.dataset.cause === "merge_overwritten");
+    const orphaned = groups.find((g) => g.dataset.cause === "orphaned");
+    expect(merge?.className).toContain("strong");
+    expect(merge?.textContent).toMatch(/가장 먼저 확인/);
+    // 나머지 경위는 강조하지 않는다 — 전부 강조하면 아무것도 강조되지 않는다.
+    expect(orphaned?.className).not.toContain("strong");
+    expect(orphaned?.textContent).not.toMatch(/가장 먼저 확인/);
+  });
+
+  // ── 방어 4: 병합만 있는 적재에 고아·재확정을 적지 않는다 ───────────────────
+  it("병합만 있는 적재에서 카드가 '고아가 됐다'거나 '새 doc_id 위에서 다시 확정하라'고 적지 않는다", async () => {
+    setupDrift(MERGE_ONLY_DRIFT_REVIEW);
+
+    const text = await driftCardText();
+    // 병합된 문서는 고아가 아니고(행이 살아 있거나 흡수돼 사라졌다) 다시 확정할 새 doc_id 자체가 없다.
+    expect(text).not.toMatch(/고아가 됐|고아 문서|고아가 된/);
+    expect(text).not.toMatch(/새 doc_id (위에서|쪽)/);
+    expect(text).toMatch(/새 doc_id (가|도) 없습니다/);
+  });
+
+  // ── 방어 5: 모르는 경위를 고아로 가정하지 않는다 ──────────────────────────
+  it("cause 가 없거나 모르는 값이면 '경위 미상'으로 두고 고아로 가정하지 않는다", async () => {
+    setupDrift(UNKNOWN_CAUSE_DRIFT_REVIEW);
+
+    await screen.findByTestId("identity-drift-card");
+    // 카드 전체가 아니라 **그 묶음**만 읽는다 — 카드 꼬리말까지 함께 읽으면 꼬리말 방어(아래)와 한
+    // 덩어리가 되어, 뮤테이션으로 어느 쪽이 죽었는지 구분할 수 없다.
+    const group = screen.getAllByTestId("drift-cause-group")[0];
+    const text = group.textContent ?? "";
+    expect(text).toMatch(/경위 미상/);
+    // 모르는 것을 고아라고 적으면, 화면이 고치려는 바로 그 거짓이 된다(서버 _CAUSE_UNSPECIFIED 주석).
+    expect(text).not.toMatch(/고아가 됐|고아 문서|고아가 된/);
+    expect(text).not.toMatch(/새 doc_id (위에서|쪽)/);
+  });
+
+  // ── 방어 6: 다이얼로그도 경위를 반영한다 ──────────────────────────────────
+  it("해소 다이얼로그가 경위를 반영한다 — 병합만 있으면 재확정을 시키지 않고, 고아가 있으면 시킨다", async () => {
+    setupDrift(MERGE_ONLY_DRIFT_REVIEW);
+    const mergeOnly = await openDecisionDialog("승인");
+    // 옛 문구는 경위와 무관하게 "고아 문서에 남은 …을 새 doc_id 쪽에서 다시 확인해 판단을 다시 내리"라고
+    // 적었다. 병합 경로에는 그럴 새 doc_id 가 없다 — 없는 행동을 시키지 않는다.
+    expect(mergeOnly).not.toMatch(/고아 문서에 남|고아가 된/);
+    expect(mergeOnly).not.toMatch(/새 doc_id (위에서|쪽)/);
+
+    vi.unstubAllGlobals();
+    cleanup();   // 같은 테스트 안에서 두 적재를 비교한다 — 앞 화면을 걷어내야 두 번째 렌더가 겹치지 않는다.
+    setupDrift(DRIFT_REVIEW);
+    const mixed = await openDecisionDialog("승인");
+    // 고아가 섞인 적재에서는 반대로 "새 doc_id 쪽에서 사람이 다시 판단"이 실제로 할 수 있는 일이다.
+    expect(mixed).toMatch(/새 doc_id/);
+    expect(mixed).toMatch(/다시 내려야 합니다|다시 판단/);
   });
 });

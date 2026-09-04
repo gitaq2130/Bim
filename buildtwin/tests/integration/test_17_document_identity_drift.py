@@ -392,7 +392,8 @@ def test_v4_lost_human_decision_opens_exactly_one_cm_review(client, auth, sender
     assert review["status"] == "open" and review["assignee_role"] == "cm" and review["activity_id"] is None
     assert review["review_request_id"] == sender_alias_drift["job"]["result"]["identity_drift_review_id"]
     assert review["conflicting_sources"]["lost_decisions"] == [
-        {"activity_id": ACTIVITY_CONFIRM, "doc_id": sender_alias_drift["confirmed_doc_id"], "decision": "confirmed"}]
+        {"activity_id": ACTIVITY_CONFIRM, "doc_id": sender_alias_drift["confirmed_doc_id"],
+         "decision": "confirmed", "cause": "orphaned"}]   # 이 경로는 고아 — 경위가 항목마다 실린다(V5 가 나머지 둘)
     assert review["confidence"] == 1.0                       # 판정이 아니라 관측이다
     assert review["evidence"]["method"] == "identity_drift_detection"
     assert "복구되지 않습니다" in review["title"]              # 매핑 복구를 약속하지 않는다
@@ -499,3 +500,325 @@ def test_v4_n3_drift_without_human_decisions_warns_but_opens_no_review(
     assert drift is not None and len(drift["moved"]) == 7 and drift["lost_decisions"] == []
     assert job["result"]["identity_drift_review_id"] is None
     assert _reviews(client, auth, project_id, kind="document_identity_drift") == []
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# V5 — 병합이 **사람의 판단을 오염시킨다**(ADR 0009 §3 (나))
+#
+# V3b 는 병합을 탐지하지만 그 충돌에 **사람 판단을 걸지 않았다** — 그래서 "병합은 절대로 CM 큐에
+# 올라가지 않는다"는 구멍이 테스트에 보이지 않았다. 실행으로 확인된 모습은 그보다 나빴다:
+# CM 이 "반려된 도면"임을 확인하고 A300 매핑을 확정해 차단해 둔 상태(`drawing_approval` 0.0)에서
+# `sender_aliases` 별칭표 통합 한 줄이 그 문서의 승인 상태를 REJECTED → APPROVED 로 뒤집어
+# `drawing_approval` 0.0 → 1.0, **미승인 도면 위에서 착수 가능**이 떴고 검토요청은 생기지 않았다.
+# ADR 0009 §3 이 스스로 최악이라 적은 문장 그대로다.
+#
+# 뒤집힘 자체는 의도된 동작이다 — 살아남은 행은 대장의 다른 행이고 **대장이 정본**이다(ADR 0007 §1
+# 규칙 1). 이번 사이클이 바꾼 것은 그것이 더 이상 **조용하지 않다**는 점이므로, 아래 양성 테스트는
+# 뒤집힘과 CM 큐를 **함께** 고정한다. 하나만 고정하면 다른 하나가 사라져도 초록이다.
+# ═══════════════════════════════════════════════════════════════════════════
+ACTIVITY_MERGE = "A300"                                       # 1F 덕트 설치 — 아래 두 행이 모두 이 Activity 의 후보가 된다
+_MERGE_TITLE = "시공상세도 승인요청 - 1F 덕트 설치 상세도 (Z1)"   # 두 행의 제목 원문이 **글자 그대로** 같아야 병합이 성립한다
+_MERGE_SEQ = 26080                                            # 같은 `번호` — doc_id 재료 셋 중 둘이 이미 같다
+#: 대장 행 순서 = upsert 승자 순서. 뒤 행(승인)이 앞 행(반려)을 덮어쓴다(ADR 0009 §3 (나)).
+_MERGE_ROWS = [
+    {"sender": "동부", "discipline": "기계", "seq": _MERGE_SEQ, "result": "반려",
+     "doc_number": "동부-HG-TFA-기계-26-080", "title": _MERGE_TITLE},
+    {"sender": "동부이앤씨", "discipline": "기계", "seq": _MERGE_SEQ, "result": "승인",
+     "doc_number": "동부이앤씨-HG-TFA-기계-26-081", "title": _MERGE_TITLE},
+]
+#: 충돌 상시화 대조군(N1b·N2 용): 두 행이 **첫 적재부터** 같은 doc_id 로 수렴한다(V3b 와 같은 모양).
+_STANDING_COLLISION_ROWS = [
+    {"sender": "동부", "discipline": "구조", "seq": 26090, "result": "반려",
+     "doc_number": "동부-HG-TFA-구조-26-090", "title": "시공상세도 승인요청 - 3F 기둥 배근도 (Z9)"},
+    {"sender": "동부", "discipline": "구조", "seq": 26090, "result": "승인",
+     "doc_number": "동부-HG-TFA-구조-26-091", "title": "시공상세도 승인요청 - 3F 기둥 배근도 (Z9)"},
+]
+
+
+def _merge_sender_aliases(cfg: dict[str, Any]) -> None:
+    """별칭표 **통합** — 새 법인명을 기존 표준명 아래로 넣는 운영상 정상 변경(ADR 0009 §5-1: 동결할 수
+    없는 식별 표면). 이 한 줄이 서로 다른 두 대장 행을 같은 `doc_id` 로 붕괴시킨다."""
+    cfg["normalization"]["sender_aliases"]["동부건설"].append("동부이앤씨")
+
+
+def _resolve_mapping_review_for_doc(client, auth, project_id: str, activity_id: str, doc_id: str,
+                                    decision: str, note: str) -> dict:
+    """`_resolve_mapping_review` 의 doc_id 판(A300 에는 후보가 여럿이라 Activity 만으로는 못 고른다).
+    CM 이 지나가는 경로는 여기서도 검토 큐 하나뿐이다."""
+    matches = [r for r in _reviews(client, auth, project_id, kind="document_mapping", status="open")
+               if r["activity_id"] == activity_id and r["conflicting_sources"]["doc_id"] == doc_id]
+    assert len(matches) == 1, f"{activity_id}→{doc_id} 의 열린 매핑 검토요청이 정확히 1건이 아니다: {matches}"
+    r = client.post(f"/api/review-requests/{matches[0]['review_request_id']}/resolve", headers=auth("cm"),
+                    json={"decision": decision, "note": note})
+    assert r.status_code == 200, r.text
+    return matches[0]
+
+
+def _duct_doc_ids(client, auth, project_id: str) -> dict[str, str]:
+    """제목이 같은 두 덕트 행을 `sender_normalized` 로 가른다 — 병합 전에는 그것만이 둘을 구별한다."""
+    return {d["sender_normalized"]: d["doc_id"]
+            for d in _documents(client, auth, project_id) if d["title"] == _MERGE_TITLE}
+
+
+def _drift_reviews(client, auth, project_id: str) -> list[dict]:
+    return _reviews(client, auth, project_id, kind="document_identity_drift")
+
+
+def _drawing_blockers(readiness: dict) -> list[dict]:
+    return [b for b in readiness["blockers"] if b["component"] == "drawing_approval"]
+
+
+@pytest.fixture(scope="module")
+def merge_register(tmp_path_factory) -> Path:
+    """제목·번호·종류가 같고 **발신 표기만 다른** 두 행이 있는 대장. 별칭표가 둘을 갈라 두는 동안에는
+    서로 다른 문서다(첫 적재에서 충돌 0건)."""
+    return _register_with_extra_tfa_rows(tmp_path_factory.mktemp("v5") / "merge.xlsx", _MERGE_ROWS)
+
+
+# ── 양성 1: 확정이 **살아남는 행**에 있고 병합이 그 행을 덮어쓴다 ─────────────────
+@pytest.fixture(scope="module")
+def merge_overwritten(client, auth, user_ids, tmp_path_factory, merge_register) -> dict[str, Any]:
+    """CM 이 **반려된 도면**(동부, REJECTED)의 매핑을 확정해 A300 을 차단해 둔 뒤 별칭표를 통합한다.
+    병합 후 그 `doc_id` 는 살아남지만 담긴 대장 행은 **승인된 다른 행**(동부이앤씨)으로 바뀐다."""
+    project_id = _new_project(client, auth, user_ids, "V5 병합 — 살아남는 행")
+    upload(client, auth("contractor"), project_id, SCHEDULE)
+    _, first = upload(client, auth("cm"), project_id, merge_register)
+    assert first["status"] == "done" and first["result"]["identity_drift"] is None   # 아직 충돌이 없다
+
+    doc_ids = _duct_doc_ids(client, auth, project_id)
+    survivor = doc_ids["동부건설"]        # 별칭 통합 뒤에도 이 doc_id 가 그대로 남는다(재료가 바뀌지 않는다)
+    _resolve_mapping_review_for_doc(client, auth, project_id, ACTIVITY_MERGE, survivor,
+                                    "approved", "반려된 도면임을 확인 — 이 작업의 도면 근거로 삼는다")
+    before_document = _document_detail(client, auth, project_id, survivor)["document"]
+    before_readiness = _readiness(client, auth, project_id, ACTIVITY_MERGE)
+    before_mapping = _mapping(client, auth, project_id, survivor, ACTIVITY_MERGE)
+
+    config_dir = _write_mutated_config(tmp_path_factory.mktemp("v5-overwritten"), _merge_sender_aliases)
+    _, job = _upload_with_config(client, auth("cm"), project_id, merge_register, config_dir)
+    return {"project_id": project_id, "job": job, "survivor": survivor, "absorbed": doc_ids["동부이앤씨"],
+            "before_document": before_document, "before_readiness": before_readiness,
+            "before_mapping": before_mapping, "config_dir": config_dir, "register": merge_register}
+
+
+def test_v5_merge_overwritten_puts_the_polluted_decision_on_the_cm_queue(client, auth, merge_overwritten) -> None:
+    """병합이 **살아남은 행의 내용**을 갈아치웠다 — 판단이 사라진 게 아니라 판단의 **대상**이 바뀌었다.
+    이동(`moved`)이 0건이라 옛 판정(고아 ↔ 신규 짝짓기)으로는 잡히지 않는 경로이고, 그래서 이 사건이
+    사이클 끝까지 CM 큐에 닿지 못했다."""
+    project_id, survivor = merge_overwritten["project_id"], merge_overwritten["survivor"]
+    result = merge_overwritten["job"]["result"]
+    assert (result["identity_drift_moved"], result["identity_drift_merged"]) == (0, 1)
+    assert result["identity_drift_lost_decisions"] == 1
+    assert result["identity_drift"]["lost_decisions"] == [
+        {"activity_id": ACTIVITY_MERGE, "doc_id": survivor, "decision": "confirmed", "cause": "merge_overwritten"}]
+
+    reviews = _drift_reviews(client, auth, project_id)
+    assert len(reviews) == 1, reviews
+    assert reviews[0]["review_request_id"] == result["identity_drift_review_id"]
+    assert reviews[0]["status"] == "open" and reviews[0]["assignee_role"] == "cm"
+
+
+def test_v5_merge_overwritten_survives_as_a_live_row_with_someone_elses_content(client, auth, user_ids,
+                                                                               merge_overwritten) -> None:
+    """이 경로가 고아 판정에 걸리지 않는 이유를 그대로 고정한다: 행도 `reviewed_by` 도 살아 있고
+    고아 표시조차 없다. 바뀐 것은 그 `doc_id` 가 담고 있는 **대장 행**이다."""
+    project_id, survivor = merge_overwritten["project_id"], merge_overwritten["survivor"]
+    detail = _document_detail(client, auth, project_id, survivor)
+    assert detail["document"]["is_orphaned"] is False
+    assert merge_overwritten["before_document"]["approval_status"] == "REJECTED"
+    assert detail["document"]["approval_status"] == "APPROVED"                 # 다른 대장 행의 값이다
+    assert detail["document"]["doc_number"] != merge_overwritten["before_document"]["doc_number"]
+
+    mappings = [m for m in detail["mappings"] if m["activity_id"] == ACTIVITY_MERGE]
+    assert len(mappings) == 1 and mappings[0]["needs_review"] is False
+    assert mappings[0]["reviewed_by"] == user_ids["cm"]                        # 확정은 그대로 서 있다
+
+
+def test_v5_merge_overwritten_flips_drawing_approval_but_no_longer_silently(client, auth, merge_overwritten) -> None:
+    """**뒤집힘 자체는 의도된 동작이다** — 살아남은 행은 대장의 다른 행이고 대장이 정본이다(ADR 0007
+    §1 규칙 1). 이번 사이클이 고친 것은 그것이 조용하다는 점이다. 그래서 두 사실을 **함께** 단언한다:
+    `drawing_approval` 0.0 → 1.0(미승인 도면을 차단하던 근거가 사라졌다)이고, 같은 적재가 그 사건을
+    CM 큐에 올렸다. 뒤집힘만 고정하면 큐가 사라져도 초록이고, 큐만 고정하면 이 결함이 무엇이었는지가
+    테스트에서 사라진다."""
+    before = merge_overwritten["before_readiness"]
+    assert before["components"]["drawing_approval"] == 0.0
+    assert [b["kind"] for b in _drawing_blockers(before)] == ["document_unapproved"]
+
+    after = _readiness(client, auth, merge_overwritten["project_id"], ACTIVITY_MERGE)
+    assert after["components"]["drawing_approval"] == 1.0
+    assert not _drawing_blockers(after)                       # 착수 가능 쪽으로 열렸다
+    assert after["score"] > before["score"]
+    assert merge_overwritten["job"]["result"]["identity_drift_review_id"] is not None
+
+
+# ── 양성 2: 확정이 **삼켜지는 행**에 있다 ────────────────────────────────────────
+@pytest.fixture(scope="module")
+def merge_absorbed(client, auth, user_ids, tmp_path_factory, merge_register) -> dict[str, Any]:
+    """같은 병합의 반대편. CM 이 확정한 것이 **패자 쪽 행**(동부이앤씨)이면 그 `doc_id` 는 새 값을 얻지
+    못한 채 사라진다 — 새 문서가 생기지 않으므로 고아 ↔ 신규 짝짓기로도 잡히지 않는다."""
+    project_id = _new_project(client, auth, user_ids, "V5 병합 — 삼켜지는 행")
+    upload(client, auth("contractor"), project_id, SCHEDULE)
+    upload(client, auth("cm"), project_id, merge_register)
+
+    doc_ids = _duct_doc_ids(client, auth, project_id)
+    absorbed = doc_ids["동부이앤씨"]
+    _resolve_mapping_review_for_doc(client, auth, project_id, ACTIVITY_MERGE, absorbed,
+                                    "approved", "이 도면을 이 작업의 근거로 삼는다")
+    before_readiness = _readiness(client, auth, project_id, ACTIVITY_MERGE)
+
+    config_dir = _write_mutated_config(tmp_path_factory.mktemp("v5-absorbed"), _merge_sender_aliases)
+    _, job = _upload_with_config(client, auth("cm"), project_id, merge_register, config_dir)
+    return {"project_id": project_id, "job": job, "absorbed": absorbed, "survivor": doc_ids["동부건설"],
+            "before_readiness": before_readiness}
+
+
+def test_v5_merge_absorbed_puts_the_lost_decision_on_the_cm_queue(client, auth, merge_absorbed) -> None:
+    project_id, absorbed = merge_absorbed["project_id"], merge_absorbed["absorbed"]
+    result = merge_absorbed["job"]["result"]
+    assert (result["identity_drift_moved"], result["identity_drift_merged"]) == (0, 1)
+    assert result["identity_drift"]["lost_decisions"] == [
+        {"activity_id": ACTIVITY_MERGE, "doc_id": absorbed, "decision": "confirmed", "cause": "merge_absorbed"}]
+    assert result["orphaned_doc_ids"] == [absorbed]           # 흡수된 행은 이번 적재에 나타나지 않는다
+
+    reviews = _drift_reviews(client, auth, project_id)
+    assert len(reviews) == 1, reviews
+    assert reviews[0]["review_request_id"] == result["identity_drift_review_id"]
+    assert reviews[0]["status"] == "open" and reviews[0]["assignee_role"] == "cm"
+
+
+def test_v5_merge_absorbed_loses_the_approval_evidence_conservatively(client, auth, merge_absorbed) -> None:
+    """삼켜진 쪽은 §3 (가)와 같은 **보수적** 실패다 — 확정 매핑이 고아 문서를 가리켜 근거에서 빠지고
+    점수가 내려간다. 위험한 것은 양성 1 쪽이지만, 이쪽도 사람의 판단이 오염된 것은 같으므로 큐에 오른다."""
+    project_id = merge_absorbed["project_id"]
+    assert _document_detail(client, auth, project_id, merge_absorbed["absorbed"])["document"]["is_orphaned"] is True
+    assert _document_detail(client, auth, project_id, merge_absorbed["survivor"])["document"]["is_orphaned"] is False
+
+    before, after = merge_absorbed["before_readiness"], _readiness(client, auth, project_id, ACTIVITY_MERGE)
+    assert before["components"]["drawing_approval"] == 1.0
+    assert after["components"]["drawing_approval"] < 1.0
+    assert [b["kind"] for b in _drawing_blockers(after)] == ["document_mapping_pending"]
+
+
+# ── 검토요청 문구: 약속의 **내용**을 단언한다(문자열 통째로가 아니라) ───────────────
+# 이 저장소는 웹 테스트가 **거짓 문구를 계약으로 고정**해 169건이 전부 통과한 적이 있다. 그래서
+# 여기서는 문장을 베껴 쓰지 않고 "그 경위에서 참일 수 없는 말이 없다"를 건다.
+def test_v5_merge_overwritten_title_does_not_claim_orphaning_or_movement(client, auth, merge_overwritten) -> None:
+    """`merge_overwritten` 은 고아가 아니고(행이 살아 있다), 이동도 아니며(`moved == 0`), 다시 확정할
+    **새 doc_id 자체가 없다**. 옛 문구는 이 셋을 모두 반대로 적었다."""
+    title = _drift_reviews(client, auth, merge_overwritten["project_id"])[0]["title"]
+    assert "고아" not in title, title
+    assert "이동" not in title, title                 # "0건 이동했고" 를 포함해, 이동을 말하지 않는다
+    assert "다시 확정" not in title, title             # 없는 행동을 시키지 않는다
+    assert "1건" in title, title                      # 오염된 판단 건수는 사실대로 적는다
+    assert "복구되지 않습니다" in title, title           # 매핑 복구를 약속하지 않는다(§5-3)
+
+
+def test_v5_merge_absorbed_title_does_not_claim_orphaning(client, auth, merge_absorbed) -> None:
+    title = _drift_reviews(client, auth, merge_absorbed["project_id"])[0]["title"]
+    assert "고아" not in title, title
+    assert "이동" not in title, title
+    assert "다시 확정" not in title, title
+    assert "1건" in title, title
+    assert "복구되지 않습니다" in title, title
+
+
+def test_v5_orphaned_title_still_names_the_orphan_path(client, auth, sender_alias_drift) -> None:
+    """대조군 — 경위가 `orphaned` 인 적재의 문구는 반대로 **고아·이동·재확정을 말해야 한다**. 이것이
+    없으면 "세 경위 모두 고아 어휘를 빼면 통과"라는 틀린 구현이 위 두 테스트를 그대로 지나간다."""
+    title = _drift_reviews(client, auth, sender_alias_drift["project_id"])[0]["title"]
+    assert "고아" in title and "이동" in title and "다시 확정" in title, title
+
+
+# ── 음성 대조군 ───────────────────────────────────────────────────────────────
+def test_v5_n1_register_result_update_without_collision_opens_no_review(client, auth, user_ids, tmp_path) -> None:
+    """N1 — 충돌 **없이** 대장이 처리결과를 반려 → 승인으로 정상 갱신했다. `drawing_approval` 은 똑같이
+    0.0 → 1.0 으로 뒤집히지만 이것은 사건이 아니다: **대장이 정본**이다(ADR 0007 §1 규칙 1).
+
+    이 대조군이 없으면 "확정된 문서의 승인 상태가 바뀌면 발화"라는 틀린 구현이 통과하고, 그러면 대장이
+    다음 주에 처리결과를 갱신할 때마다 CM 큐가 오염된다 — 그 끝은 운영자가 **탐지를 끄는 것**이다.
+    """
+    project_id = _new_project(client, auth, user_ids, "V5 N1 대장 정상 갱신")
+    upload(client, auth("contractor"), project_id, SCHEDULE)
+    upload(client, auth("cm"), project_id,
+           _register_with_extra_tfa_rows(tmp_path / "before.xlsx", [_MERGE_ROWS[0]]))
+    doc_id = _duct_doc_ids(client, auth, project_id)["동부건설"]
+    _resolve_mapping_review_for_doc(client, auth, project_id, ACTIVITY_MERGE, doc_id, "approved", "반려 확인")
+    assert _readiness(client, auth, project_id, ACTIVITY_MERGE)["components"]["drawing_approval"] == 0.0
+
+    _, job = upload(client, auth("cm"), project_id, _register_with_extra_tfa_rows(
+        tmp_path / "after.xlsx", [{**_MERGE_ROWS[0], "result": "승인"}]))
+
+    assert (job["result"]["created"], job["result"]["orphaned"]) == (0, 0)
+    assert job["result"]["identity_drift"] is None
+    assert job["result"]["identity_drift_review_id"] is None
+    assert not _has_warning(job, "DOCUMENT_IDENTITY_COLLISION")
+    assert _drift_reviews(client, auth, project_id) == []
+    # 뒤집힘은 일어난다 — 그리고 그것이 옳다. 사건은 "우리 규칙이 두 행을 뭉갰을 때"뿐이다.
+    assert _readiness(client, auth, project_id, ACTIVITY_MERGE)["components"]["drawing_approval"] == 1.0
+
+
+def test_v5_n1b_result_update_outside_the_collision_group_is_not_reported(client, auth, user_ids, tmp_path) -> None:
+    """N1 강화판 — 같은 적재에 **관계없는 병합이 하나 있는** 상태에서 대장이 다른 문서의 처리결과를
+    갱신한다. 드리프트 보고서 자체는 생기지만(merged 1건) 오염된 판단은 **0건**이어야 한다.
+
+    N1 만으로는 오탐 방지 조건 ①("이번 적재의 충돌 묶음에 있을 것")을 고정하지 못한다: 그 조건을
+    지워도 N1 에는 병합이 없어 `identity_drift` 가 통째로 `None` 이라 검토요청이 만들어지지 않는다.
+    조건이 실제로 걸리는 자리는 "병합은 있는데 갱신된 문서는 그 묶음 밖"인 이 적재다.
+    """
+    project_id = _new_project(client, auth, user_ids, "V5 N1b 묶음 밖 갱신")
+    upload(client, auth("contractor"), project_id, SCHEDULE)
+    before = _register_with_extra_tfa_rows(tmp_path / "n1b_before.xlsx",
+                                           [_MERGE_ROWS[0], *_STANDING_COLLISION_ROWS])
+    _, first = upload(client, auth("cm"), project_id, before)
+    assert first["result"]["identity_drift_merged"] == 1       # 상시 충돌 1건(사람 판단은 걸려 있지 않다)
+    doc_id = _duct_doc_ids(client, auth, project_id)["동부건설"]
+    _resolve_mapping_review_for_doc(client, auth, project_id, ACTIVITY_MERGE, doc_id, "approved", "반려 확인")
+
+    _, job = upload(client, auth("cm"), project_id, _register_with_extra_tfa_rows(
+        tmp_path / "n1b_after.xlsx", [{**_MERGE_ROWS[0], "result": "승인"}, *_STANDING_COLLISION_ROWS]))
+
+    assert job["result"]["identity_drift_merged"] == 1         # 병합은 여전히 보고된다
+    assert job["result"]["identity_drift"]["lost_decisions"] == []
+    assert job["result"]["identity_drift_lost_decisions"] == 0
+    assert job["result"]["identity_drift_review_id"] is None
+    assert _drift_reviews(client, auth, project_id) == []
+
+
+def test_v5_n2_reupload_after_the_merge_opens_no_new_review(client, auth, merge_overwritten) -> None:
+    """N2 — 병합 뒤 **같은 config·같은 파일**을 다시 올린다. 충돌은 매 적재 다시 보고되지만 사건은 이미
+    일어났고 승자도 그대로다 — 새 검토요청은 없다(사건이 일어난 적재에서 한 번만). 이것이 없으면
+    현장의 주간 대장 업로드가 매주 같은 요청을 CM 큐에 쌓는 구현이 통과한다.
+
+    첫 요청이 실제로 만들어졌다는 사실은 위 양성 1 테스트가 고정한다 — 여기서 그것을 다시 단언하면
+    이 음성 테스트가 양성 1의 방어와 함께 무너져(뮤테이션이 두 곳을 동시에 빨갛게 만들어) "무엇이
+    깨졌는가"를 가리키지 못한다. 이 테스트가 고정하는 것은 **적재 사이의 증분이 0**이라는 것뿐이다."""
+    project_id = merge_overwritten["project_id"]
+    before = _drift_reviews(client, auth, project_id)
+
+    _, job = _upload_with_config(client, auth("cm"), project_id, merge_overwritten["register"],
+                                 merge_overwritten["config_dir"])
+
+    assert job["result"]["identity_drift_merged"] == 1         # 충돌 자체는 계속 보인다(대장이 그대로다)
+    assert job["result"]["identity_drift"]["lost_decisions"] == []
+    assert job["result"]["identity_drift_review_id"] is None
+    assert _drift_reviews(client, auth, project_id) == before  # 큐가 자라지 않는다
+
+
+def test_v5_n3_merge_without_human_decisions_warns_but_opens_no_review(
+    client, auth, user_ids, tmp_path, merge_register,
+) -> None:
+    """N3 — 같은 별칭표 통합이지만 **사람의 판단이 하나도 없는** 프로젝트. 경고와 병합 보고는 뜨되
+    검토요청은 만들지 않는다(ADR 0009 §5-2 큐 오염 방지 — V3b 가 첫 적재 충돌로 세운 계약을 config
+    변경으로 생긴 병합에서도 그대로 유지한다)."""
+    project_id = _new_project(client, auth, user_ids, "V5 N3 판단 없는 병합")
+    upload(client, auth("contractor"), project_id, SCHEDULE)
+    upload(client, auth("cm"), project_id, merge_register)
+    assert not _reviews(client, auth, project_id, kind="document_mapping", status="approved")
+
+    config_dir = _write_mutated_config(tmp_path / "cfg", _merge_sender_aliases)
+    _, job = _upload_with_config(client, auth("cm"), project_id, merge_register, config_dir)
+
+    assert _has_warning(job, "DOCUMENT_IDENTITY_COLLISION"), _warning_messages(job)
+    assert job["result"]["identity_drift_merged"] == 1
+    assert job["result"]["identity_drift"]["lost_decisions"] == []
+    assert job["result"]["identity_drift_review_id"] is None
+    assert _drift_reviews(client, auth, project_id) == []

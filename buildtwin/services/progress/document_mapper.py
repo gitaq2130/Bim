@@ -22,8 +22,11 @@ api 가 호출) / 문서가 고아가 되면 자동 종료. api 는 이 함수�
 하고, 매핑 행은 건드리지 않은 채 `reject_document_mapping`을 호출한다.
 
 **식별 드리프트**(ADR 0009 §5-2·§5-3)도 매핑 생명주기에 걸리므로 여기서 소유한다:
-`open_identity_drift_review`가 "우리 식별 규칙이 움직여 CM 이 확정·반려한 매핑이 고아 문서를 가리키게
-됐다"는 사건을 CM 큐에 올린다. 판정 자체(고아 ↔ 신규 쌍 대조)는 재업로드 규칙을 소유한
+`open_identity_drift_review`가 "우리 식별 규칙이 움직여 CM 이 확정·반려한 판단이 오염됐다"는 사건을 CM 큐에
+올린다. 오염되는 길은 셋이고(`lost_decisions[].cause`) 사람이 해야 할 일이 서로 다르므로 검토요청 제목은
+경위마다 다르게 쓴다(`_identity_drift_review_title`) — 판단이 가리키던 행이 고아가 된 것(`orphaned`),
+살아 있는 행의 **내용이 다른 대장 행으로 바뀐** 것(`merge_overwritten`), 행이 다른 `doc_id` 에 흡수돼
+사라진 것(`merge_absorbed`). 판정 자체(고아 ↔ 신규 쌍 대조, 병합 충돌 판정)는 재업로드 규칙을 소유한
 `services/ingest/persistence`가 하고, 이 모듈은 그 결과(`IdentityDriftReport`)를 받아 검토요청으로만
 바꾼다. 이 kind 는 **확인 전용**이라 해소에 부수 효과가 없다 — 매핑을 되살리지 않는다.
 """
@@ -60,6 +63,23 @@ _MAPPING_REVIEW_DECISION_REJECTED = "rejected"
 # 여기서 상수로 두는 이유는 이 모듈이 만드는 검토요청 evidence 에 "무엇을 보고 만든 요청인가"를 남기기 위해서다.
 _IDENTITY_DRIFT_WARNING_CODE = "DOCUMENT_IDENTITY_DRIFT"
 _IDENTITY_DRIFT_METHOD = "identity_drift_detection"
+
+# 사람의 판단이 오염된 **경위**(`IdentityDriftReport.lost_decisions[]` 의 `cause`). 값을 붙이는 곳은 판정을
+# 소유한 `services/ingest/persistence`(같은 문자열을 그쪽 상수로 둔다)이고 이 모듈은 소비자다 — CM 에게 보일
+# 문구를 이 값으로 가른다. 셋을 하나로 뭉뚱그린 문구는 그 자체가 거짓이다: `orphaned` 는 판단이 가리키던
+# 행이 사라진 것이라 **새 doc_id 위에서 다시 확정**하면 되지만, `merge_overwritten` 은 행도 `reviewed_by` 도
+# 그대로인 채 그 문서의 **내용(승인 상태)** 만 다른 대장 행으로 바뀐 것이라 새 doc_id 자체가 없고, CM 이 먼저
+# 알아야 할 것은 "지금 화면의 승인 상태는 내가 보고 판단한 그 문서의 것이 아니다"이다.
+_CAUSE_ORPHANED = "orphaned"
+_CAUSE_MERGE_OVERWRITTEN = "merge_overwritten"
+_CAUSE_MERGE_ABSORBED = "merge_absorbed"
+# 생산자가 `cause` 를 싣지 않았을 때 쓰는 자리표시자. **`orphaned` 로 떨어뜨리지 않는다** — 모르는 것을
+# 고아라고 적으면 이 함수가 고치려는 바로 그 거짓이 된다.
+_CAUSE_UNSPECIFIED = "unspecified"
+# 문구에 세우는 순서 = 위험한 순서. `merge_overwritten` 이 맨 앞인 이유는 ADR 0009 §3 이 스스로 최악이라고
+# 적은 경로("미승인 도면 위에서 착수 가능을 띄운다")가 이것뿐이기 때문이다 — 나머지 둘은 근거가 사라져
+# 점수가 내려가는(보수적) 실패다.
+_CAUSE_ORDER = (_CAUSE_MERGE_OVERWRITTEN, _CAUSE_MERGE_ABSORBED, _CAUSE_ORPHANED)
 
 
 def _load_document_register_config() -> dict[str, Any]:
@@ -530,15 +550,18 @@ def reject_document_mapping(session: Session, project_id: str, activity_id: str,
 # 식별 드리프트 검토요청 (ADR 0009 §5-2·§5-3)
 #
 # 동결할 수 없는 식별 표면(`sender_aliases`·`sheet_doc_types`·`column_aliases`)이 바뀌면 대장 원문이
-# 그대로여도 `doc_id` 가 이동하고, CM 이 확정·반려한 매핑은 **고아 문서를 가리키게 되어 증거로서
-# 사라진다**(readiness 의 `confirmed_required_documents` 가 고아를 제외하므로). 막을 수는 없으니
+# 그대로여도 `doc_id` 가 움직이고, CM 이 확정·반려한 매핑이 오염된다 — 판단이 가리키던 행이 **고아가 되어
+# 증거로서 사라지거나**(readiness 의 `confirmed_required_documents` 가 고아를 제외한다), 서로 다른 대장
+# 행이 한 `doc_id` 로 병합돼 **행은 살아 있는데 그 안의 승인 상태가 다른 행으로 바뀐다**(이쪽이 더
+# 위험하다 — ADR 0009 §3 (나): 미승인 도면 위에서 착수 가능이 뜬다). 막을 수는 없으니
 # 알아채게 한다 — 그리고 알아채는 자리는 job 경고가 아니라 **사람의 큐**여야 한다(8차 리뷰: 아무도
 # 만들지 않는 검토요청 때문에 CM 큐가 영원히 비어 있었고 어떤 테스트도 실패하지 않았다).
 # ─────────────────────────────────────────────────────────────────────────────
 class IdentityDriftReport(BaseModel):
     """한 번의 대장 적재에서 관찰된 식별 드리프트(ADR 0009 §5-2). **판정은 적재 쪽이 소유한다** —
     `services/ingest/persistence.persist_document_register_import` 가 재업로드 규칙(ADR 0007 §2-2)을
-    이미 소유하므로 고아 ↔ 신규 쌍을 아는 것도 그쪽이다. 이 모듈은 그 관찰을 받아 검토요청으로만 바꾼다.
+    이미 소유하므로 고아 ↔ 신규 쌍도, 한 `doc_id` 로 수렴한 병합 묶음도 아는 것은 그쪽이다. 이 모듈은 그
+    관찰을 받아 검토요청으로만 바꾼다.
 
     **이 타입이 `services/progress` 에 있는 이유**(계획 0003 §3-e 는 `services/ingest/persistence.py` 에
     두라고 적었다): 의존 방향이다. `services/ingest/persistence.py` 는 이미
@@ -553,16 +576,72 @@ class IdentityDriftReport(BaseModel):
     file_id: str = ""                         # 드리프트를 드러낸 대장 업로드(evidence.source_id)
     moved: list[dict[str, str]] = Field(default_factory=list)        # {"previous_doc_id","new_doc_id","title"} — title 원문이 같은 쌍
     merged: list[dict[str, Any]] = Field(default_factory=list)       # {"doc_id","titles":[...]} — 한 doc_id 로 수렴한 서로 다른 행
-    lost_decisions: list[dict[str, str]] = Field(default_factory=list)  # {"activity_id","doc_id","decision"} — 고아 쪽에 걸린 사람의 판단
+    # {"activity_id","doc_id","decision","cause"} — 이번 적재가 오염시킨 사람의 판단. `cause` 는 오염 **경위**
+    # (`_CAUSE_*`)이고, 이것이 없으면 검토요청 제목이 세 경위를 하나로 뭉뚱그려 거짓을 쓴다.
+    lost_decisions: list[dict[str, str]] = Field(default_factory=list)
+
+
+def _decision_counts(lost: Sequence[dict[str, str]]) -> tuple[int, int, int]:
+    """(전체, 확정, 반려). 반려 표시는 `_MAPPING_REVIEW_DECISION_REJECTED` 하나뿐이고 나머지(값이 없는 경우
+    포함)는 확정이다 — `_lost_decisions` 가 `is_rejected_mapping()` 으로 이미 가른 값을 그대로 센다."""
+    rejected = sum(1 for d in lost if d.get("decision") == _MAPPING_REVIEW_DECISION_REJECTED)
+    return len(lost), len(lost) - rejected, rejected
+
+
+def _identity_drift_clause(cause: str, lost: Sequence[dict[str, str]], drift: IdentityDriftReport) -> str:
+    """한 경위에 대해 **그 경위에서만 참인** 사실을 쓴다. 건수는 이 경위의 몫만 센다."""
+    total, confirmed, rejected = _decision_counts(lost)
+    counted = f"CM 판단 {total}건(확정 {confirmed} · 반려 {rejected})"
+    documents = len({d["doc_id"] for d in lost})   # 한 문서에 여러 Activity 매핑이 걸릴 수 있다
+    if cause == _CAUSE_MERGE_OVERWRITTEN:
+        # 행은 살아 있고 고아도 아니다. 사라진 것은 판단이 아니라 **판단의 대상**이다.
+        return (f"서로 다른 대장 행이 한 doc_id 로 병합돼, CM 이 판단한 문서 {documents}건의 내용이 다른 "
+                f"대장 행으로 바뀌었습니다(CM 판단 {total}건 · 확정 {confirmed} · 반려 {rejected}). "
+                "화면의 승인 상태는 CM 이 보고 판단한 그 문서의 것이 아닙니다"
+                "(도면 승인 근거가 뒤집혔을 수 있습니다)")
+    if cause == _CAUSE_MERGE_ABSORBED:
+        return f"{counted}이 가리키던 문서 {documents}건이 다른 doc_id 에 흡수돼 사라졌습니다"
+    if cause == _CAUSE_ORPHANED:
+        # `moved` 는 정의상 이 경위의 원인 그 자체(고아 ↔ 신규 짝짓기 결과)이므로 여기서만 쓴다.
+        # 병합만 있는 적재는 `moved == 0` 이라 이 절 자체가 나오지 않는다 — "0건 이동했고"라고 쓰지 않는다.
+        return (f"대장은 그대로인데 doc_id 가 {len(drift.moved)}건 이동했고, {counted}이 고아 문서에 남았습니다")
+    # 경위를 모르는 항목(생산자가 새 cause 를 추가했는데 이 문구가 따라오지 못한 경우). 아는 척하지 않는다.
+    return (f"{counted}이 이번 적재의 식별 드리프트에 걸렸습니다"
+            f"(경위 {cause!r} — 이 문구가 설명할 수 없는 경위입니다. lost_decisions 를 직접 보십시오)")
 
 
 def _identity_drift_review_title(drift: IdentityDriftReport) -> str:
-    confirmed = sum(1 for d in drift.lost_decisions if d.get("decision") != _MAPPING_REVIEW_DECISION_REJECTED)
-    rejected = len(drift.lost_decisions) - confirmed
-    return (f"문서 식별 드리프트: 대장은 그대로인데 doc_id 가 {len(drift.moved)}건 이동했고, CM 판단 "
-            f"{len(drift.lost_decisions)}건(확정 {confirmed} · 반려 {rejected})이 고아 문서에 남았습니다 — "
-            "확인용 요청입니다(매핑은 복구되지 않습니다). 식별 규칙 config 를 되돌리고 대장을 다시 올리거나, "
-            "의도한 변경이면 그대로 두고 새 doc_id 위에서 다시 확정하십시오")
+    """CM 큐에 뜨는 한 줄. **경위(`cause`)마다 다르게 쓴다.**
+
+    하나로 뭉뚱그린 옛 문구("doc_id 가 N건 이동했고 … 고아 문서에 남았습니다 … 새 doc_id 위에서 다시
+    확정하십시오")는 병합 경로에서 세 군데가 거짓이었다: ① `merge_overwritten` 은 고아가 아니다(행도
+    `reviewed_by` 도 살아 있고 바뀐 것은 문서의 **내용**이다) ② 병합에는 다시 확정할 **새 doc_id 가 없다**
+    ③ 병합만 있는 적재는 `moved == 0` 이라 "0건 이동했고"라고 쓰면서 판단 오염을 보고했다.
+
+    이 저장소는 "화면·문구가 사실과 다른" 결함을 세 번 겪었고(존재한 적 없는 되돌리기 엔드포인트를 약속한
+    승인 다이얼로그, 그 거짓 문구를 계약으로 고정한 웹 테스트 169건 전원 통과), ADR 0009 §Deferred 2 가
+    `document_possibly_renamed` 문구 정정을 미루면서 "§5-2 가 분리하면 해결된다"고 적은 바로 그 §5-2 의
+    새 제목이 같은 종류의 거짓을 갖고 태어났다. **경위가 섞이면 각 경위를 건수와 함께 나란히 적는다** —
+    합치는 순간 다시 거짓이 되기 때문이다."""
+    by_cause: dict[str, list[dict[str, str]]] = {}
+    for lost in drift.lost_decisions:
+        by_cause.setdefault(str(lost.get("cause") or _CAUSE_UNSPECIFIED), []).append(lost)
+
+    ordered = [c for c in _CAUSE_ORDER if c in by_cause] + sorted(set(by_cause) - set(_CAUSE_ORDER))
+    clauses = [_identity_drift_clause(cause, by_cause[cause], drift) for cause in ordered]
+    orphaned = by_cause.get(_CAUSE_ORPHANED, [])
+
+    tail = "확인용 요청입니다(매핑은 복구되지 않습니다). 식별 규칙 config 를 되돌리고 대장을 다시 올리"
+    if not orphaned:
+        # 병합에는 "다시 확정할 새 doc_id" 가 없다. 없는 행동을 시키지 않는다.
+        tail += "십시오"
+    elif len(clauses) == 1:
+        tail += "거나, 의도한 변경이면 그대로 두고 새 doc_id 위에서 다시 확정하십시오"
+    else:
+        tail += (f"거나, 의도한 변경이면 그대로 두고 고아가 된 판단 {len(orphaned)}건만 새 doc_id 위에서 "
+                 "다시 확정하십시오(병합된 문서에는 새 doc_id 가 없습니다)")
+    body = ". 또한 ".join(clauses) if clauses else "식별 규칙이 움직였습니다(오염된 CM 판단은 없습니다)"
+    return f"문서 식별 드리프트: {body} — {tail}"
 
 
 def open_identity_drift_review(session: Session, project_id: str,

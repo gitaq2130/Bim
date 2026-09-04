@@ -4,11 +4,17 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useDocument, useProjectRole, useResolveReview, useReviewRequests } from "../api/hooks";
-import type { ConflictingSource, ReviewDecision, ReviewKind, ReviewRequest, ReviewStatus } from "../api/types";
+import type { ConflictingSource, IdentityDriftSources, LostDecision, ReviewDecision, ReviewKind, ReviewRequest, ReviewStatus } from "../api/types";
 import { ConfidenceBadge } from "../components/ConfidenceBadge";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ErrorBox } from "../components/ErrorBox";
 import { DOC_TYPE_LABELS, REVIEW_KIND_LABELS, REVIEW_STATUS_LABELS, SOURCE_AXIS_LABELS, labelForAnyState } from "../domain/labels";
+import {
+  IDENTITY_DRIFT_CAUSE_LABELS,
+  IDENTITY_DRIFT_CAUSE_NOTES,
+  groupLostDecisionsByCause,
+  type LostDecisionGroup,
+} from "../domain/identityDrift";
 import { mappingRejection, mappingReviewState } from "../domain/mappingReview";
 import { fmtDate } from "../lib/format";
 import { useStore } from "../store";
@@ -22,7 +28,8 @@ const AXES = ["daily_report", "scan", "system_logic"] as const;
  * services/sync/review_queue.resolve_mapping_review)이 실제로 하는 일과 정확히 대응해야 한다 — 화면이
  * 다시 지키지 못할 약속을 하지 않도록.
  */
-function reviewDecisionMessage(kind: ReviewKind, decision: ReviewDecision): string {
+function reviewDecisionMessage(review: ReviewRequest, decision: ReviewDecision): string {
+  const kind = review.kind;
   if (decision === "on_hold") {
     // 어느 kind 에서도 on_hold 는 검토요청 상태만 바꾼다(usecases.resolve_review 의 어떤 분기도
     // decision === "on_hold" 를 받지 않아 공통 폴백으로 떨어진다) — 객체 상태·매핑 어느 것도 건드리지 않는다.
@@ -55,14 +62,7 @@ function reviewDecisionMessage(kind: ReviewKind, decision: ReviewDecision): stri
       // 그래서 여기서 "해소하면 복구된다"는 취지를 한 글자라도 적으면, 그 순간 화면이 서버에 없는 기능을
       // 약속하게 된다 — 이 저장소가 이미 세 번 겪은 (C) 계열 결함이고 가장 최근 것은 존재한 적 없는
       // "되돌리기" 엔드포인트를 약속한 승인 다이얼로그였다.
-      // 대신 CM 이 **실제로 해야 할 일**(config 되돌리기 / 새 doc_id 위에서 사람이 다시 확정)을 안내한다.
-      return (
-        "이 종류(문서 식별 드리프트)는 확인 전용입니다 — 승인·반려 어느 쪽을 눌러도 이 검토요청의 상태만 기록됩니다. " +
-        "고아 문서에 남은 CM 확정·반려는 복구되지 않으며, 문서 ↔ Activity 매핑은 한 행도 바뀌지 않습니다. " +
-        "끊어진 확정·반려는 사람이 직접 되살려야 합니다: 이 요청에 실린 '끊어진 CM 판단' 목록의 Activity·문서를 " +
-        "새 doc_id 쪽에서 다시 확인해 판단을 다시 내리거나(확정이었으면 새 후보를 재확정, 반려였으면 새 후보를 다시 반려), " +
-        "식별 규칙 config(sender_aliases·sheet_doc_types·column_aliases)를 되돌린 뒤 대장을 다시 올리십시오."
-      );
+      return identityDriftDecisionMessage(review);
     case "verification":
     default:
       // verification 은 신고/스캔/논리 3축 불일치를 사람이 확인했다는 기록일 뿐, 어떤 상태 전이도 일으키지 않는다(ADR 0001 §6).
@@ -170,7 +170,7 @@ export function ReviewsPage() {
       <ConfirmDialog
         open={pending !== null}
         title={pending ? `${DECISION_LABELS[pending.decision]} — ${pending.r.title}` : ""}
-        message={pending ? reviewDecisionMessage(pending.r.kind, pending.decision) : undefined}
+        message={pending ? reviewDecisionMessage(pending.r, pending.decision) : undefined}
         confirmLabel={pending ? DECISION_LABELS[pending.decision] : "확인"}
         requireNote={pending?.decision === "rejected"}
         busy={resolve.isPending}
@@ -274,13 +274,6 @@ function DocumentMappingCard({ review, projectId }: { review: ReviewRequest; pro
   );
 }
 
-/** `_lost_decisions`(services/ingest/persistence.py)가 싣는 한 항목. `decision` 은 "confirmed" | "rejected". */
-interface LostDecision {
-  activity_id?: string;
-  doc_id?: string;
-  decision?: string;
-}
-
 const LOST_DECISION_LABELS: Record<string, string> = { confirmed: "확정", rejected: "반려" };
 
 function asArray(v: unknown): unknown[] {
@@ -292,53 +285,128 @@ function asText(v: unknown): string | null {
 }
 
 /**
+ * `document_identity_drift` 요청의 `conflicting_sources` 를 읽는다. 서버는 `dict[str, Any]` 를 주므로
+ * 배열 자리에 다른 것이 와도 화면이 죽지 않도록 여기서 한 번 좁힌다.
+ */
+function driftSources(review: ReviewRequest): IdentityDriftSources & { lost: LostDecision[] } {
+  const src = (review.conflicting_sources ?? {}) as IdentityDriftSources;
+  return {
+    previous_fingerprint: asText(src.previous_fingerprint),
+    current_fingerprint: asText(src.current_fingerprint),
+    moved: asArray(src.moved) as IdentityDriftSources["moved"],
+    merged: asArray(src.merged) as IdentityDriftSources["merged"],
+    lost: asArray(src.lost_decisions) as LostDecision[],
+  };
+}
+
+/** "CM 판단 3건(확정 2 · 반려 1) · 문서 2건" */
+function groupCounts(g: LostDecisionGroup): string {
+  return `CM 판단 ${g.items.length}건(확정 ${g.confirmed} · 반려 ${g.rejected}) · 문서 ${g.documents}건`;
+}
+
+/**
+ * 해소 확인 다이얼로그 본문(`document_identity_drift`).
+ *
+ * **경위를 반영해야 하는 이유**: 옛 문구는 경위와 무관하게 "고아 문서에 남은 CM 확정·반려"라고 적고
+ * "새 doc_id 쪽에서 다시 확인해 판단을 다시 내리"라고 지시했다. 병합 경로(`merge_overwritten`/
+ * `merge_absorbed`)에서는 두 문장 모두 **거짓**이다 — 문서는 고아가 아니거나 아예 사라졌고, 다시 확정할
+ * 새 doc_id 자체가 없다. 서버 검토요청 제목은 이미 경위별로 갈려 쓰이므로(`document_mapper.
+ * _identity_drift_review_title`) 여기서 제목을 되풀이하지는 않되, **없는 행동을 시키지는 않는다.**
+ *
+ * 어느 경위에서도 참인 것(확인 전용 / 매핑 불변 / 복구 없음 / config 되돌리기)은 그대로 둔다.
+ */
+function identityDriftDecisionMessage(review: ReviewRequest): string {
+  const groups = groupLostDecisionsByCause(driftSources(review).lost);
+  const head =
+    "이 종류(문서 식별 드리프트)는 확인 전용입니다 — 승인·반려 어느 쪽을 눌러도 이 검토요청의 상태만 기록됩니다. " +
+    "오염된 CM 확정·반려는 복구되지 않으며, 문서 ↔ Activity 매핑은 한 행도 바뀌지 않습니다.";
+  // 경위마다 "지금 그 판단이 무엇을 가리키고 있는가"가 다르므로 절을 따로 세운다. 합치는 순간 하나는
+  // 반드시 거짓이 된다(서버 제목이 같은 이유로 절을 나눈다).
+  const clauses = groups.map(
+    (g) => `${IDENTITY_DRIFT_CAUSE_LABELS[g.cause]}(${g.items.length}건): ${IDENTITY_DRIFT_CAUSE_NOTES[g.cause]}`,
+  );
+  const tail =
+    "식별 규칙 config(sender_aliases·sheet_doc_types·column_aliases)를 되돌린 뒤 대장을 다시 올리십시오.";
+  return [head, ...clauses, tail].join(" ");
+}
+
+/**
  * 식별 드리프트 검토요청(ADR 0009 §5-2·§5-3)의 근거 카드.
  *
- * **이 카드가 존재하는 이유**: 요청 title 은 건수만 말한다("CM 판단 2건이 고아 문서에 남았습니다").
- * 어느 Activity 의 어느 문서가 끊어졌는지는 `conflicting_sources.lost_decisions` 에만 있고, 그것을
- * 보여주지 않으면 CM 은 "재확정하라"는 안내를 받고도 **무엇을** 재확정할지 알 수 없다.
+ * **이 카드가 존재하는 이유**: 요청 title 은 건수만 말한다. 어느 Activity 의 어느 문서가 오염됐는지는
+ * `conflicting_sources.lost_decisions` 에만 있고, 그것을 보여주지 않으면 CM 은 안내를 받고도 **무엇을**
+ * 확인할지 알 수 없다.
+ *
+ * **경위(`cause`)로 갈라 보여주는 이유**: 셋의 "그 판단이 지금 무엇을 가리키고 있는가"가 다르다. 경위 없이
+ * 한 목록으로 나열하면 CM 은 `merge_overwritten` 항목을 보고도 "고아가 됐구나, 새 doc_id 에서 다시
+ * 확정하면 되겠네"로 읽고, **문서 상세를 열기 전까지 승인 상태가 뒤집힌 것을 알 수 없다.** 그 경위가
+ * 되돌릴 수 없는 쪽이므로(ADR 0009 §3 (나)) 목록 맨 위에 세운다.
  *
  * 이 카드는 관측된 사실만 적는다. 해소가 무엇을 복구한다고 적지 않는다 — 해소에는 부수 효과가 없다
  * (`resolve_review` 에 이 kind 의 분기가 없다).
  */
 function IdentityDriftCard({ review, projectId }: { review: ReviewRequest; projectId: string }) {
-  const src = review.conflicting_sources ?? {};
-  const lost = asArray(src.lost_decisions) as LostDecision[];
-  const movedCount = asArray(src.moved).length;
-  const mergedCount = asArray(src.merged).length;
-  const previous = asText(src.previous_fingerprint);
-  const current = asText(src.current_fingerprint);
+  const src = driftSources(review);
+  const movedCount = src.moved?.length ?? 0;
+  const mergedCount = src.merged?.length ?? 0;
+  const groups = groupLostDecisionsByCause(src.lost);
   return (
     <div className="source-card" data-testid="identity-drift-card">
       <div className="source-title">식별 표면 지문</div>
       <div className="small">
-        {previous ?? "(이전 적재 지문 없음)"} → {current ?? "-"}
+        {src.previous_fingerprint ?? "(이전 적재 지문 없음)"} → {src.current_fingerprint ?? "-"}
       </div>
       <div className="small">
         doc_id 이동 {movedCount}건{mergedCount > 0 ? ` · 서로 다른 행이 한 doc_id 로 병합 ${mergedCount}건` : ""}
       </div>
-      <div className="source-title">끊어진 CM 판단 — 이 요청을 해소해도 복구되지 않습니다</div>
-      {lost.length === 0 ? (
+      <div className="source-title">오염된 CM 판단 — 경위별. 이 요청을 해소해도 복구되지 않습니다</div>
+      {groups.length === 0 ? (
         <div className="muted small">없음</div>
       ) : (
-        <ul className="list small" data-testid="lost-decisions">
-          {lost.map((d) => (
-            <li key={`${d.activity_id ?? ""}|${d.doc_id ?? ""}`}>
-              Activity {d.activity_id ?? "-"} ·{" "}
-              {d.doc_id ? (
-                <Link to={`/projects/${projectId}/documents/${encodeURIComponent(d.doc_id)}`}>{d.doc_id}</Link>
-              ) : (
-                <span className="muted">알 수 없음</span>
-              )}
-              {" · "}
-              <strong>{LOST_DECISION_LABELS[d.decision ?? ""] ?? d.decision ?? "-"}</strong>
-            </li>
-          ))}
-        </ul>
+        groups.map((g) => (
+          <div
+            key={g.rawCause ?? "(none)"}
+            /* 되돌릴 수 없는 경위(ADR 0009 §3 (나) — 미승인 도면 위에서 착수 가능이 뜨는 유일한 경로)를
+               강조한다. **순서가 아니라 경위 자체로** 고른다 — 자리로 고르면 다른 경위만 있는 적재에서
+               맨 위 칸이 위험한 것처럼 보인다. 배치 순서는 groupLostDecisionsByCause 가 위험 순으로 세운다. */
+            className={g.cause === "merge_overwritten" ? "notice strong" : "notice"}
+            data-testid="drift-cause-group"
+            data-cause={g.cause}
+          >
+            <div>
+              <strong>{IDENTITY_DRIFT_CAUSE_LABELS[g.cause]}</strong>
+              {g.cause === "merge_overwritten" && <span className="badge status-rejected small"> 가장 먼저 확인 </span>}
+              {g.cause === "unspecified" && g.rawCause && <span className="muted small"> (cause={g.rawCause})</span>}
+            </div>
+            <div className="small">{IDENTITY_DRIFT_CAUSE_NOTES[g.cause]}</div>
+            <div className="small">{groupCounts(g)}</div>
+            <ul className="list small" data-testid="lost-decisions">
+              {g.items.map((d) => (
+                <li key={`${d.activity_id ?? ""}|${d.doc_id ?? ""}`} data-testid="lost-decision-row">
+                  Activity {d.activity_id ?? "-"} ·{" "}
+                  {d.doc_id ? (
+                    <Link to={`/projects/${projectId}/documents/${encodeURIComponent(d.doc_id)}`}>{d.doc_id}</Link>
+                  ) : (
+                    <span className="muted">알 수 없음</span>
+                  )}
+                  {" · "}
+                  <strong>{LOST_DECISION_LABELS[d.decision ?? ""] ?? d.decision ?? "-"}</strong>
+                  {/* 항목 하나만 떼어 읽어도 경위를 알 수 있어야 한다 — 묶음 제목에만 두면 목록이 길어졌을 때
+                      아래쪽 항목이 어느 경위인지 흐려진다. */}
+                  {" · "}
+                  <span className="badge neutral small">{IDENTITY_DRIFT_CAUSE_LABELS[g.cause]}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))
       )}
+      {/* 경위마다 다른 안내는 위 묶음이 이미 했다. 여기에는 **어느 경위에서도 참인 것**만 남긴다 —
+          옛 문구("위 문서는 고아가 됐고 … 새 doc_id 쪽 후보에 같은 판단을 다시 내리거나")는 병합 경로에서
+          거짓이었다: 병합된 문서는 고아가 아니고, 다시 확정할 새 doc_id 자체가 없다. */}
       <div className="muted small">
-        위 문서는 고아가 됐고 시스템은 사람의 확정·반려를 되살리지 않습니다. 새 doc_id 쪽 후보에 같은 판단을 다시
-        내리거나, 식별 규칙 config 를 되돌린 뒤 대장을 다시 올려야 합니다.
+        시스템은 사람의 확정·반려를 되살리지 않습니다. 식별 규칙 config(sender_aliases·sheet_doc_types·
+        column_aliases)를 되돌린 뒤 대장을 다시 올리는 것은 언제나 가능합니다.
       </div>
     </div>
   );

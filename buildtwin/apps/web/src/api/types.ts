@@ -317,8 +317,9 @@ export interface ScanVerdict {
  * `document_mapping`(ADR 0007 §4 규칙 6): 미확정 문서↔Activity 매핑의 CM 검토요청. 해소는 services/progress 소유.
  *
  * `document_identity_drift`(ADR 0009 §5-2·§5-3): 대장 원문은 그대로인데 우리 쪽 식별 규칙
- * (`sender_aliases`·`sheet_doc_types`·`column_aliases`)이 바뀌어 `doc_id` 가 이동했고, 그 결과 CM 이 이미
- * 확정·반려한 매핑이 고아 문서를 가리키게 된 사건을 알리는 **확인(acknowledgement) 전용** 요청이다.
+ * (`sender_aliases`·`sheet_doc_types`·`column_aliases`)이 바뀌어 CM 이 이미 확정·반려한 매핑이 오염된
+ * 사건을 알리는 **확인(acknowledgement) 전용** 요청이다. 오염되는 **경위는 셋**이고(`LostDecision.cause`)
+ * 그중 하나만 "고아 문서를 가리키게 된 것"이다 — 나머지 둘(병합)은 고아가 아니다.
  * 해소에 부수 효과가 **없다** — `services/api/usecases.resolve_review` 에 이 kind 의 분기가 없고(계획 0003
  * §4 규칙 5가 추가를 금지한다) 공통 폴백이 검토요청 status/note/resolved_by 만 기록한다. 화면은 이 kind 에
  * "해소하면 복구된다"는 취지의 문구를 붙여서는 안 된다.
@@ -347,7 +348,8 @@ export interface ReviewRequest {
   /**
    * 서버는 `dict[str, Any]` 를 준다. 3중 검증(verification) 요청만 축별 `ConflictingSource` 를 담고,
    * 다른 kind 는 전혀 다른 모양을 담는다 — `document_mapping` 은 `{"doc_id": "..."}` 문자열,
-   * `document_identity_drift` 는 지문 문자열과 `moved`/`merged`/`lost_decisions` 배열이다(ADR 0009 §5-2).
+   * `document_identity_drift` 는 지문 문자열과 `moved`/`merged`/`lost_decisions` 배열이다
+   * (ADR 0009 §5-2 — `IdentityDriftSources` 참고).
    * 그래서 인덱스 시그니처는 `unknown` 이다. 이름 붙은 세 축은 그대로 타입이 있으므로 `AXES` 로 읽는
    * 자리(SourceCard)는 영향을 받지 않는다.
    */
@@ -365,6 +367,48 @@ export interface ReviewRequest {
   resolved_by?: string | null;
   resolved_at?: string | null;
   created_at: string;
+}
+
+/**
+ * 사람의 판단(확정·반려)이 식별 드리프트로 **오염된 경위**.
+ * 정본은 `services/ingest/persistence.py` 의 `_CAUSE_*` 상수이고, 소비자인
+ * `services/progress/document_mapper._identity_drift_review_title` 이 CM 에게 보일 문구를 이 값으로 가른다.
+ *
+ * 셋을 하나로 뭉뚱그린 문구는 그 자체가 거짓이다 — 셋의 "그 판단이 지금 무엇을 가리키고 있는가"가 다르다:
+ * - `orphaned` — 판단이 가리키던 행이 고아가 됐다. 같은 문서가 **새 doc_id** 로 다시 들어와 있으므로
+ *   사람이 그쪽에서 다시 판단할 수 있다.
+ * - `merge_overwritten` — 행도 `reviewed_by` 도 그대로인데 그 문서의 **내용(승인 상태)** 이 다른 대장 행의
+ *   것으로 바뀌었다. 고아가 **아니고**, 다시 확정할 새 doc_id 도 **없다**. ADR 0009 §3 이 스스로 최악이라
+ *   적은 경로다 — 미승인 도면 위에서 착수 가능이 뜬다.
+ * - `merge_absorbed` — 판단이 가리키던 문서가 다른 doc_id 에 흡수돼 사라졌다. 새 doc_id 가 없다.
+ */
+export type IdentityDriftCause = "orphaned" | "merge_overwritten" | "merge_absorbed";
+
+/**
+ * `conflicting_sources.lost_decisions[]` 한 항목(`services/ingest/persistence._lost_decisions`).
+ *
+ * `cause` 를 `IdentityDriftCause` 로 좁히지 **않는다**: 서버가 새 경위를 추가하면 그 값이 그대로 실려 오는데,
+ * 타입이 셋만 허용하면 화면은 "알 수 없는 값"이라는 갈래 자체를 잃고 아는 척하게 된다. `Blocker.kind` 와
+ * 같은 처리다(`domain/identityDrift.classifyIdentityDriftCause` 가 모르는 값을 명시적으로 받아낸다).
+ */
+export interface LostDecision {
+  activity_id?: string | null;
+  doc_id?: string | null;
+  /** `"confirmed"` | `"rejected"` (`services/ingest/persistence._DECISION_*`). */
+  decision?: string | null;
+  /** `IdentityDriftCause` 중 하나. 구버전 응답·새 경위에는 그 밖의 값이거나 없을 수 있다. */
+  cause?: string | null;
+}
+
+/** `document_identity_drift` 요청의 `conflicting_sources`(ADR 0009 §5-2). 3축(신고/스캔/논리)은 없다. */
+export interface IdentityDriftSources {
+  previous_fingerprint?: string | null;
+  current_fingerprint?: string | null;
+  /** 고아 ↔ 신규 짝짓기 결과. `{previous_doc_id, new_doc_id, title}` */
+  moved?: { previous_doc_id?: string; new_doc_id?: string; title?: string }[];
+  /** 한 doc_id 로 수렴한 서로 다른 대장 행. `{doc_id, titles}` */
+  merged?: { doc_id?: string; titles?: string[] }[];
+  lost_decisions?: LostDecision[];
 }
 
 export type ReviewDecision = "approved" | "rejected" | "on_hold";
