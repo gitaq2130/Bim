@@ -34,6 +34,7 @@
 from __future__ import annotations
 
 import copy
+import re
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -1377,6 +1378,12 @@ def test_v7_mixed_causes_title_writes_each_cause_side_by_side(client, auth, user
     assert "뒤집혔습니다" in title and "발신" in title, title          # row_replaced 절
     assert "다른 문서" in title and "다시 판단" in title, title        # row_absorbed 절
     assert "또한" in title, title                                    # 두 절이 합쳐지지 않고 나란히 적힌다
+    # **순서도 계약이다**(`_CAUSE_ORDER` — "문구에 세우는 순서 = 위험한 순서"). `row_replaced` 가 맨
+    # 앞인 이유는 ADR 0009 §3 이 스스로 최악이라 적은 경로("미승인 도면 위에서 착수 가능")가 이것뿐이기
+    # 때문이고, CM 이 큐 목록에서 먼저 읽는 것은 제목이다. 순서를 안 보면 `_CAUSE_ORDER` 를 뒤집는
+    # 뮤테이션이 이 테스트를 그대로 통과한다(실측 — 같은 뮤테이션에 웹은 vitest 2건이 죽는데 서버는
+    # 726건 전부 초록이었다). 세 경위를 모두 세우는 판은 tests/unit/progress 쪽에 있다.
+    assert title.index("뒤집혔습니다") < title.index("다른 문서"), title
     assert "다시 확정" not in title, title            # 반려된 판단을 확정하라고 시키지 않는다
 
 
@@ -1497,6 +1504,52 @@ def _assert_the_flip_is_not_what_fired(client, auth, fixture: dict[str, Any]) ->
     assert [b["kind"] for b in _drawing_blockers(after)] == ["document_unapproved"]
 
 
+#: 제목이 **실제로 나열한** 달라진 필드 라벨(`_ROW_IDENTITY_FIELD_LABELS` 의 값들이 `·` 로 이어진다).
+#: 문장을 통째로 베끼지 않고 **값만 되읽는다**(CLAUDE.md §6-4 규칙 3). `in` 검사로는 두 축을 가를 수
+#: 없다: `번호`(seq_raw)가 `문서번호`(doc_number)의 **부분 문자열**이라 `"번호" in title` 은 문서번호
+#: 축에서도 참이고, 그러면 "문서번호만 볼 줄 아는" 구현이 번호 축 테스트를 그대로 통과한다.
+_CHANGED_FIELDS_IN_TITLE = re.compile(r"\(([^()]*?)(?:이|가) 달라졌습니다\)")
+
+
+def _changed_field_labels_in_title(title: str) -> list[str]:
+    match = _CHANGED_FIELDS_IN_TITLE.search(title)
+    return match.group(1).split("·") if match else []
+
+
+def _assert_title_says_nothing_untrue_here(title: str, *, labels: list[str]) -> None:
+    """대장측 표기 정정(P6·P7·P8b·FP1) 시나리오에서 **참일 수 없는 말이 없다**를 건다.
+
+    이 시나리오들의 공통 사실: 이동도 병합도 흡수도 없고(`moved=merged=0`, 사라진 `doc_id` 0건),
+    승인 상태는 뒤집히지 않았으며(`approval_flipped=False`), 다시 판단할 새 `doc_id` 도 없다.
+    그러므로 "고아"·"병합"·"이동"·"다시 확정"·"뒤집혔습니다"는 전부 이 자리에서 거짓이다.
+
+    `labels` 는 그 적재에서 **실제로 달라진** 필드의 CM 라벨이고, 제목이 나열한 것과 **정확히 같아야**
+    한다 — 바뀌지 않은 필드를 끌어들이면 CM 이 대장에서 일어난 적 없는 변경을 찾는다.
+
+    ── 미결: 이 자리에 아직 채우지 못한 단언 하나 (architect major 3 와 조율 중) ──────────────
+    `services/progress/document_mapper.py` 의 `row_replaced` 절은 **무조건**
+    "…화면의 승인 상태는 CM 이 보고 판단한 그 대장 행의 것이 아닙니다"를 붙인다. 그런데 이 시나리오
+    (대장이 **같은 행의** 표기를 스스로 고침, `approval_flipped=False`, `drawing_approval` 0.0→0.0,
+    `is_orphaned=False`)에서 그 문장은 **거짓**이다 — 화면의 승인 상태는 CM 이 판단한 바로 그 행의
+    것이다. 그 문장을 어떤 조건에서만 붙일지는 architect 가 결정 중이므로 **문면을 지금 계약으로
+    고정하지 않는다**(문면을 베끼면 거짓 문구가 계약이 된다 — CLAUDE.md §6-4 규칙 3. 이 저장소는 존재한
+    적 없는 되돌리기 엔드포인트를 약속한 다이얼로그 문구를 웹 테스트 169건으로 계약화한 적이 있다).
+
+    결정이 오면 **이 자리에** 한 줄을 넣는다:
+
+        assert <그 문장의 조건부 표지> not in title, title      # approval_flipped=False 인 적재
+
+    그리고 그 조건이 참인 짝(V7a 사명 변경 주 — `approval_flipped=True`)에 같은 표지가 **있다**를 함께
+    건다(§6-2 규칙 3 — 대조군을 한 축에만 몰지 않는다). 그때까지 이 함수가 거는 것은 문면과 무관하게
+    참인 것들뿐이다.
+    """
+    for forbidden in ("고아", "병합", "이동", "다시 확정"):
+        assert forbidden not in title, title
+    assert "뒤집혔습니다" not in title, title      # approval_flipped=False — 뒤집힌 적이 없다
+    assert _changed_field_labels_in_title(title) == labels, title
+    assert "복구되지 않습니다" in title, title
+
+
 def test_v8a_register_side_sender_correction_fires_without_any_absorption(
     client, auth, user_ids, tmp_path,
 ) -> None:
@@ -1516,13 +1569,7 @@ def test_v8a_register_side_sender_correction_fires_without_any_absorption(
     _assert_the_flip_is_not_what_fired(client, auth, fixture)
 
     # 문구 — 아는 것만 말한다(문장을 베끼지 않고 "그 상황에서 참일 수 없는 말이 없다"를 건다).
-    title = review["title"]
-    for forbidden in ("고아", "병합", "이동", "다시 확정"):
-        assert forbidden not in title, title
-    assert "뒤집혔습니다" not in title, title      # approval_flipped=False — 뒤집힌 적이 없다
-    assert "발신" in title, title                  # 관측한 changed_fields 는 값 그대로 적는다
-    assert "문서번호" not in title, title           # 바뀌지 않은 필드를 끌어들이지 않는다
-    assert "복구되지 않습니다" in title, title
+    _assert_title_says_nothing_untrue_here(review["title"], labels=["발신"])
 
 
 def test_v8b_register_side_doc_number_correction_fires_without_any_absorption(
@@ -1540,13 +1587,7 @@ def test_v8b_register_side_doc_number_correction_fires_without_any_absorption(
     review = _assert_lone_row_replaced_review(client, auth, fixture, ["doc_number"])
     _assert_the_flip_is_not_what_fired(client, auth, fixture)
 
-    title = review["title"]
-    for forbidden in ("고아", "병합", "이동", "다시 확정"):
-        assert forbidden not in title, title
-    assert "뒤집혔습니다" not in title, title
-    assert "문서번호" in title, title
-    assert "발신" not in title, title
-    assert "복구되지 않습니다" in title, title
+    _assert_title_says_nothing_untrue_here(review["title"], labels=["문서번호"])
 
 
 # ── V8c — ADR 0009 **이전에 저장된 행**(지문 NULL)이 화면에 닿는 경로(§5-3-a) ──────
@@ -1657,3 +1698,152 @@ def test_v8d_an_already_orphaned_row_is_not_reported_as_absorbed_again(
     assert third["result"]["identity_drift_lost_decisions"] == 0
     assert third["result"]["identity_drift_review_id"] is None
     assert _drift_reviews(client, auth, project_id) == opened          # 큐가 자라지도, 갱신되지도 않는다
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# V9 — 재심 2차에서 **살아남은 뮤테이션 5건**을 죽인다 (CLAUDE.md §6-2)
+#
+# V8 이 의도한 넷(M3·M6·M7·M8)은 실제로 죽었다. 그런데 리뷰어가 새로 만든 12건 중 다섯이 다시
+# 살아남았고, 다섯 다 **문서가 "결정"이라고 적어 둔 방어인데 그물에 걸리지 않는 자리**였다.
+#
+#  · N1  `_ROW_IDENTITY_FIELDS` 에서 `seq_raw` 제거          → V9a (FP1: 번호 표기 26-080 → 제26-080호)
+#  · N2  `_ROW_IDENTITY_FIELDS` 에서 `title` 제거의 (나-i) 축 → V9b (P8b: " - " → "  -  ")
+#        (`title` 제거는 V4 가 (다) **흡수** 경로로만 잡았다 — (나-i) title 축은 비어 있었다)
+#  · N10 `_absorbed_doc_ids` 의 `claimed` 가드 제거           → V9c
+#        (V8d 가 같은 ADR 문장의 `was_orphaned` 절반만 잡았고 `claimed` 절반은 비어 있었다)
+#  · N4/N4b `if not any(d["new_doc_id"] …)` 를 항상/절대로    → 단위 회귀(tests/unit/progress/…)
+#  · N5  `_CAUSE_ORDER` 역순                                  → 단위 회귀 + 아래 V7 혼합 테스트 보강
+#
+# V9a·V9b 가 값싸게 닫히는 이유: 둘 다 **이미 있는 `_register_side_correction` 헬퍼에 한 줄**이다.
+# `doc_id` 는 한 글자도 움직이지 않고(`_seq_normalized("26-080") == _seq_normalized("제26-080호")`,
+# `identity_title` 이 두 제목을 같은 문자열로 접는다) **행-정체의 원문만** 달라진다 — ADR 0009 §5-2 (바)
+# 의 "긴장" 문단이 정확히 그 위에 서 있는 사실이다.
+# ═══════════════════════════════════════════════════════════════════════════
+def test_v9a_register_side_seq_notation_change_fires_on_the_seq_raw_axis(
+    client, auth, user_ids, tmp_path,
+) -> None:
+    """FP1 — 대장이 `번호` **표기**를 바꿨다(`26080` → `제26-080호`). 숫자는 그대로다.
+
+    **뮤테이션 N1 을 죽이는 테스트다.** `_ROW_IDENTITY_FIELDS` 에서 `seq_raw` 를 빼면 이 적재는
+    `changed_fields=[]` → (나-i) 불성립 → `identity_drift=None` → 검토요청 0건으로 **완전히 침묵한다.**
+
+    ADR 0009 §5-2 (바)의 "긴장" 문단 전체가 이 필드 위에 서 있다: `seq_normalized` 는 원문이 불안정해서
+    숫자만 남기는데(ADR 0007 §2-3), 행-정체는 정확히 그 **원문**을 담는다 — `doc_id` 재료 넷은 같은
+    `doc_id` 안에서 정의상 언제나 같아 아무것도 구별하지 못하기 때문이다. 그래서 `doc_id` 를 한 칸도
+    움직이지 않는 표기 변경이 행-정체를 움직인다. ADR 은 이것을 **결함이 아니라 두 층이 서로 다른
+    질문에 답하는 결과**로 판정하고 좁히는 쪽(= `seq_raw` 를 빼는 것)을 **명시적으로 기각했다**:
+    그러면 숫자가 같고 표기만 다른 두 행이 서로를 덮어써도 침묵한다. 그 결정이 여기서 계약이 된다.
+    """
+    fixture = _register_side_correction(client, auth, user_ids, tmp_path, "V9a 대장측 번호 표기 정정",
+                                        corrected={"seq": "제26-080호"})
+    review = _assert_lone_row_replaced_review(client, auth, fixture, ["seq_raw"])
+    _assert_the_flip_is_not_what_fired(client, auth, fixture)
+
+    # `doc_id` 재료는 한 글자도 움직이지 않았다 — 그것이 이 시나리오의 전제다(움직였다면 rename 경로다).
+    detail = _document_detail(client, auth, fixture["project_id"], fixture["doc_id"])["document"]
+    assert detail["seq_normalized"] == "26080", detail
+    assert detail["seq_raw"] == "제26-080호", detail
+
+    # 라벨은 `번호`다. `문서번호`(doc_number 축)와 **정확히** 갈려야 한다 — 부분 문자열이라 `in` 으로는
+    # 못 가른다(V8b 와 이 테스트가 서로의 대조군이다, §6-2 규칙 3).
+    _assert_title_says_nothing_untrue_here(review["title"], labels=["번호"])
+
+
+def test_v9b_register_side_title_whitespace_edit_fires_on_the_title_axis(
+    client, auth, user_ids, tmp_path,
+) -> None:
+    """P8b — 대장이 제목의 **공백만** 고쳤다(`" - "` → `"  -  "`). `identity_title` 이 둘을 같은
+    문자열로 접으므로 `doc_id` 는 그대로이고, 행-정체의 `title` **원문**만 달라진다.
+
+    **뮤테이션 N2 의 (나-i) 축을 죽이는 테스트다.** `_ROW_IDENTITY_FIELDS` 에서 `title` 을 빼면 기존
+    회귀 1건(`test_v4_n2_real_retitle…`)이 죽기는 하지만 그것은 **(다) 흡수 경로로** 죽는 것이라,
+    (나-i)에서 `title` 이 담고 있는 방어 — "이 `doc_id` 가 담은 대장 행의 제목 원문이 달라졌다" — 는
+    어떤 테스트에도 걸리지 않았다. 여기서는 흡수가 성립할 수 없다(사라진 `doc_id` 0건)므로 `title` 을
+    빼면 이 적재가 **통째로 침묵한다.**
+
+    ADR 0009 §5-2 (바)는 P8b 를 P6·P7 과 **같은 판단**으로 오탐인 채 남겼다(구별할 관측값이 없고,
+    좁히는 한정어를 넣으면 승인 상태가 우연히 같은 변종이 표 밖으로 나간다). 그 결정을 고정한다.
+    """
+    spaced_title = _MERGE_TITLE.replace(" - ", "  -  ")
+    assert spaced_title != _MERGE_TITLE
+    fixture = _register_side_correction(client, auth, user_ids, tmp_path, "V9b 대장측 제목 공백 정정",
+                                        corrected={"title": spaced_title})
+    review = _assert_lone_row_replaced_review(client, auth, fixture, ["title"])
+    _assert_the_flip_is_not_what_fired(client, auth, fixture)
+
+    # `identity_title` 은 두 제목을 같은 문자열로 접는다 — 그래서 rename 경로(고아 ↔ 신규)로 가지 않는다.
+    detail = _document_detail(client, auth, fixture["project_id"], fixture["doc_id"])["document"]
+    assert detail["title"] == spaced_title, detail
+    assert not _has_warning(fixture["job"], "document_possibly_renamed"), _warning_messages(fixture["job"])
+
+    _assert_title_says_nothing_untrue_here(review["title"], labels=["제목"])
+
+
+# ── V9c — (가)가 이미 짝지은 행은 (다)가 다시 가져가지 않는다(`claimed` 가드) ──────
+def test_v9c_a_row_already_paired_as_moved_is_not_also_taken_by_absorption(
+    client, auth, user_ids, tmp_path,
+) -> None:
+    """한 행은 **한 경위에만** 속한다(ADR 0009 §5-2 (다): "기존 가드 둘은 유지한다 — (가)가 이미 짝지은
+    행(`claimed`) 제외, 이미 고아였던 행 제외").
+
+    **뮤테이션 N10 을 죽이는 테스트다.** V8d 가 그 문장의 `was_orphaned` 절반만 잡았고 `claimed` 절반은
+    비어 있었다. `claimed` 를 빼면 `details` 자체는 `setdefault` 가 지켜 주지만(우선순위 (가)→(나)→(다)),
+    `_absorbed_doc_ids` 의 결과는 **`_replaced_doc_ids` 의 `absorbers` 로도 흘러든다.** 그래서 이동으로
+    이미 설명된 행이 살아 있는 다른 `doc_id` 를 "흡수자"로 지목하고, 그 `doc_id` 가 대장의 **정상적인
+    처리결과 갱신**을 했을 뿐인데 (나-ii)로 함께 발화한다 — CM 큐에 아무 일도 없었던 문서가 "담고 있던
+    대장 행이 바뀌었습니다"로 올라간다(ADR 0009 §5-2 (나-ii)가 P4 오탐을 없애며 세운 경계가 무너진다).
+
+    재현(문서번호 열이 없는 대장, V8d 와 같은 모양):
+      1주차 — TFA 에 행 A, TFR 에 행 B. **행-정체 네 필드가 모두 같고** 시트(doc_type)만 다르다.
+              CM 이 둘 다 A300 매핑으로 확정한다.
+      2주차 — TFA 의 A 가 빠지고 그 자리에 제목이 같은 **다른 발신**의 새 행 C 가 온다(→ (가) 이동
+              A→C 가 성립하고 A 가 `claimed` 된다). TFR 의 B 는 그대로 있고 **처리결과만** 갱신된다
+              (반려→승인 — 행-정체는 그대로, 행-내용만 달라진다).
+
+    §6-2 규칙 1·4 — 양성(이동 1건이 실제로 발화한다)과 음성(B 는 그 목록에 없다)을 **함께** 단언한다.
+    이동 발화를 빼면 "탐지가 통째로 죽어도 초록"이고, B 의 부재를 빼면 가드가 사라져도 초록이다.
+    """
+    project_id = _new_project(client, auth, user_ids, "V9c 이동으로 이미 짝지은 행")
+    upload(client, auth("contractor"), project_id, SCHEDULE)
+    twin = {"sender": "동부", "discipline": "기계", "seq": _MERGE_SEQ, "title": _MERGE_TITLE}
+    week1 = _register_with_rows(tmp_path / "v9c_week1.xlsx",
+                                tfa_rows=[{**twin, "result": "반려"}],
+                                tfr_rows=[{**twin, "result": "반려"}], drop_doc_number=True)
+    #: 2주차 — TFA 의 쌍둥이가 **다른 발신**의 행으로 교체된다(제목 원문은 같다 → (가) 이동 후보).
+    #: 같은 적재에서 TFR 쪽은 살아 있고 처리결과만 갱신된다(대장의 정상 주간 갱신).
+    week2 = _register_with_rows(tmp_path / "v9c_week2.xlsx",
+                                tfa_rows=[{**twin, "sender": "한빛이앤씨", "result": "반려"}],
+                                tfr_rows=[{**twin, "result": "승인"}], drop_doc_number=True)
+
+    _, first = upload(client, auth("cm"), project_id, week1)
+    assert first["result"]["identity_drift"] is None
+    duct = {d["doc_type"]: d["doc_id"] for d in _documents(client, auth, project_id)
+            if d["title"] == _MERGE_TITLE}
+    assert set(duct) == {"TFA", "TFR"}, duct
+    for doc_type in ("TFA", "TFR"):
+        _resolve_mapping_review_for_doc(client, auth, project_id, ACTIVITY_MERGE, duct[doc_type],
+                                        "approved", f"{doc_type} 쪽 도면을 이 작업의 근거로 삼는다")
+
+    _, job = upload(client, auth("cm"), project_id, week2)
+    result = job["result"]
+    moved_to = [d["doc_id"] for d in _documents(client, auth, project_id)
+                if d["title"] == _MERGE_TITLE and d["doc_type"] == "TFA" and d["doc_id"] != duct["TFA"]]
+    assert len(moved_to) == 1, moved_to
+
+    # 양성 — 이동은 실제로 일어났고, 그 판단이 `row_moved` 로 보고된다.
+    assert result["identity_drift_moved"] == 1, result
+    assert result["identity_drift"]["moved"] == [
+        {"previous_doc_id": duct["TFA"], "new_doc_id": moved_to[0], "title": _MERGE_TITLE}]
+
+    # 음성 — TFR 쪽(B)은 행-정체가 그대로다. `claimed` 가드가 없으면 A 가 B 를 흡수자로 지목하고
+    # B 의 정상 처리결과 갱신이 (나-ii)로 함께 실린다(cause=row_replaced, changed_fields=[]).
+    assert result["identity_drift"]["lost_decisions"] == [
+        {"activity_id": ACTIVITY_MERGE, "doc_id": duct["TFA"], "decision": "confirmed",
+         "cause": "row_moved", "new_doc_id": moved_to[0], "changed_fields": [], "approval_flipped": False}]
+    assert result["identity_drift_lost_decisions"] == 1
+
+    # 그리고 그 사실이 CM 이 읽는 한 줄에도 그대로 있어야 한다 — 흡수·행 교체를 말하지 않는다.
+    title = _drift_reviews(client, auth, project_id)[0]["title"]
+    assert "옮겼습니다" in title and "이동 1건" in title, title
+    assert "다른 문서" not in title, title            # row_absorbed 절이 붙지 않았다
+    assert _changed_field_labels_in_title(title) == [], title
