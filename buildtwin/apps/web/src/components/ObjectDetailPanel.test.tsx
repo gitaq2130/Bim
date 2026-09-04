@@ -271,3 +271,134 @@ describe("확정 다이얼로그 문구 ↔ 되돌리기의 사유 요건 (ADR 0
       .not.toEqual({ 확정문구가_사유요건을_말한다: true, 되돌리기가_사유를_강제한다: false });
   });
 });
+
+/**
+ * 계획 0004 작업 3 / ADR 0011 규칙 2 — 되돌리기 다이얼로그의 사유 요건은 **`kind`** 로 갈린다.
+ *
+ * 왜 이 표 모양인가(§6-2 1: "이 단언의 기대값을, 결함 있는 코드가 그대로 만족하는가?"). CONFIRMED
+ * 이탈 두 개만 단언하면 **`to_state` 기준으로 가른 구현도 그대로 통과한다** — 그 둘의 목적지는
+ * `MISMATCH`·`IN_PROGRESS` 이고 `to_state` 기준도 그 둘을 잡기 때문이다. 갈리게 하려면 **같은 목적지를
+ * 가진 다른 `kind`** 가 표 안에 있어야 한다. 아래 5행은 서버가 CM 에게 실제로 주는 전이 행동 전수이며
+ * (`allowed_targets` × `services/progress/state_machine.py::_action_kind`, 2026-09-04 실행), 그중
+ * 목적지가 `MISMATCH`/`IN_PROGRESS` 인 것이 5개, 사유가 실제로 필요한 것은 2개다:
+ *
+ *   revoke_confirmation  CONFIRMED            -> MISMATCH      서버: note 없으면 거부
+ *   order_rework         CONFIRMED            -> IN_PROGRESS   서버: note 없으면 거부
+ *   reject_inspection    INSPECTION_REQUESTED -> IN_PROGRESS   서버: note 없어도 통과
+ *   flag_mismatch        INSPECTION_REQUESTED -> MISMATCH      서버: note 없어도 통과
+ *   accept_rework        MISMATCH             -> IN_PROGRESS   서버: note 없어도 통과
+ *
+ * 즉 아래 표는 화면의 게이트를 **서버 불변식과 나란히** 고정한다. `to_state` 로 가른 구현은 뒤 3행이
+ * `true` 로 뒤집혀 죽고, `requireNote` 를 아예 빼면 앞 2행이 `false` 로 뒤집혀 죽는다.
+ */
+const CM_ACTION_MATRIX = [
+  { pid: "pConfirmed", state: "CONFIRMED", kind: "revoke_confirmation", label: "확정 취소", to_state: "MISMATCH", 사유필수: true },
+  { pid: "pConfirmed", state: "CONFIRMED", kind: "order_rework", label: "재시공 지시", to_state: "IN_PROGRESS", 사유필수: true },
+  { pid: "pInsp", state: "INSPECTION_REQUESTED", kind: "reject_inspection", label: "검측 반려(재작업)", to_state: "IN_PROGRESS", 사유필수: false },
+  { pid: "pInsp", state: "INSPECTION_REQUESTED", kind: "flag_mismatch", label: "불일치 판정", to_state: "MISMATCH", 사유필수: false },
+  { pid: "pMismatch", state: "MISMATCH", kind: "accept_rework", label: "재작업 인정", to_state: "IN_PROGRESS", 사유필수: false },
+] as const;
+
+describe("되돌리기 사유 요건은 to_state 가 아니라 kind 로 갈린다 (ADR 0011 규칙 2)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetStore();
+  });
+
+  /** 한 목 안에서 project_id 쿼리로 세 패널을 가른다(상세 URL 은 같다 — ADR 0005). */
+  function mountMatrix(extraPids: string[] = []) {
+    const byPid = new Map<string, (typeof CM_ACTION_MATRIX)[number][]>();
+    for (const r of CM_ACTION_MATRIX) byPid.set(r.pid, [...(byPid.get(r.pid) ?? []), r]);
+    mockFetch((url) => {
+      if (url.includes(`/api/objects/${encodeURIComponent(GID)}`)) {
+        const pid = new URL(url, "http://x").searchParams.get("project_id") ?? "";
+        const rows = byPid.get(pid) ?? [];
+        // 표에 없는 pid 는 픽스처 그대로 — 확정(CONFIRMED 진입) 다이얼로그를 여는 대조군 패널이다.
+        if (rows.length === 0) return { body: objectDetailFixture };
+        return {
+          body: {
+            ...objectDetailFixture,
+            basic: { ...objectDetailFixture.basic, state: rows[0]?.state },
+            current_state: { ...objectDetailFixture.current_state, state: rows[0]?.state, actor: "cm" },
+            next_actions: rows.map((r) => ({ kind: r.kind, label: r.label, allowed_roles: ["cm"], to_state: r.to_state })),
+          },
+        };
+      }
+      const m = /\/api\/projects\/([^/?]+)$/.exec(url);
+      if (m) return { body: { project_id: m[1], name: "P", my_role: "cm" } };
+      return undefined;
+    });
+    const panels = new Map<string, HTMLElement>();
+    for (const pid of [...byPid.keys(), ...extraPids])
+      panels.set(pid, renderWithProviders(<ObjectDetailPanel globalId={GID} projectId={pid} />).container);
+    return panels;
+  }
+
+  /** 다이얼로그를 열고 "사유가 강제되는가"를 읽는다 — 라벨의 (필수) 표기와 확인 버튼 잠김을 **함께** 본다. */
+  async function opensRequiringNote(root: HTMLElement, label: string, user: ReturnType<typeof userEvent.setup>) {
+    await within(root).findByText("C-12", { selector: "strong" });
+    await user.click(within(root).getByRole("tab", { name: "다음행동" }));
+    await user.click(await within(root).findByRole("button", { name: label }));
+    const dialog = within(root).getByRole("dialog");
+    const marked = /필수/.test(within(dialog).getByText(/사유 \/ 메모/).textContent ?? "");
+    const locked = (within(dialog).getByRole("button", { name: label }) as HTMLButtonElement).disabled;
+    expect(marked).toBe(locked); // 표기와 잠김이 어긋나면 어느 쪽도 신뢰할 수 없다
+    await user.click(within(dialog).getByRole("button", { name: "취소" }));
+    return marked && locked;
+  }
+
+  it("CM 이 받는 전이 행동 전수에서, 사유가 강제되는 것은 CONFIRMED 이탈 두 개뿐이다", async () => {
+    resetStore();
+    loginAs("cm");
+    const user = userEvent.setup();
+    const panels = mountMatrix();
+
+    const observed: Record<string, boolean> = {};
+    for (const row of CM_ACTION_MATRIX)
+      observed[`${row.kind} (${row.state}→${row.to_state})`] = await opensRequiringNote(panels.get(row.pid)!, row.label, user);
+
+    const expected: Record<string, boolean> = {};
+    for (const row of CM_ACTION_MATRIX) expected[`${row.kind} (${row.state}→${row.to_state})`] = row.사유필수;
+    expect(observed).toEqual(expected);
+  });
+
+  it("사유를 채우면 되돌리기 확인 버튼이 열린다 — 요건은 잠금이지 차단이 아니다", async () => {
+    resetStore();
+    loginAs("cm");
+    const user = userEvent.setup();
+    const root = mountMatrix().get("pConfirmed")!;
+
+    await within(root).findByText("C-12", { selector: "strong" });
+    await user.click(within(root).getByRole("tab", { name: "다음행동" }));
+    await user.click(await within(root).findByRole("button", { name: "확정 취소" }));
+    const dialog = within(root).getByRole("dialog");
+    const confirm = within(dialog).getByRole("button", { name: "확정 취소" }) as HTMLButtonElement;
+
+    expect(confirm.disabled).toBe(true);
+    await user.type(within(dialog).getByRole("textbox"), "   "); // 공백만 — 서버 `.strip()` 과 같은 판정
+    expect(confirm.disabled).toBe(true);
+    await user.type(within(dialog).getByRole("textbox"), "도면 개정으로 재시공 필요");
+    expect(confirm.disabled).toBe(false);
+  });
+
+  it("확정 다이얼로그 문구는 이제 사유 요건을 말하고, 같은 화면이 실제로 그것을 강제한다", async () => {
+    // §6-4 3: 문장을 통째로 베끼지 않는다. "그 상황에서 참일 수 없는 말이 없다"를 단언한다 —
+    // 1단계(00f87cd)에서는 이 문구가 사유 요건을 말하면 **거짓**이었고, 3단계인 지금은 말하지 않으면
+    // 화면이 실제로 하는 일을 숨기는 것이 된다. 그래서 이 자리에서는 두 값이 **함께 참**이어야 한다(§6-2 4).
+    resetStore();
+    loginAs("cm");
+    const user = userEvent.setup();
+    const panels = mountMatrix(["pPlain"]);
+
+    const confirmRoot = panels.get("pPlain")!;
+    await within(confirmRoot).findByText("C-12", { selector: "strong" });
+    await user.click(within(confirmRoot).getByRole("tab", { name: "다음행동" }));
+    await user.click(await within(confirmRoot).findByRole("button", { name: "확정" }));
+    const confirmMessage = (await within(confirmRoot).findByTestId("confirm-message")).textContent ?? "";
+
+    expect({
+      확정문구가_사유요건을_말한다: NOTE_REQUIRED_CLAIM.test(confirmMessage),
+      되돌리기가_사유를_강제한다: await opensRequiringNote(panels.get("pConfirmed")!, "확정 취소", user),
+    }).toEqual({ 확정문구가_사유요건을_말한다: true, 되돌리기가_사유를_강제한다: true });
+  });
+});

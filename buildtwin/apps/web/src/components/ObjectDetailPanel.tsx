@@ -283,6 +283,27 @@ const CM_ONLY_KINDS: ReadonlySet<NextActionKind> = new Set([
 ]);
 const isConfirmAction = (a: NextAction) => a.kind === "confirm" || a.to_state === "CONFIRMED";
 
+/**
+ * ADR 0011 규칙 2 — CONFIRMED **이탈**(확정 무효화)에는 사유가 필요하다. 서버 불변식
+ * (`packages/core/models/state.py::StateTransition._check`)이 최종 방어이고, 이 집합은 CM 이 409 를
+ * 보기 전에 화면에서 먼저 막는 층이다.
+ *
+ * **`to_state` 가 아니라 `kind` 로 가른다.** `to_state` 로 가르면 같은 목적지를 가진 **다른 전이**까지
+ * 휩쓴다 — 실측(2026-09-04, `allowed_targets` × `_action_kind` 전수)에서 CM 이 받는 전이 행동 6개 중
+ * `MISMATCH`·`IN_PROGRESS` 로 가는 것은 5개이고, 그중 사유가 실제로 필요한 것은 아래 2개뿐이다:
+ *
+ *   revoke_confirmation  CONFIRMED            -> MISMATCH      사유 필수 (서버가 거부)
+ *   order_rework         CONFIRMED            -> IN_PROGRESS   사유 필수 (서버가 거부)
+ *   reject_inspection    INSPECTION_REQUESTED -> IN_PROGRESS   사유 불필요 (검측 반려)
+ *   flag_mismatch        INSPECTION_REQUESTED -> MISMATCH      사유 불필요
+ *   accept_rework        MISMATCH             -> IN_PROGRESS   사유 불필요
+ *
+ * `_action_kind`(`services/progress/state_machine.py:311-319`)가 이 둘에만 고유 이름을 붙여 두었고,
+ * 그 값이 `next_actions[].kind` 로 화면에 온다 — 특정할 수 있으면 요건을 걸 수 있다(ADR 0011 §4).
+ */
+const REVOCATION_KINDS: ReadonlySet<NextActionKind> = new Set(["revoke_confirmation", "order_rework"]);
+const requiresRevocationReason = (a: NextAction | null) => !!a && REVOCATION_KINDS.has(a.kind);
+
 /** 화면에서 직접 누른 전이의 근거. 확정(cm)은 cm_action, 그 외 수동 입력은 user_input. userId 없으면 호출하지 않는다. */
 function evidenceFor(role: ProjectRole, userId: string, action: NextAction, note: string): Evidence {
   return {
@@ -382,16 +403,18 @@ function ActionsTab({ d, projectId }: { d: ObjectDetail; projectId?: string }) {
         title={pending?.label ?? ""}
         message={
           pending && isConfirmAction(pending)
-            ? // ADR 0011 규칙 3 1단계: 옛 문구의 "되돌리려면 사유가 필요합니다"는 거짓이었다 —
-              // 되돌리기 경로는 실재하지만(state.py 의 (CONFIRMED,MISMATCH)·(CONFIRMED,IN_PROGRESS))
-              // 사유 없이도 201 로 통과한다. 지금 참인 것만 남긴다: 이탈 actor 가 cm 으로 묶여 있다는 것
-              // (state.py `leaving CONFIRMED requires actor=cm`). 사유 요건이 실제로 서면 3단계에서 갱신한다.
-              "이 객체를 '확정(CONFIRMED)' 상태로 전이합니다. CM 승인 행위로 기록되며, 이 확정은 CM 만 되돌릴 수 있습니다."
+            ? // ADR 0011 규칙 3 **3단계**: 같은 줄을 두 번 고치는 그 두 번째다. 1단계(00f87cd)는 거짓인
+              // 사유 요건을 지우고 그때 참이던 것(이탈 actor 가 cm)만 남겼다. 이제 요건이 실제로 섰으므로
+              // (a16f434 의 모델 불변식 + 아래 REVOCATION_KINDS 의 화면 강제) 새 사실로 갱신한다.
+              // 두 절 모두 지금 참이다 — 실측: CONFIRMED 이탈 2개 전이만 note 없이 거부되고,
+              // `leaving CONFIRMED requires actor=cm` 도 그대로다(state.py:112).
+              "이 객체를 '확정(CONFIRMED)' 상태로 전이합니다. CM 승인 행위로 기록되며, 되돌리는 것도 CM 만 할 수 있고 그때는 사유를 남겨야 합니다."
             : pending?.to_state
               ? `'${STATE_LABELS_KO[pending.to_state]}' 상태로 전이를 요청합니다.`
               : undefined
         }
         confirmLabel={pending?.label ?? "확인"}
+        requireNote={requiresRevocationReason(pending)}
         busy={transition.isPending}
         onCancel={() => setPending(null)}
         onConfirm={(note) => pending && run(pending, note)}
