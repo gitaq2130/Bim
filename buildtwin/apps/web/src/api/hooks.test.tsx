@@ -13,6 +13,9 @@ import {
   useObjects,
   useReadiness,
   useResolveReview,
+  useReviewRequests,
+  useStartable,
+  useWeeklySummary,
 } from "./hooks";
 import type { BimObjectView } from "./types";
 import { objectDetailFixture } from "../test/fixtures";
@@ -440,5 +443,126 @@ describe("ADR 0010 규칙 4 — 매핑 검토 해소와 drawingMappings", () => 
     const qc = await resolveAndGetState("document_mapping", undefined);
     expect(qc.getQueryState(queryKeys.drawingMappings("D-1"))?.isInvalidated).toBe(false);
     expect(qc.getQueryState(queryKeys.drawingMappings("D-2"))?.isInvalidated).toBe(false);
+  });
+});
+
+/**
+ * 작업일보 제출의 **무효화 범위** — 계획 0004 minor 2.
+ *
+ * 앞 절의 작업일보 테스트는 "`['projects', pid]` 가 **상세**까지 덮는가" 하나만 물었다. 그 축은
+ * "내가 떠올린 뮤테이션(상세 키를 놓치는 구현)이 죽는가"였고, 못 묻는 방향은 **떠올리지 않은 뮤테이션**
+ * 이었다: 실측으로 무효화를 `objectsRoot(pid)` 로 좁히면 vitest 256건이 **전부 통과**했다. 즉 작업일보
+ * 제출 뒤 검토요청·readiness·착수가능·주간요약이 낡은 채 남는 구현이 그물에 걸리지 않았다.
+ *
+ * 그래서 이 절의 목록은 **내가 떠올린 결함**이 아니라 **곱**으로 만든다(CLAUDE.md §6-1):
+ * `POST /projects/{pid}/daily-reports` 가 서버에서 바꾸는 것 × 그 값을 읽는 화면 쿼리 키 전부.
+ *
+ * 서버 효과(services/api/usecases.py::submit_daily_report → services/progress/state_machine.py::apply_daily_report):
+ *   E1 `save_daily_report` — DailyReportRow 저장
+ *   E2 `transition_with_effects` — 객체 상태 전이(contractor: → REPORTED / IN_PROGRESS / INSPECTION_REQUESTED)
+ *   E3 `run_verification` — 3중 검증 불일치 시 verification ReviewRequest 생성
+ *   E4 전이 부수효과 — inspection ReviewRequest 생성(`created_review_ids`)
+ *
+ * | 캐시 키 | E1 | E2 | E3 | E4 | 그 값을 읽는 자리(실행·인용으로 채운 칸) |
+ * |---|---|---|---|---|---|
+ * | `objects(pid,q)`        | · | ✓ | · | · | `BimObjectView.state` — 목록이 그리는 상태 |
+ * | `objectDetail(pid,gid)` | · | ✓ | ✓ | ✓ | `object_detail()`: `current.state` + `history` + `has_open_review`/`open_review_ids` |
+ * | `reviews(pid,·,·)`      | · | · | ✓ | ✓ | `db.open_reviews` — 검토 큐 자체 |
+ * | `readiness(pid,aid)`    | · | ✓ | ✓ | ✓ | `predecessor_completion`·`inspection`(객체 상태·미결 inspection), `open_clashes`(미결 verification) |
+ * | `startable(pid)`        | · | ✓ | ✓ | ✓ | `compute_startable` → `compute_readiness`(같은 구성요소) |
+ * | `weeklySummary(pid)`    | · | ✓ | ✓ | ✓ | `weekly_summary()`: `state_distribution`·`estimated_done_count` + `open_reviews(_by_kind)` + `startable` |
+ * | `projects` / `project(pid)` | · | · | · | · | `Project` 는 id·name·my_role 뿐 — 이 뮤테이션이 바꾸는 값이 없다 |
+ * | `models`/`drawings`/`scans`/`planSection`/`scanVerdicts`/`members`/`documents*`/`drawing*`/`job` | · | · | · | · | 작업일보가 쓰지 않는 자원 |
+ *
+ * **이 곱이 놓치는 것(§6-1 ②).** ① E1 을 읽는 화면 쿼리 키가 **하나도 없다** — `GET
+ * /projects/{pid}/daily-reports` 는 서버에 있는데 `queryKeys` 에 대응 항목도 훅도 없다(확인:
+ * `grep -rn "daily" apps/web/src/api/hooks.ts` → 뮤테이션 한 곳뿐). 그래서 이 표는 "제출한 일보가 목록에
+ * 보이는가"를 **영원히 묻지 못한다**. 훅이 생기는 날 이 표에 행을 추가해야 한다. ② 곱의 오른쪽 축은
+ * `queryKeys` 팩토리 전수이므로, 팩토리를 거치지 않고 손으로 적은 배열 리터럴 키가 생기면 그 키는 축
+ * 밖이다(현재 저장소에는 `["projects", pid, ...]` 형태의 인라인 리터럴만 있고, 전부 위 접두사 아래다).
+ *
+ * §6-2 를 각 단언에 물었다: 무효화를 `objectsRoot(pid)` 로 좁히면 → reviews·readiness·startable·
+ * weeklySummary 네 줄이 죽는다. 반대로 `qc.invalidateQueries()`(전부 무효화)로 만들면 → **음성 대조군**
+ * (p2 의 같은 키들)이 죽는다. 어느 한쪽만으로는 두 결함이 구별되지 않는다(§6-2 3).
+ */
+describe("작업일보 제출의 무효화 범위 — 서버가 바꾸는 것 × 그것을 읽는 키", () => {
+  const GID = "GID-1";
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  function makePersistentClient() {
+    return new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
+    });
+  }
+  const wrap = (qc: QueryClient) =>
+    ({ children }: { children: ReactNode }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+
+  /** 위 표에서 ✓ 가 하나라도 있는 키 전부. 이름을 달아 두어 실패 메시지가 어느 칸인지 말하게 한다. */
+  const affectedKeys = (pid: string) => ({
+    objects: queryKeys.objects(pid, {}),
+    objectDetail: queryKeys.objectDetail(pid, GID),
+    reviews: queryKeys.reviews(pid),
+    readiness: queryKeys.readiness(pid, "A100"),
+    startable: queryKeys.startable(pid),
+    weeklySummary: queryKeys.weeklySummary(pid),
+  });
+
+  it("제출 후 그 프로젝트의 **여섯 키가 모두** 무효화되고, 남의 프로젝트의 같은 여섯 키는 그대로다", async () => {
+    const qc = makePersistentClient();
+    const p1 = affectedKeys("p1");
+    const p2 = affectedKeys("p2");
+    for (const key of [...Object.values(p1), ...Object.values(p2)]) qc.setQueryData(key, { seeded: true });
+    mockFetch((url, init) => {
+      if (url.includes("/daily-reports") && init?.method === "POST") return { body: { report_id: "dr-1" } };
+      return undefined;
+    });
+
+    const { result } = renderHook(() => useCreateDailyReport("p1"), { wrapper: wrap(qc) });
+    result.current.mutate({ report: { project_id: "p1", work_date: "2026-09-04", items: [] } as never });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    // 양성: 표의 ✓ 한 칸마다 한 줄. `invalidateQueries` 호출 횟수가 아니라 **그 쿼리가 stale 로 표시됐는가**를 센다.
+    await waitFor(() => expect(qc.getQueryState(p1.objects)?.isInvalidated).toBe(true));
+    for (const [name, key] of Object.entries(p1))
+      expect(qc.getQueryState(key)?.isInvalidated, `p1.${name} 이 무효화되지 않았다`).toBe(true);
+    // 음성 대조군: ADR 0005 의 복합 키 성질 — "전부 지운다"로 통과하는 구현을 배제한다.
+    for (const [name, key] of Object.entries(p2))
+      expect(qc.getQueryState(key)?.isInvalidated, `p2.${name} 까지 무효화됐다`).toBe(false);
+  });
+
+  it("화면에 **마운트된** 검토요청·주간요약·착수가능이 제출 직후 실제로 재요청된다(요청 누계로 센다)", async () => {
+    const qc = makePersistentClient();
+    const { calls } = mockFetch((url, init) => {
+      if (url.includes("/daily-reports") && init?.method === "POST") return { body: { report_id: "dr-1" } };
+      if (url.includes("/api/projects/p1/review-requests")) return { body: [] };
+      if (url.includes("/api/projects/p1/weekly-summary")) return { body: { project_id: "p1" } };
+      if (url.includes("/api/projects/p1/startable")) return { body: { project_id: "p1", startable: [], blocked: [] } };
+      return undefined;
+    });
+    const count = (fragment: string) => calls.filter((c) => c.url.includes(fragment)).length;
+
+    const { result } = renderHook(
+      () => ({
+        reviews: useReviewRequests("p1"),
+        summary: useWeeklySummary("p1"),
+        startable: useStartable("p1"),
+        create: useCreateDailyReport("p1"),
+      }),
+      { wrapper: wrap(qc) },
+    );
+    await waitFor(() =>
+      expect(result.current.reviews.isSuccess && result.current.summary.isSuccess && result.current.startable.isSuccess).toBe(true),
+    );
+    expect([count("review-requests"), count("weekly-summary"), count("startable")]).toEqual([1, 1, 1]);
+
+    result.current.create.mutate({ report: { project_id: "p1", work_date: "2026-09-04", items: [] } as never });
+    await waitFor(() => expect(result.current.create.isSuccess).toBe(true));
+
+    // 계획 0004 반증 4 와 같은 이유로 "기다리면 낫는다"에 기대지 않는다 — 마운트된 쿼리는 stale 만으로는
+    // 재요청하지 않는다. 여기서 요청이 오는 유일한 이유는 무효화가 이 세 키에 실제로 걸렸기 때문이다.
+    await waitFor(() => expect(count("review-requests")).toBe(2));
+    await waitFor(() => expect(count("weekly-summary")).toBe(2));
+    await waitFor(() => expect(count("startable")).toBe(2));
   });
 });
