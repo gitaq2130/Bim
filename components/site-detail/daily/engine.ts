@@ -7,6 +7,19 @@ import type {
   WorkforceRecord,
   ZoneRect,
 } from "./types";
+import { SITE_CONFIG } from "@/lib/siteConfig";
+
+/* ---------------- Site token (일일보고 블록 경계 인식) ---------------- */
+/** 설정된 현장 토큰을 정규식으로 바꾼다. 토큰 안의 공백은 \s* 로 느슨하게 매칭한다. */
+function siteTokenSource(token: string): string {
+  return token
+    .trim()
+    .split(/\s+/)
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("\\s*");
+}
+const SITE_TOKEN_RE = new RegExp(siteTokenSource(SITE_CONFIG.reportToken), "i");
+const SITE_TOKEN_PREFIX_RE = new RegExp(`.*?${siteTokenSource(SITE_CONFIG.reportToken)}\\s*`, "i");
 
 /* ---------------- Palette & work-type colors ---------------- */
 const PALETTE = [
@@ -251,8 +264,8 @@ function createParsedBlock(label: string): ParsedBlock {
 }
 function reportInfoFromBoundary(line: string): { kind: "main" | "report"; label: string | null } | null {
   const s = String(line || "").replace(/[[\]]/g, " ").replace(/\s+/g, " ").trim();
-  if (!/고창\s*CDC/i.test(s) || !/착수보고/.test(s)) return null;
-  let title = s.replace(/.*?고창\s*CDC\s*/i, "").replace(/착수보고.*$/, "").trim();
+  if (!SITE_TOKEN_RE.test(s) || !/착수보고/.test(s)) return null;
+  let title = s.replace(SITE_TOKEN_PREFIX_RE, "").replace(/착수보고.*$/, "").trim();
   title = title.replace(/현장\s*작업/g, "").replace(/작업/g, "").trim();
   if (!title) return { kind: "main", label: null };
   if (!/(?:공사|설비|시스템)$/.test(title)) title += "공사";

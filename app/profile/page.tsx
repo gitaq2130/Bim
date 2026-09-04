@@ -2,6 +2,7 @@
 
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { SITE_CONFIG } from "@/lib/siteConfig";
 import {
   AlertTriangle,
   Ban,
@@ -281,7 +282,7 @@ function ProfilePageInner() {
               <InfoRow k="휴대전화" v={bc.mobile} link />
               <InfoRow k="이메일" v={bc.email} link />
               <InfoRow k="유선전화" v={bc.phone} />
-              <InfoRow k="소속 현장" v="고창 물류센터 신축현장" />
+              <InfoRow k="소속 현장" v={SITE_CONFIG.siteName} />
               <InfoRow k="담당 공종" v={contact.trade || "-"} last />
             </div>
           </>

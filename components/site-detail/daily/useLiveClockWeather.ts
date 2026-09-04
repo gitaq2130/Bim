@@ -2,8 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 
-const GOCHANG_WEATHER_URL =
-  "https://api.open-meteo.com/v1/forecast?latitude=35.435&longitude=126.700&current=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,rain,weather_code,wind_speed_10m&timezone=Asia%2FSeoul&wind_speed_unit=ms";
+import { SITE_CONFIG } from "@/lib/siteConfig";
+
+const { latitude, longitude } = SITE_CONFIG.coords;
+const SITE_WEATHER_URL =
+  `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
+  "&current=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,rain,weather_code,wind_speed_10m" +
+  "&timezone=Asia%2FSeoul&wind_speed_unit=ms";
 
 const kstTimeFmt = new Intl.DateTimeFormat("ko-KR", {
   timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
@@ -54,7 +59,7 @@ export function useLiveClockWeather() {
       loadingRef.current = true;
       setWeather((w) => ({ ...w, main: "날씨 불러오는 중" }));
       try {
-        const res = await fetch(GOCHANG_WEATHER_URL, { cache: "no-store" });
+        const res = await fetch(SITE_WEATHER_URL, { cache: "no-store" });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         const c = data.current;
