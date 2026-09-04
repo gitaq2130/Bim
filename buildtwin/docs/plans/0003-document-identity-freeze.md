@@ -2,8 +2,13 @@
 
 - 작성: architect
 - 날짜: 2026-09-04
-- 근거 ADR: **ADR 0009**(신규), ADR 0007 §2-1 개정 4·§2-3·§4-2 규칙 6·§9
+- **개정 1: 2026-09-04 — 실행이 잡아낸 이 계획의 오류 9건을 정정.** 이 계획은 이미 실행된 문서이지만
+  다음 사이클이 참고 사례로 읽으므로 **틀린 문장을 지우지 않고 정정 블록과 함께 남긴다.** 정정 목록은
+  §11. 가장 값진 것은 **§7 V3b 가 왜 blocker 를 못 보게 만들었는가**(양성 케이스에 사람 판단을 걸지 않아
+  정답이 `None` 으로 고정됐다)이며, 그것을 포함한 반복 패턴은 CLAUDE.md §6 에 규칙으로 올렸다.
+- 근거 ADR: **ADR 0009**(신규, 개정 1 — §5-2 전면 재작성·§5-4 신설), ADR 0007 §2-1 개정 4·§2-3·§4-2 규칙 6·§9
 - 선행 상태: 저장소 녹색(pytest 633 / vitest 186 / lint 0). architect 변경분 반영 후에도 pytest 633 녹색.
+  (개정 1 시점: pytest 703 녹색.)
 
 ---
 
@@ -72,7 +77,14 @@ A400 에는 **제목이 글자까지 동일한 문서**가 "CM 이 반려한 것
 
 1. **파서 바깥에서 입력이 바뀌는 경로.** 사용자가 엑셀에서 시트명을 바꾸면 config 는 그대로인데
    `doc_type` 이 바뀐다. 이 기준은 config 만 흔들었으므로 그 경로를 직접 보지 못했다(효과는
-   `sheet_doc_types` 변경과 동일하므로 폭발 반경만 대리 측정됐다). → §7 V4 의 음성 대조군이 이 구멍을 덮는다.
+   `sheet_doc_types` 변경과 동일하므로 폭발 반경만 대리 측정됐다). ~~→ §7 V4 의 음성 대조군이 이 구멍을 덮는다.~~
+
+   > **개정 1 정정 — V4 음성 대조군에 시트명 변경은 없었다.** 이 화살표는 **확인하지 않은 커버리지를
+   > 자기 참조로 약속**한 것이다(§11 #9). 실제로 태워 보니 폭발 반경만 같았을 뿐 **관측 가능성이 전혀
+   > 달랐다**: `doc_type` 이 함께 바뀌어 옛 행이 고아가 되지 않고(`orphaned=0`, `moved=8`), config 가
+   > 안 바뀌어 지문도 그대로다(`fingerprint_changed=False`). 초판 §5-2 는 판정을 "고아"로, 보완 신호를
+   > "지문"으로 적었으므로 이 경로에서 **둘 다 침묵한다**. 보강: `test_v4_sheet_rename_is_detected_
+   > even_though_nothing_is_orphaned`. **블라인드 스팟은 적는 것으로 끝나지 않고 태워 봐야 한다.**
 2. **이미 만들어진 `doc_id` 를 붙들고 있는 자리.** 이 기준은 "누가 만드는가"만 본다. "누가 저장하는가"는
    §1-c 가 `grep doc_id` 로 따로 만들었고, 그 grep 은 **다른 키 이름으로 저장하거나 자유형 JSON 안에
    묻힌 자리를 놓친다.** 지금 저장소에서는 그런 자리를 찾지 못했지만 "없다"고 단정하지 않는다.
@@ -102,7 +114,7 @@ A400 에는 **제목이 글자까지 동일한 문서**가 "CM 이 반려한 것
 | 4 | `review_requests.conflicting_sources["doc_id"]` | JSON (`document_mapper._document_mapping_review:261`) |
 | 5 | `review_requests.evidence` → `source_id` | 4번이 매핑 evidence 를 그대로 실어 저장 |
 | — | `ReadinessScore.blockers[].related_ids` (`readiness.py:177,186`) | **재계산** — 손댈 것 없음 |
-| — | 프론트엔드 링크(`ReviewsPage.tsx`, `SummaryPage.tsx`, `documentBlocker.ts`) | 응답에서 받는다 — 손댈 것 없음 |
+| — | 프론트엔드 링크(`ReviewsPage.tsx`, `SummaryPage.tsx`, `documentBlocker.ts`) | ~~응답에서 받는다 — 손댈 것 없음~~ → **개정 1: 틀렸다.** `doc_id` **링크**는 응답에서 받는 게 맞지만, `conflicting_sources.lost_decisions` 는 화면이 **직접 해석**해야 했다(§3-g 정정) |
 
 이 표는 지금은 쓰이지 않는다(§8 마이그레이션 판단: 폐기·재적재). **나중에 `DOC_ID_SCHEME` 를 올릴 때
 써야 할 목록**이라 여기에 남긴다.
@@ -165,6 +177,13 @@ def identity_surface_fingerprint(cfg: dict[str, Any]) -> str:
 
 > 지문 계산에는 `hashlib` 을 쓴다 — §5 규칙 1이 금지하는 것은 **`doc_id` 해시의 복제**이지 해시 사용 일반이 아니다.
 
+> **개정 1 정정 — 이 절은 자기모순이었다.** 위 코드 블록은 `identity_surface_fingerprint` 를
+> `services/progress/importers/document_register.py` 에 두고 `hashlib` 을 쓰라고 지시하는데, 같은 계획의
+> §2 완료 조건("`hashlib` import 제거")과 §7 V5.6 소스 불변식("그 파일에 `hashlib` 도 없다")은 그 파일에
+> `hashlib` 이 **없을 것**을 요구한다. 둘을 동시에 만족할 수 없다. 해소: 지문 계산은 별도 모듈
+> **`services/progress/identity_surface.py`** 로 뺐고, 파서는 그것을 import 만 한다. 완료 조건과 V5.6 은
+> 그대로 유효하다. **완료 조건이 지시 본문과 충돌하지 않는지는 계획을 쓸 때 확인해야 한다**(CLAUDE.md §6-3).
+
 `DocumentRegisterImportResult` 에 `identity_fingerprint: str = ""` 필드를 더하고
 `import_document_register` 가 채운다. `Document` 모델에는 넣지 않는다(적재 단위 값이지 행 단위 값이 아니다).
 
@@ -221,11 +240,35 @@ def open_identity_drift_review(session: Session, project_id: str,
     """
 ```
 
+> **개정 1 정정 — 이 시그니처로는 위 evidence 를 만들 수 없다.** `Evidence.source_id` 는 공란을 허용하지
+> 않는데(ADR 0001 §5) 인자에 `file_id` 가 없다. 해소: **`IdentityDriftReport.file_id`** 필드를 더해
+> 판정 쪽(적재)이 채우고, 여기서 `source_id=drift.file_id or project_id` 로 쓴다(호출자가 못 넘겼을 때만
+> 프로젝트로 떨어진다 — 근거 없는 요청을 만드느니 덜 정밀한 근거라도 남긴다).
+>
+> **`conflicting_sources.lost_decisions` 항목에 `cause` 가 빠져 있었다**(위 docstring 은
+> `{"activity_id","doc_id","decision"}` 만 적었다). 실제 계약은 `{"activity_id","doc_id","decision","cause"}`
+> 이고, 검토요청 제목·경고 문구·프론트 카드가 모두 그 값으로 갈린다(ADR 0009 §5-2 (다)).
+>
+> **제목은 경위마다 갈라 쓴다.** 이 계획은 제목 형식을 지시하지 않았고, 그래서 첫 구현의 제목이 병합
+> 경로에서 세 군데 거짓이었다(ADR 0009 §5-4). 구현: `_identity_drift_review_title` +
+> `_identity_drift_clause`.
+
 **이 kind 의 해소에는 부수 효과가 없다.** `services/api/usecases.resolve_review` 에 분기를 **추가하지
 않는다** — 공통 폴백이 `status`/`resolution_note`/`resolved_by` 만 기록한다. 매핑을 되살리는 액션을 붙이는
 설계는 반려한다(시스템이 사람의 확정을 복원하는 것이라 ADR 0001 불변식과 충돌).
 
 ### 3-e. `services/ingest/persistence.py` (bim-ingest)
+
+> **개정 1 정정 — 이 절에 오류가 셋 있었다.** ①`IdentityDriftReport` 의 **위치**(아래 박스),
+> ②판정 3번의 **범위**(아래 3번), ③`file_id` 누락(§3-d 정정 참조). 정본은 ADR 0009 §5-2(개정 1)다.
+>
+> **①`IdentityDriftReport` 는 `services/progress/document_mapper.py` 에 둔다.** 이 계획이 적은
+> `services/ingest/persistence.py` 를 그대로 따르면 **순환 의존**이 된다: `services/ingest/persistence.py`
+> 는 이미 `services.progress.importers.document_register` 를 import 하고 있고(그리고
+> `services.ingest.__init__` 가 IFC/DXF 파서를 끌고 오므로 매핑 모듈이 파서 의존성을 지게 된다),
+> 반대 방향을 추가하면 두 서비스가 서로를 import 한다. **소비자(`open_identity_drift_review`)가 타입을
+> 소유하고 생산자가 import 하는** 쪽이 기존 방향과 같다(`is_rejected_mapping` 을 ingest 가 import 해
+> 쓰는 것과 같은 구조). 아래 §3-e 표를 그대로 읽고 import 하면 안 된다.
 
 ```python
 class IdentityDriftReport(BaseModel):
@@ -251,11 +294,32 @@ class PersistedDocumentImport(BaseModel):   # 기존 필드 유지 + 추가
 2. 같은 적재 안에서 두 개 이상의 파싱 결과가 **같은 `doc_id`** 를 가지면 `drift.merged` +
    `DOCUMENT_IDENTITY_COLLISION` 경고. **덮어쓰기 자체는 지금 동작을 유지한다**(대장이 정본 — 마지막 행이
    이긴다). 다만 더 이상 조용하지 않다.
-3. `drift.moved` 의 `previous_doc_id` 에 걸린 `ActivityDocumentMappingRow` 중 `reviewed_by is not None` 인
+3. ~~`drift.moved` 의 `previous_doc_id` 에 걸린~~ `ActivityDocumentMappingRow` 중 `reviewed_by is not None` 인
    것을 `lost_decisions` 로 모은다(확정/반려 구분은 `document_mapper.is_rejected_mapping()` 을 쓴다 —
    판정 키 문자열을 이 모듈이 직접 읽지 않는다, ADR 0007 §4-2 규칙 6 ⑥ 불변식).
+
+   > **개정 1 정정 — 이 한 문장이 blocker 를 구조적으로 만들었다.** 범위를 `drift.moved` 의
+   > `previous_doc_id` 로 좁혀 적었으므로, 이 문장을 그대로 옮긴 구현에서는 **병합 경로가
+   > `lost_decisions` 에 들어갈 방법이 없다.** 병합은 판단을 *없애는* 게 아니라 판단의 **대상**을 바꾸므로
+   > 이동 조건에 걸리지 않는다 — `lost_decisions` 는 언제나 비었고, `open_identity_drift_review` 는
+   > 언제나 `None` 을 돌려주었으며, ADR 0009 §3 이 "복구 불가"로 분류한 쪽이 **CM 큐에 닿지 못했다.**
+   > **구현은 계획대로 했고 계획이 틀렸다.**
+   >
+   > 올바른 범위는 **경위(`cause`) 셋 전부**다(ADR 0009 §5-2 (다) 표):
+   > `orphaned`(=`moved[].previous_doc_id`) / `merge_overwritten`(①충돌 묶음 ②대장 행 지문 변화) /
+   > `merge_absorbed`(충돌 묶음 구성원과 제목 원문 일치 + 이번 적재에 없음 + 이미 고아였던 행 제외).
+   > 그리고 항목마다 **`cause` 를 실어야 한다** — 이 필드가 없으면 소비자가 셋을 뭉뚱그려 거짓 문구를 쓴다.
+   > 구현: `_lost_decisions` / `_merge_overwritten_doc_ids` / `_merge_absorbed_doc_ids`.
+
 4. 이전 지문은 이번 적재에 **없는** 기존 행들의 `identity_fingerprint` 중 가장 흔한 값으로 잡는다
-   (첫 적재는 `None` → 드리프트 판정 안 함).
+   (첫 적재는 `None`).
+
+   > **개정 1 정정 — 괄호 안의 "→ 드리프트 판정 안 함"이 틀렸다.** 지문은 **판정 조건이 아니라 보고
+   > 값**이다(ADR 0009 §5-2). 시트명 변경 경로는 config 를 한 글자도 안 바꿔 지문이 그대로인데도 진짜
+   > 드리프트다(실측 `fingerprint_changed=False`, `moved=8`). 첫 적재에서 판정을 안 하는 이유는 지문이
+   > `None` 이라서가 아니라 **비교할 기존 행이 없어서**다. 또 병합만 관측된 적재에는 "이번 적재에 없는
+   > 기존 행"이 아예 없어 최빈값 표본이 비므로, 구현은 그때 기존 행 전체로 넓힌다 — 보고 값이라 넓혀도
+   > 오탐을 만들 수 없다(`_previous_fingerprint`).
 
 ### 3-f. `services/api` (api)
 
@@ -263,10 +327,19 @@ class PersistedDocumentImport(BaseModel):   # 기존 필드 유지 + 추가
 
 ```python
 if persisted.identity_drift is not None:
-    warnings.append(_warning("DOCUMENT_IDENTITY_DRIFT", str(persisted.identity_drift)))
+    warnings.append(_warning("DOCUMENT_IDENTITY_DRIFT", str(persisted.identity_drift)))   # ← 개정 1: 이 줄은 틀렸다
     drift_review_id = open_identity_drift_review(session, job.project_id, persisted.identity_drift)
     summary["identity_drift_review_id"] = drift_review_id
 ```
+
+> **개정 1 정정 — 위 두 줄 중 경고 줄은 오라벨이고 중복이다.**
+> ① **오라벨**: 병합만 관측된 적재(`moved=0`, `merged=1`)에도 `DOCUMENT_IDENTITY_DRIFT` 를 붙인다 —
+> 그건 `DOCUMENT_IDENTITY_COLLISION` 이다. 두 code 를 나눠 등록해 놓고(§3-c) 라벨은 하나로 붙이면,
+> 경고를 읽는 사람이 "이동이 있었다"고 잘못 읽는다.
+> ② **중복**: 같은 사건을 `services/ingest/persistence.py` 가 이미 발화했고(§3-c 의 두 code 주석이 발화
+> 주체를 그 모듈로 지정한다) 그 경고들은 `persisted.warnings` 를 타고 이미 job 경고가 된다.
+> 해소: api 는 경고를 **다시 만들지 않고** 잇기만 한다(CLAUDE.md §3 규칙 11) — 요약 카운트
+> (`identity_drift_moved`/`_merged`/`_lost_decisions`/`_review_id`)만 싣는다.
 
 `summary` 에 `identity_drift_moved`/`identity_drift_lost_decisions` 카운트를 넣는다 — **잡 결과 숫자만
 보고도 드리프트를 알 수 있어야 한다.** `DocumentView` 에 `identity_fingerprint: str | None = None` 을
@@ -288,6 +361,19 @@ document_identity_drift: "문서 식별 드리프트",
 
 `DocumentView` 에 붙는 `title_identity`/`identity_fingerprint` 는 타입에 optional 로 추가만 하고 화면에는
 문서 상세의 접힌 "식별 정보" 영역에만 노출한다(목록·카드에는 넣지 않는다 — 사용자 언어가 아니다).
+
+> **개정 1 정정 — 이 절은 "새 kind 라벨 + 해소 문구"까지만 지시했고, 그 예시 문구를 그대로 따랐으면
+> 이번 blocker 를 화면에서 재생산했을 것이다.** 계획은 근거 카드도 경위 구분도 예상하지 않았으므로,
+> 화면은 검토요청 `title` 산문 하나만 보여 주게 된다 — 그리고 그 산문은 세 경위를 뭉뚱그린 거짓이었다
+> (ADR 0009 §5-4). `merge_overwritten` 상황에서 CM 은 화면상 아무 이상도 보지 못한다: 행이 살아 있고
+> 고아 표시도 없고 `reviewed_by` 도 그대로인데, 승인 상태만 다른 대장 행의 것이다.
+>
+> 실제 필요한 것은 셋이었다: ① `conflicting_sources.lost_decisions` 를 화면이 **직접 해석**해 근거 카드를
+> 만든다 ② 카드를 **`cause` 별로** 갈라 문구와 배치 순서를 다르게 준다(위험 순서
+> `merge_overwritten` → `merge_absorbed` → `orphaned`) ③ 분류는 서버가 보내는 **기계 판독 값**
+> (`cause`)으로 하고 **산문을 부분 문자열로 되읽지 않는다**(이 저장소가 `Blocker.kind` 도입으로 이미
+> 걷어낸 패턴이다). 모르는 `cause` 는 `unspecified` 로 두고 **`orphaned` 로 떨어뜨리지 않는다.**
+> 구현: `apps/web/src/domain/identityDrift.ts`.
 
 ---
 
@@ -328,6 +414,13 @@ document_identity_drift: "문서 식별 드리프트",
 4. **경고를 아무도 읽지 않는 경우.** 경고는 잡 응답에만 실린다. 그래서 §5-2 가 사람의 판단이 걸린
    경우를 **큐로** 올린다 — 8차 리뷰가 "만들어지지 않는 검토요청" 때문에 실패했던 것의 반대편 대비다.
 
+> **개정 1 — 이 표에 다섯 번째 항목이 있었어야 했다: 운영 층이 놓치는 것 중 가장 큰 것은 병합이었다.**
+> 초판 §5-2 가 병합을 **경고까지만** 배정했으므로, 운영 층의 "CM 검토 큐" 칸은 `orphaned` 경위에만
+> 참이었다. 위 4번이 "경고는 아무도 읽지 않는다"고 정확히 진단해 놓고, 정작 **되돌릴 수 없는 쪽**을
+> 그 아무도 안 읽는 경고에 남겨 둔 것이다. 지금은 세 경위 모두 큐에 오른다(ADR 0009 §5-2 (마)).
+> 3번 항목도 개정 1에서 좁아진다 — "사람의 판단이 없는 프로젝트"는 **여전히 큐를 만들지 않는 것이
+> 옳지만**(큐 오염 방지), 그것을 **양성 검증 시나리오의 조건으로 쓰면 안 된다**(§7 V3 개정 1).
+
 ---
 
 ## 6. 손대지 않는 것 (확인만 — 오해로 고치지 말 것)
@@ -346,6 +439,22 @@ document_identity_drift: "문서 식별 드리프트",
 
 > ADR 0008 계획의 S4 는 같은 파일을 양쪽에 올려 누수가 나도 점수가 산술적으로 동일해 **결함이 있는데도
 > 통과**했다. 아래 각 시나리오에 **"이 단언은 결함이 있어도 통과한다"** 목록을 함께 적는다.
+
+> **개정 1 — 그 반증 목록을 붙이고도 레시피가 다섯 군데 틀렸다.** "반증을 적는다"는 습관 자체는 옳았고
+> 실제로 여러 가짜 초록을 막았지만, **반증 목록도 실행으로 확인해야 한다.** 아래 다섯은 전부 실행으로
+> 잡혔다(V3b 는 별도로 아래 V3 절에 크게 적는다 — 이 사이클 최대의 교훈이다).
+>
+> | # | 자리 | 무엇이 틀렸나 |
+> |---|---|---|
+> | 1 | **V1 자기검증** | "`compute_doc_id` 의 마지막 인자를 임시로 `title_normalized` 로 바꿔 **세 뮤테이션에서 실패**하는 것을 확인하라"고 적었다. `lowercase:false` 는 그렇게 해도 **0/10** 이다 — 넘긴 문자열에 `compute_doc_id` 가 다시 `identity_title()`(casefold 포함)을 적용해 대소문자 차이를 지우기 때문이다(실측: `승인요청` 2/3, 괄호 3/3, `lowercase:false` **0/3**). 결함 재현 방법이 결함의 **일부만** 재현한다. 자기검증에 쓸 뮤테이션은 `승인요청`·괄호 둘이다 |
+> | 2 | **V2 반증 목록의 `mapping_count == 6`** | "결함 상태에서도 6"까지는 맞지만 **정상 코드에서는 4**다(사람이 판단한 2건을 `_drop_already_confirmed` 가 뺀다). 이 값을 단언하면 **고쳐진 코드에서 오히려 실패**한다. 반증 목록에 적힌 숫자가 그 자체로 틀릴 수 있다 |
+> | 3 | **V3 (a)** | 동결 **이후** `strip_patterns += r"\d+\s*차"` 는 `doc_id` 를 못 움직이므로(실측 0/10) 이 시나리오에서는 **충돌이 생길 수 없다.** (a)는 "탐지가 동작한다"를 전혀 보지 못한다 — 계획 스스로 반증 문단에서 이 점을 적어 놓고도 (b)를 "추가"가 아니라 **대체**로 세우지 않았다 |
+> | 4 | **V4 의 시트명 케이스 누락** | §1-a 블라인드 스팟 1이 "→ §7 V4 의 음성 대조군이 이 구멍을 덮는다"고 적었는데, **V4 음성 대조군(N1 삭제·N2 제목 수정·N3 판단 없음) 어디에도 시트명 변경이 없다.** 계획이 **있지도 않은 커버리지를 자기 참조로 약속**했다. 실제로 이 경로는 `orphaned=0`·`fingerprint_changed=False` 라 초판 §5-2 규칙으로는 전부 침묵한다 |
+> | 5 | **V5 저장 검증 누락** | V5 는 동결(모델 검증기·config 가드·소스 불변식)만 본다. `title_identity`/`identity_fingerprint` 가 **실제로 DB 행에 채워지는지**를 아무도 보지 않는다 — 두 컬럼을 추가한 것이 §3-e 의 핵심 산출물인데도 그렇다. 비면 드리프트 판정의 좌변(이전 지문)이 통째로 죽는다. 보강: `tests/unit/ingest/test_document_identity_persistence.py` |
+>
+> 공통 원인은 하나다: **반증 목록을 "생각으로" 만들었다.** V1·V2 항목은 숫자를 실측 없이 적었고, V4 는
+> 다른 절을 가리키는 것으로 확인을 갈음했다. 전수 목록과 마찬가지로 **반증 목록도 그 생성 기준이
+> 곧 한계다**(CLAUDE.md §6-1).
 
 ### V1 — 계약: 매칭 튜닝은 `doc_id` 를 한 건도 움직이지 않는다 (단위)
 `tests/unit/progress/test_document_identity_freeze.py`
@@ -394,6 +503,35 @@ document_identity_drift: "문서 식별 드리프트",
 **반증:** (a)만 두면 픽스처가 애초에 충돌하지 않으므로 **탐지 코드가 없어도 통과**한다. (b)가 반드시 필요하다.
 또 (b)에서 `duplicate_doc_number` 경고에 기대면 안 된다 — 두 행의 `문서번호` 를 다르게 두면 그 경고는
 뜨지 않는데도 병합은 일어난다(**측정됨**). 단언은 새 경고 code 로 건다.
+
+> ### 개정 1 — **V3b 가 blocker 를 못 보게 만들었다. 이 사이클에서 가장 값진 교훈이다.**
+>
+> V3b 는 병합을 **탐지**한다. 그런데 충돌 케이스를 **"사람 판단이 없는 프로젝트"** 로 세웠다 — 강제 충돌
+> 픽스처를 올리기만 하고 그 문서에 CM 확정·반려를 걸지 않았다. 그 결과:
+>
+> - `lost_decisions` 는 **정의상 언제나 비어 있다**(사람 판단이 없으므로).
+> - 따라서 `identity_drift_review_id is None` 이 **정답으로 고정**됐다.
+> - 그런데 그것은 §3-e 3(범위를 `moved` 로 좁힌 오류) 아래에서도 **똑같이 `None`** 이다.
+>
+> **결함 있는 코드와 옳은 코드가 이 시나리오에서 구별 불가능하다.** V3b 는 초록이었고, 초록인 채로
+> "병합은 절대로 CM 큐에 올라가지 않는다"는 구멍을 덮고 있었다. 이 blocker 가 사이클 끝까지 살아남은
+> 이유가 정확히 이것이다.
+>
+> **음성 대조군도 같은 병으로 기울어 있었다.** N1(진짜 삭제)·N2(진짜 제목 수정)·N3(판단 없는 드리프트)는
+> 전부 ***moved* 쪽** 것이고 **병합 쪽 대조군은 한 건도 없다.** 그래서 "병합에는 아무 판정도 하지 않는다"는
+> 구현이 양성에서도(V3b) 음성에서도 통과한다. 대조군이 한쪽 축에만 몰려 있으면 그 축만 검증된다.
+>
+> **일반화한 규칙**(CLAUDE.md §6-2): **양성 케이스는 "그 결함이 있으면 값이 달라지는" 상태로 세워야 한다.**
+> "탐지가 발화하는가"를 물었으면 발화의 **결과**(여기서는 큐 등재)까지 값이 갈리도록 세운다. 판정 결과가
+> 결함 유무와 무관하게 같은 값(`None`·0·빈 목록)으로 고정되는 시나리오는 **검증이 아니라 장식**이다.
+> 시나리오를 쓸 때 스스로에게 물을 것: **"이 단언의 기대값을 결함 있는 코드가 그대로 만족하는가?"**
+>
+> **V5 가 이 구멍을 메운다**(qa 가 추가, `tests/integration/test_17_document_identity_drift.py`):
+> 양성 2건은 사람 판단을 **병합의 양쪽 끝**에 각각 건다 — ①확정이 **살아남는 행**에 있고 병합이 그 행을
+> 덮어쓴다(`merge_overwritten`) ②확정이 **삼켜지는 행**에 있다(`merge_absorbed`). ①은
+> `drawing_approval` 0.0 → 1.0 뒤집힘과 CM 큐 등재를 **함께** 단언한다(하나만 고정하면 다른 하나가
+> 사라져도 초록이다). 음성 3건은 병합 축에 세운다 — 충돌 없는 정상 결과 갱신, 충돌 묶음 **밖**의 결과
+> 갱신, 병합 후 같은 config 재업로드(사건이 일어난 적재에서 한 번만 발화).
 
 ### V4 — 식별 표면 드리프트 탐지 + 음성 대조군 (통합)
 같은 파일. A100 확정 상태에서 `normalization.sender_aliases` 의 표준명 표기를 바꾸고 재업로드.
@@ -485,8 +623,35 @@ ADR 0009 §5 규칙 5(스킴 상향으로 재적재를 구분한다)가 무력�
    의도한 동작이다(두 번 다 진짜 사건이다).
 4. **`document_possibly_renamed` 문구 정정**(ADR 0009 §Deferred 2)은 §3-e 1의 분기로 자연히 좁아지지만,
    문구 자체("제목만 다르고 …")는 progress-engine 이 이 작업에서 함께 다듬는다.
+   > **개정 1**: ADR 0009 §Deferred 2 는 이 항목을 Deferred 에서 내렸다 — "문구 정확도는 뒤로 미뤄도
+   > 된다"는 판단이 **같은 사이클 안에서** 재발했기 때문이다(§5-2 가 만든 새 검토요청 제목이 똑같은
+   > 종류의 거짓을 갖고 태어났다). 규칙은 CLAUDE.md §6-4.
 5. **실데이터 적재 후 첫 매칭 보정.** 이 계획이 끝나야 `min_similarity` 재측정이 안전해진다.
    그 작업은 별도 사이클이고, 이 계획의 V1 이 그 작업의 안전망이다.
+
+---
+
+## 11. 개정 1 — 실행이 잡아낸 이 계획의 오류 (전수)
+
+이 계획은 이미 실행됐다. 이 절은 되돌리기 위한 것이 아니라 **다음 사이클이 참고 사례로 읽기 위한** 것이다.
+아홉 건 전부 하류(구현·qa)가 **실행으로** 잡았고, 그중 하나(#1)는 사이클 막바지 blocker 의 직접 원인이다.
+
+| # | 자리 | 오류 | 정정 |
+|---|---|---|---|
+| 1 | §3-e 3 | `lost_decisions` 범위를 `drift.moved` 의 `previous_doc_id` 로 좁혔다 — 이 문장대로면 **병합 경로가 구조적으로 큐에 닿을 수 없다** | 경위 셋 전부 + 항목마다 `cause`(ADR 0009 §5-2 (다)) |
+| 2 | §7 V3b | 충돌 케이스에 **사람 판단을 걸지 않아** `identity_drift_review_id is None` 이 정답으로 고정 — 결함 코드와 옳은 코드가 구별 불가 | V5 양성 2 + 병합 축 음성 3(§7 V3 개정 1) |
+| 3 | §3-e 표 | `IdentityDriftReport` 위치를 `services/ingest` 로 적었다 — 그대로 import 하면 **순환 의존** | `services/progress/document_mapper.py`(소비자 소유) |
+| 4 | §3-g | "새 kind 라벨 + 해소 문구"까지만 지시 — 근거 카드도 경위 구분도 예상하지 않았다. 예시 문구대로 갔으면 **blocker 를 화면에서 재생산** | `lost_decisions` 를 화면이 직접 해석 + `cause` 별 카드(§3-g 개정 1) |
+| 5 | §6·§1-c | "프론트엔드 링크 — 응답에서 받는다, 손댈 것 없음" | 링크는 맞지만 **`lost_decisions` 해석**은 화면 몫이었다 |
+| 6 | §3-a | **자기모순** — 지문 계산을 파서에 두고 `hashlib` 을 쓰라면서, §2 완료 조건·§7 V5.6 은 그 파일에 `hashlib` 이 없을 것을 요구 | `services/progress/identity_surface.py` 분리 |
+| 7 | §3-d | 시그니처에 `file_id` 가 없는데 `Evidence.source_id` 는 공란 불가 | `IdentityDriftReport.file_id` 추가 |
+| 8 | §3-f | api 두 줄이 **오라벨**(병합만 관측된 적재에도 DRIFT) + 중복 발화 | api 는 잇기만 하고 요약 카운트만 싣는다 |
+| 9 | §7 레시피 5건 | V1 자기검증·V2 `mapping_count`·V3(a)·V4 시트명 커버리지 자기 참조·V5 저장 검증 | §7 개정 1 표 |
+
+**이 목록에서 뽑아 낼 것.** 개별 오류보다 모양이 중요하다. #1·#4 는 **조건을 좁게 적어** 가장 위험한
+변종을 밖으로 밀어낸 것이고, #2·#9 는 **검증이 결함을 못 잡도록** 세워진 것이며, #5·#9-4 는 **확인하지
+않은 커버리지를 문서가 스스로 약속**한 것이다. 셋 다 최근 세 사이클(0007·0008·0009)에서 반복됐다 —
+그래서 이 계획 안에 묻지 않고 **CLAUDE.md §6** 에 규칙으로 올렸다.
 
 ---
 
