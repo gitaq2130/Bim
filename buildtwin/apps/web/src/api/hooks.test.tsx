@@ -8,7 +8,9 @@ import {
   queryKeys,
   useAllObjects,
   useConfirmDocumentMapping,
+  useCreateDailyReport,
   useObjectDetail,
+  useObjects,
   useReadiness,
   useResolveReview,
 } from "./hooks";
@@ -252,5 +254,191 @@ describe("ADR 0008 — 프로젝트 범위 readiness 키", () => {
 
     await waitFor(() => expect(qc.getQueryState(READINESS_P1)?.isInvalidated).toBe(true));
     expect(qc.getQueryState(READINESS_P2)?.isInvalidated).toBe(false);
+  });
+});
+
+/**
+ * ADR 0010 규칙 1 — 프로젝트 범위 캐시 키는 모두 `["projects", pid, …]` 로 시작한다.
+ *
+ * **여기 있는 단언은 vitest 전량 초록으로는 대체할 수 없다.** ADR 0010 §5 가 실측한 대로 현행(결함) ·
+ * 옳은 고침 · 반쪽 고침(`["objects"]` 를 남겨 무효화가 **완전 무동작**이 되는, 오늘보다 나쁜 상태)
+ * 세 상태가 모두 26 files / 233 passed 였다. 그래서 이 절의 테스트는 세 상태를 **구별하도록** 세운다:
+ *   - 상세 키만 옮기고 `useResolveReview` 의 리터럴을 남기면 → 목록도 상세도 무효화되지 않는다.
+ *   - 리터럴만 바꾸고 상세 키를 남기면 → 목록만 무효화되고 상세는 남는다(오늘의 증상 그대로).
+ * 그리고 CLAUDE.md §6-2 / 계획 0004 반증 3: `invalidateQueries` 호출을 스파이로 세지 않는다.
+ * 결함 코드도 **호출은 한다** — 세는 것은 그 결과 해당 쿼리가 무효화됐는가(`isInvalidated`)와
+ * 실제 재요청이 갔는가다.
+ */
+describe("ADR 0010 규칙 1 — 객체 캐시 키의 뿌리", () => {
+  const GID = "GID-1";
+  /**
+   * 재루팅 전의 키 모양. 팩토리에서 만들 수 없으므로 여기 고정한다 — 대조군이 없으면
+   * "옛 접두사가 아무것에도 안 걸린다"를 셀 수 없다. 배열 리터럴을 문자 그대로 쓰지 않는 이유는
+   * 위 ADR 0008 절과 같다(계획 0004 작업 4 의 확인 grep `\["objects"` 이 0줄이어야 한다).
+   */
+  const OBJECTS_SEGMENT = "objects";
+  const LEGACY_DETAIL: readonly string[] = [OBJECTS_SEGMENT, "p1", GID];
+  const LEGACY_OBJECTS_ROOT: readonly string[] = [OBJECTS_SEGMENT];
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  function makePersistentClient() {
+    return new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
+    });
+  }
+  const wrap = (qc: QueryClient) =>
+    ({ children }: { children: ReactNode }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+
+  it("상세 키가 프로젝트 접두사 아래로 들어가고, objectsRoot 가 목록·all 변종·상세를 **실제로** 덮는다", () => {
+    const detail = queryKeys.objectDetail("p1", GID);
+    const list = queryKeys.objects("p1", {});
+    const all = [...queryKeys.objects("p1", {}), "all"] as const; // useAllObjects 가 쓰는 키
+    const root = queryKeys.objectsRoot("p1");
+
+    expect(detail[0]).toBe("projects");
+    // 눈이 아니라 TanStack 자신의 매처로 확인한다(12·13차 리뷰가 두 번 잡은 결함의 모양).
+    expect(partialMatchKey(detail, root)).toBe(true);
+    expect(partialMatchKey(list, root)).toBe(true);
+    expect(partialMatchKey(all, root)).toBe(true);
+    // 프로젝트를 뒤집는 무효화 하나가 상세까지 덮는다(옛 키에서는 이 줄이 false 였다).
+    expect(partialMatchKey(detail, queryKeys.project("p1"))).toBe(true);
+    // 남의 프로젝트는 건드리지 않는다 — ADR 0005 의 복합 키 성질은 그대로다.
+    expect(partialMatchKey(queryKeys.objectDetail("p2", GID), root)).toBe(false);
+    // 낡은 전역 접두사는 이제 아무것에도 걸리지 않는다 — 남겨 두면 무효화가 조용히 무동작이 된다.
+    expect(partialMatchKey(detail, LEGACY_OBJECTS_ROOT)).toBe(false);
+    expect(partialMatchKey(list, LEGACY_OBJECTS_ROOT)).toBe(false);
+    // 옛 상세 키 모양이 되살아나면(재루팅 되돌림) objectsRoot 가 그것을 못 덮는다.
+    expect(partialMatchKey(LEGACY_DETAIL, root)).toBe(false);
+  });
+
+  it("useResolveReview(inspection 승인) 후 그 프로젝트의 목록과 상세가 **둘 다** 무효화된다", async () => {
+    const qc = makePersistentClient();
+    const detail = queryKeys.objectDetail("p1", GID);
+    const list = queryKeys.objects("p1", {});
+    const otherProjectDetail = queryKeys.objectDetail("p2", GID);
+    qc.setQueryData(detail, { basic: { global_id: GID, state: "INSPECTION_REQUESTED" } });
+    qc.setQueryData(list, { items: [{ global_id: GID, state: "INSPECTION_REQUESTED" }], total: 1 });
+    qc.setQueryData(otherProjectDetail, { basic: { global_id: GID, state: "PLANNED" } });
+    mockFetch((url, init) => {
+      if (url.includes("/resolve") && init?.method === "POST")
+        return { body: { review_request_id: "r1", status: "approved", kind: "inspection", global_id: GID } };
+      return undefined;
+    });
+
+    const { result } = renderHook(() => useResolveReview("p1"), { wrapper: wrap(qc) });
+    result.current.mutate({ reviewRequestId: "r1", decision: "approved" });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    // 두 사실을 함께 단언한다(§6-2 4): 한쪽만 고정하면 다른 쪽이 사라져도 초록이다.
+    await waitFor(() => expect(qc.getQueryState(list)?.isInvalidated).toBe(true));
+    expect(qc.getQueryState(detail)?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(otherProjectDetail)?.isInvalidated).toBe(false);
+  });
+
+  it("검토요청 해소 후 화면에 **마운트된** 목록·상세가 둘 다 재요청된다(요청 누계로 센다)", async () => {
+    const qc = makePersistentClient();
+    const { calls } = mockFetch((url, init) => {
+      if (url.includes("/resolve") && init?.method === "POST")
+        return { body: { review_request_id: "r1", status: "approved", kind: "inspection", global_id: GID } };
+      if (url.includes(`/api/objects/${GID}`)) return { body: objectDetailFixture };
+      if (url.includes("/api/projects/p1/objects")) return { body: { items: [], total: 0 } };
+      return undefined;
+    });
+    const countDetail = () => calls.filter((c) => c.url.includes(`/api/objects/${GID}`)).length;
+    const countList = () => calls.filter((c) => c.url.includes("/api/projects/p1/objects")).length;
+
+    // ViewerPage 처럼 목록(3D 색칠)과 상세(패널)를 같은 화면에 띄운 상태를 만든다.
+    const { result } = renderHook(
+      () => ({ detail: useObjectDetail("p1", GID), list: useObjects("p1"), resolve: useResolveReview("p1") }),
+      { wrapper: wrap(qc) },
+    );
+    await waitFor(() => expect(result.current.detail.isSuccess && result.current.list.isSuccess).toBe(true));
+    expect(countDetail()).toBe(1);
+    expect(countList()).toBe(1);
+
+    result.current.resolve.mutate({ reviewRequestId: "r1", decision: "approved" });
+    await waitFor(() => expect(result.current.resolve.isSuccess).toBe(true));
+
+    // 계획 0004 반증 4: "기다리면 낫는다"로 세우면 안 된다 — 마운트된 쿼리는 stale 만으로 재요청하지
+    // 않는다. 여기서 재요청이 오는 유일한 이유는 무효화가 이 두 키에 실제로 걸렸기 때문이다.
+    await waitFor(() => expect(countDetail()).toBe(2));
+    await waitFor(() => expect(countList()).toBe(2));
+  });
+
+  it("작업일보 제출(반대 방향)의 `['projects', pid]` 무효화가 상세까지 덮는다", async () => {
+    const qc = makePersistentClient();
+    const detail = queryKeys.objectDetail("p1", GID);
+    qc.setQueryData(detail, { basic: { global_id: GID, state: "PLANNED" } });
+    qc.setQueryData(queryKeys.objectDetail("p2", GID), { basic: { global_id: GID, state: "PLANNED" } });
+    mockFetch((url, init) => {
+      if (url.includes("/daily-reports") && init?.method === "POST") return { body: { report_id: "dr-1" } };
+      return undefined;
+    });
+
+    const { result } = renderHook(() => useCreateDailyReport("p1"), { wrapper: wrap(qc) });
+    result.current.mutate({ report: { project_id: "p1", work_date: "2026-09-04", items: [] } as never });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    // ADR 0010 §3 실측: 옛 키에서는 목록만 REPORTED 로 바뀌고 상세는 PLANNED 로 남았다.
+    await waitFor(() => expect(qc.getQueryState(detail)?.isInvalidated).toBe(true));
+    expect(qc.getQueryState(queryKeys.objectDetail("p2", GID))?.isInvalidated).toBe(false);
+  });
+});
+
+/**
+ * ADR 0010 규칙 4 — 대리키(`["drawings", did, …]`)는 프로젝트 접두사를 가질 수 없으므로
+ * (ADR 0006 규칙 6) 뮤테이션마다의 **명시적** 무효화가 유일한 수단이다. `drawingMappings` 는
+ * 저장소 전체에서 무효화하는 곳이 0곳이었는데, `useResolveReview` 의 `kind=="mapping"` 해소가
+ * 서버에서 바로 그 매핑 행을 바꾼다 — CM 이 매핑 검토를 처리한 직후 뷰어의 2D↔3D 연결이 낡은 채 남았다.
+ */
+describe("ADR 0010 규칙 4 — 매핑 검토 해소와 drawingMappings", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function makePersistentClient() {
+    return new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
+    });
+  }
+  const wrap = (qc: QueryClient) =>
+    ({ children }: { children: ReactNode }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+
+  /** 해소 응답 한 건을 흉내낸다. drawing_id 는 sync 가 review_request_for 에서 싣는 값이다. */
+  const resolvedReview = (kind: string, drawingId?: string) => ({
+    review_request_id: "r1",
+    project_id: "p1",
+    kind,
+    status: "approved",
+    conflicting_sources: drawingId
+      ? { drawing_id: drawingId, entity_handle: "1A3F", candidate_global_id: "GID-1" }
+      : { doc_id: "DOC-1" },
+    evidence: { source_type: "cm_action", source_id: "user-cm" },
+  });
+
+  async function resolveAndGetState(kind: string, drawingId: string | undefined) {
+    const qc = makePersistentClient();
+    qc.setQueryData(queryKeys.drawingMappings("D-1"), []);
+    qc.setQueryData(queryKeys.drawingMappings("D-2"), []);
+    mockFetch((url, init) => {
+      if (url.includes("/resolve") && init?.method === "POST") return { body: resolvedReview(kind, drawingId) };
+      return undefined;
+    });
+    const { result } = renderHook(() => useResolveReview("p1"), { wrapper: wrap(qc) });
+    result.current.mutate({ reviewRequestId: "r1", decision: "approved" });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    return qc;
+  }
+
+  it("kind=='mapping' 해소 후 그 도면의 매핑 캐시가 무효화된다", async () => {
+    const qc = await resolveAndGetState("mapping", "D-1");
+    await waitFor(() => expect(qc.getQueryState(queryKeys.drawingMappings("D-1"))?.isInvalidated).toBe(true));
+    // 다른 도면까지 뒤집지는 않는다 — "전부 지운다"로 통과하는 구현을 배제한다.
+    expect(qc.getQueryState(queryKeys.drawingMappings("D-2"))?.isInvalidated).toBe(false);
+  });
+
+  it("음성 대조군: mapping 이 아닌 해소(document_mapping)는 도면 매핑 캐시를 건드리지 않는다", async () => {
+    const qc = await resolveAndGetState("document_mapping", undefined);
+    expect(qc.getQueryState(queryKeys.drawingMappings("D-1"))?.isInvalidated).toBe(false);
+    expect(qc.getQueryState(queryKeys.drawingMappings("D-2"))?.isInvalidated).toBe(false);
   });
 });

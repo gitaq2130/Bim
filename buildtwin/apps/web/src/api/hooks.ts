@@ -49,8 +49,22 @@ export const queryKeys = {
   project: (pid: string) => ["projects", pid] as const,
   job: (jobId: string) => ["jobs", jobId] as const,
   objects: (pid: string, q?: ObjectsQuery) => ["projects", pid, "objects", q ?? {}] as const,
-  /** (project_id, global_id) 복합 키 (ADR 0005) — 같은 IFC가 여러 프로젝트에 있어도 캐시가 섞이지 않는다 */
-  objectDetail: (pid: string, gid: string) => ["objects", pid, gid] as const,
+  /**
+   * (project_id, global_id) 복합 키 (ADR 0005) — 같은 IFC가 여러 프로젝트에 있어도 캐시가 섞이지 않는다.
+   *
+   * **ADR 0010 규칙 1**: 프로젝트 범위 키는 모두 `["projects", pid, …]` 로 시작한다. 옛 키
+   * `["objects", pid, gid]` 는 저장소에서 유일하게 그 접두사 밖에 있었고, 그래서 목록을 덮는
+   * 무효화(`["projects", pid]`)가 상세를 **한 칸도** 건드리지 못했다(실측: 작업일보 제출 후
+   * 화면 목록 `REPORTED` / 상세 `PLANNED`). 복합 키 성질은 그대로이고 원소 순서만 바뀐다.
+   */
+  objectDetail: (pid: string, gid: string) => ["projects", pid, "objects", gid] as const,
+  /**
+   * `objects(pid, q)` 목록·`useAllObjects` 의 `"all"` 변종·`objectDetail` 을 **한 접두사로** 덮는
+   * 유일한 키(ADR 0010 규칙 1, `documentsRoot`·`activitiesRoot` 와 같은 자리). 객체 전체를 뒤집는
+   * 뮤테이션은 이것을 쓴다 — 낡은 전역 `["objects"]` 리터럴은 재루팅 이후 **무엇에도 부분 일치하지
+   * 않는다**(그대로 두면 무효화가 완전 무동작이 된다: ADR 0010 §4).
+   */
+  objectsRoot: (pid: string) => ["projects", pid, "objects"] as const,
   models: (pid: string) => ["projects", pid, "models"] as const,
   drawings: (pid: string) => ["projects", pid, "drawings"] as const,
   scans: (pid: string) => ["projects", pid, "scans"] as const,
@@ -375,10 +389,24 @@ export function useResolveReview(projectId: string) {
       api.post<ReviewRequest>(`/review-requests/${reviewRequestId}/resolve`, body),
     onSuccess: (review) => {
       qc.invalidateQueries({ queryKey: ["projects", projectId, "review-requests"] });
-      qc.invalidateQueries({ queryKey: ["objects"] });
+      // ADR 0010 규칙 1: 낡은 `["objects"]` 리터럴은 재루팅된 키(`["projects",pid,"objects",…]`)와
+      // 부분 일치하지 않는다 — 남겨 두면 이 무효화가 조용히 무동작이 된다. 목록·"all" 변종·상세를
+      // 한 번에 덮는 접두사는 objectsRoot 하나뿐이다.
+      qc.invalidateQueries({ queryKey: queryKeys.objectsRoot(projectId) });
       // document_mapping 해소는 문서 상세의 매핑 행과 readiness 를 바꾼다.
       const docId = review?.evidence?.source_type === "document" ? review.evidence.source_id : undefined;
       if (docId) qc.invalidateQueries({ queryKey: queryKeys.document(projectId, docId) });
+      // ADR 0010 규칙 4(대리키 캐시): kind=="mapping" 해소는 서버에서 resolve_mapping_review 가
+      // **그 도면의 매핑 행 자체**를 바꾼다(services/api/usecases.py). `drawingMappings(did)` 는
+      // ["drawings", did, "mappings"] — 프로젝트 접두사를 가질 수 없는 대리키 라우트라(ADR 0006 규칙 6)
+      // 위의 어떤 접두사에도 걸리지 않는다. 실제로 저장소 전체에서 이 키를 무효화하는 곳이 0곳이었고,
+      // 그래서 CM 이 매핑 검토를 처리한 직후에도 ViewerPage 의 2D↔3D 연결이 낡은 채로 남았다.
+      // drawing_id 는 sync 가 검토요청을 만들 때 conflicting_sources 에 싣는다
+      // (services/sync/review_queue.py::review_request_for). 서버는 그 값이 없으면 해소 자체를
+      // 500(mapping_review_data_corrupt)으로 거절하므로, 성공 응답에는 항상 들어 있다.
+      const mappingDrawingId = review?.kind === "mapping" ? review.conflicting_sources?.drawing_id : undefined;
+      if (typeof mappingDrawingId === "string" && mappingDrawingId)
+        qc.invalidateQueries({ queryKey: queryKeys.drawingMappings(mappingDrawingId) });
       qc.invalidateQueries({ queryKey: queryKeys.weeklySummary(projectId) });
       qc.invalidateQueries({ queryKey: queryKeys.startable(projectId) });
       // ADR 0008: readiness 키가 ["projects", pid, "activities", aid, "readiness"] 로 바뀌었다.
