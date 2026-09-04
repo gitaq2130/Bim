@@ -1,7 +1,7 @@
 # BuildTwin — 담당: qa
 # make dev / make test / make lint / make docs / make fixtures / make e2e / make api / make web
 
-.PHONY: dev test lint docs fixtures fixtures-public test-py test-unit test-invariants test-regression test-integration test-web e2e e2e-deps web-build lint-py lint-web api web setup
+.PHONY: dev test lint docs fixtures fixtures-public test-py test-unit test-invariants test-regression test-integration test-web e2e e2e-deps web-build lint-py lint-web api web setup db-reset
 
 PY := . .venv/bin/activate &&
 
@@ -11,9 +11,16 @@ setup: ## 로컬 개발 환경(venv + npm)
 	cd apps/web && npm install
 
 dev: ## API + Celery worker + web dev server (docker compose)
+	@echo "※ 로컬 SQLite(buildtwin.db)를 쓰다가 모델에 컬럼이 추가된 뒤라면 먼저 'make db-reset'."
+	@echo "  packages/core/db.init_db 는 create_all 뿐이라 **기존 파일에 새 컬럼을 추가하지 않는다** —"
+	@echo "  예: ADR 0009 의 documents.title_identity / identity_fingerprint (계획 0003 §8)."
 	docker compose up --build
 
-api: ## 로컬 API만 (SQLite, Celery eager)
+db-reset: ## 로컬 개발용 SQLite 폐기(대장·문서는 대장 재업로드로 재생성된다 — ADR 0007 §1 규칙 1: 대장이 정본)
+	@echo "removing local sqlite dev database(s): $(wildcard *.db)"
+	rm -f *.db
+
+api: ## 로컬 API만 (SQLite, Celery eager) — 모델에 컬럼이 추가된 뒤라면 'make db-reset' 먼저
 	$(PY) uvicorn services.api.main:app --reload --port 8000
 
 web:
