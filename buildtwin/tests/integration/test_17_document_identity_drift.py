@@ -1963,12 +1963,40 @@ def test_v9d_p13b_unflipped_row_content_change_says_only_that_the_approval_value
     assert "가릴 수 없습니다" not in title, title
 
 
-# ── V8 N3 — (나)·(다) 축의 **판단-없음 대조군**: 의도된 침묵을 계약으로 고정한다 ──────────
-def test_v8_n3_row_replaced_without_human_decisions_is_silent_by_design(
+# ═══════════════════════════════════════════════════════════════════════════
+# V8 N3 — (나)·(다) 축의 **판단-없음 대조군**. 침묵 판과 발화 판을 **이름 붙은 두 테스트**로 나눈다.
+#
+# **왜 나눴는가(리뷰어 Deferred).** 직전까지 이 둘은 한 테스트였고, 살아남은 뮤테이션 **둘이 그 한 건에만**
+# 걸려 있었다(2026-09-04 실측, 각각 개별 적용 → pytest 전량):
+#
+#   · D′ 게이트 확장  `if moved or merged or lost_decisions:`
+#                   → `if moved or merged or lost_decisions or replaced or absorbed_into:`
+#                   … 737 중 **1 failed** — 죽는 것은 이 한 건뿐이었다
+#   · W′ 경고 분기 제거  `elif lost_decisions and not merged:` 블록(DRIFT 경고 두 번째 갈래)을 지운다
+#                   … 737 중 **1 failed** — 역시 이 한 건뿐이었다
+#     (리뷰어는 이 뮤테이션을 "M8" 로 불렀으나 이 파일 머리의 M8 은 `_absorbed_doc_ids` 의
+#      `was_orphaned` 가드다 — 다른 뮤테이션이므로 여기서는 W′ 로 적는다)
+#
+# 즉 누가 이 테스트를 "쪼개거나 단순화"하면 **두 방어가 함께** 사라졌다. 이제 각 뮤테이션에 자기 이름의
+# 테스트가 있다: D′ 는 침묵 판을, W′ 는 발화 판을 죽인다(아래 각 docstring 이 그 자리를 적는다).
+#
+# **결합은 남긴다.** 두 판은 같은 픽스처 헬퍼(`_register_side_correction`)와 같은 정정 한 줄
+# (`_V8_N3_CORRECTION`)을 쓰고 **`with_cm_decision` 한 줄만** 다르다 — 그 한 줄이 침묵과 발화를 가르는
+# 유일한 차이라는 것이 이 대조군의 전부이므로, 분리해도 그 사실은 코드에서 읽힌다.
+#
+# **분리가 값을 치르는 자리도 적어 둔다(§6-2).** 침묵 판만 보면 "탐지를 통째로 지워도 초록"이다 — 그
+# 방어는 이제 **파일 수준**에 있다(발화 판이 빨개진다). 그래서 발화 판을 "V8a 와 겹친다"며 지우면 안 된다:
+# V8a 는 DRIFT **경고**를 단언하지 않으므로 W′ 를 잡는 것은 저장소에서 발화 판 하나뿐이다(위 실측).
+# ═══════════════════════════════════════════════════════════════════════════
+#: 두 판이 공유하는 정정 한 줄. 대장이 자기 원문의 **발신 표기**만 고친다(`doc_id` 재료는 불변).
+_V8_N3_CORRECTION = {"sender": "동부건설(주)"}
+
+
+def test_v8_n3_silent_row_replaced_without_human_decisions_is_silent_by_design(
     client, auth, user_ids, tmp_path,
 ) -> None:
-    """N3((나)·(다) 축) — V8a 에서 **CM 확정만** 뺐다. 적재 전체가 침묵한다: `identity_drift is None`,
-    DRIFT·COLLISION 경고 0건, 검토요청 0건.
+    """N3 **침묵 판** — V8a 에서 **CM 확정만** 뺐다. 적재 전체가 침묵한다: `identity_drift is None`,
+    DRIFT·COLLISION 경고 0건, 검토요청 0건. **뮤테이션 D′(게이트 확장)를 죽이는 유일한 테스트다.**
 
     **이것은 결함을 고정하는 테스트가 아니라 "의도된 침묵"을 고정하는 테스트다.** 다음 사람이 이것을
     버그로 읽고 "고치면" 안 된다 — architect 가 ADR 0009 §5-2 "놓치는 것" 5 에서 이 비대칭을
@@ -1984,33 +2012,40 @@ def test_v8_n3_row_replaced_without_human_decisions_is_silent_by_design(
     `moved` 축(`test_v4_n3_*`)과 `merged` 축(`test_v5_n3_*`)에는 이 대조군이 이미 있고 (나)·(다) 축에만
     없었다 — CLAUDE.md §6-2 규칙 3("음성 대조군을 한 축에만 몰지 않는다")이 지목한 실패다.
 
-    **§6-2 를 이 테스트 자신에게도 적용한다.** 침묵만 단언하면 **탐지가 통째로 죽어도 초록**이다
-    (판정을 통째로 지워도 판단 없는 적재는 지금과 똑같이 침묵한다 — §5-2 "유지의 대가"가 그렇게 적는다).
-    그래서 **발화하는 짝**을 같은 테스트 안에서 함께 태운다: 같은 대장·같은 config·같은 정정, **CM 확정
-    한 줄만** 더한 판(= V8a 자체)은 검토요청 1건을 연다. 두 판의 유일한 차이가 그 한 줄이므로, 이
-    테스트는 "침묵"이 아니라 **"사람 판단이 침묵과 발화를 가른다"** 를 고정한다(V8d 에서 2주차 발화와
-    3주차 침묵을 함께 단언한 것과 같은 방법).
+    **짝은 바로 아래 발화 판이다**(`test_v8_n3_firing_…`). 같은 헬퍼·같은 정정에 `with_cm_decision`
+    한 줄만 다르다 — 침묵만 단언하는 테스트는 판정을 통째로 지워도 초록이므로(§5-2 "유지의 대가"),
+    그 방어는 발화 판이 맡는다. 둘 중 하나만 남기면 이 대조군은 아무것도 고정하지 못한다.
     """
-    silent_dir = tmp_path / "silent"
-    silent_dir.mkdir()
-    firing_dir = tmp_path / "firing"
-    firing_dir.mkdir()
-
-    silent = _register_side_correction(client, auth, user_ids, silent_dir, "V8 N3 판단 없는 대장측 정정",
-                                       corrected={"sender": "동부건설(주)"}, with_cm_decision=False)
-    assert not _reviews(client, auth, silent["project_id"], kind="document_mapping", status="approved")
+    fixture = _register_side_correction(client, auth, user_ids, tmp_path, "V8 N3 판단 없는 대장측 정정",
+                                        corrected=_V8_N3_CORRECTION, with_cm_decision=False)
+    assert not _reviews(client, auth, fixture["project_id"], kind="document_mapping", status="approved")
 
     # 침묵 — 다섯 값을 모두 건다(하나라도 비우면 "일부만 침묵"하는 구현이 통과한다).
-    silent_result = silent["job"]["result"]
-    assert silent_result["identity_drift"] is None, silent_result
-    assert not _has_warning(silent["job"], "DOCUMENT_IDENTITY_DRIFT"), _warning_messages(silent["job"])
-    assert not _has_warning(silent["job"], "DOCUMENT_IDENTITY_COLLISION"), _warning_messages(silent["job"])
-    assert silent_result["identity_drift_review_id"] is None, silent_result
-    assert _drift_reviews(client, auth, silent["project_id"]) == []
+    result = fixture["job"]["result"]
+    assert result["identity_drift"] is None, result
+    assert not _has_warning(fixture["job"], "DOCUMENT_IDENTITY_DRIFT"), _warning_messages(fixture["job"])
+    assert not _has_warning(fixture["job"], "DOCUMENT_IDENTITY_COLLISION"), _warning_messages(fixture["job"])
+    assert result["identity_drift_review_id"] is None, result
+    assert _drift_reviews(client, auth, fixture["project_id"]) == []
 
-    # …그리고 (나-i) 자체는 살아 있다. 같은 시나리오에 CM 확정 한 줄을 더하면 발화한다(= V8a).
-    # 이 짝이 없으면 판정을 통째로 지워도 위 다섯 줄이 전부 초록이다.
-    firing = _register_side_correction(client, auth, user_ids, firing_dir, "V8 N3 발화하는 짝",
-                                       corrected={"sender": "동부건설(주)"})
-    _assert_lone_row_replaced_review(client, auth, firing, ["sender"])
-    assert _has_warning(firing["job"], "DOCUMENT_IDENTITY_DRIFT"), _warning_messages(firing["job"])
+
+def test_v8_n3_firing_same_correction_with_one_cm_decision_warns_and_opens_the_review(
+    client, auth, user_ids, tmp_path,
+) -> None:
+    """N3 **발화 판** — 위 침묵 판과 **`with_cm_decision` 한 줄만** 다르다(대장 파일도 config 도 같다).
+    그 한 줄을 더하면 (나-i)이 살아나 검토요청 1건을 열고 **DRIFT 경고가 함께 뜬다.**
+
+    **왜 V8a 와 겹치지 않는가.** V8a 도 같은 정정을 태우지만 단언하는 것은 검토요청·`lost_decisions`·
+    문구뿐이고 **job 경고는 보지 않는다.** 그래서 `elif lost_decisions and not merged:` 갈래(= ADR 0009
+    §5-2 (사) 4행 "경고 한 건 없이 검토요청만 생기는 적재를 만들지 않는다")를 지우는 뮤테이션 W′ 를
+    저장소에서 잡는 것은 **이 테스트 한 건뿐이다**(실측: W′ 개별 적용 → pytest 737 중 1 failed).
+    `moved=0` 인 이 적재에서는 첫 갈래(`if moved:`)가 닫혀 있어 두 번째 갈래가 유일한 발화 경로다.
+
+    그리고 이 테스트는 침묵 판의 **무력화 방지**이기도 하다: 침묵만 단언하는 테스트는 탐지를 통째로
+    지워도 초록이다. 두 판의 유일한 차이가 CM 확정 한 줄이므로, 둘이 함께 고정하는 것은 "침묵"이 아니라
+    **"사람 판단이 침묵과 발화를 가른다"** 이다(V8d 가 2주차 발화·3주차 침묵을 함께 단언한 것과 같은 방법).
+    """
+    fixture = _register_side_correction(client, auth, user_ids, tmp_path, "V8 N3 발화하는 짝",
+                                        corrected=_V8_N3_CORRECTION)
+    _assert_lone_row_replaced_review(client, auth, fixture, ["sender"])
+    assert _has_warning(fixture["job"], "DOCUMENT_IDENTITY_DRIFT"), _warning_messages(fixture["job"])
