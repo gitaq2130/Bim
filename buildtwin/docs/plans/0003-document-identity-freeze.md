@@ -655,7 +655,149 @@ ADR 0009 §5 규칙 5(스킴 상향으로 재적재를 구분한다)가 무력�
 
 ---
 
-## 다음 호출
+## 12. 개정 2 — 병합 판정을 **행-정체 / 행-내용** 분리로 다시 세운다 (ADR 0009 개정 2)
+
+### 12-a. 왜 (요약 — 전모는 ADR 0009 §5-5)
+
+개정 1 이 병합을 "**한 적재 안에서** 두 개 이상의 대장 행이 같은 `doc_id` 로 수렴"이라고 적었고, 그
+한정어가 구현의 조건 ①(충돌 묶음)이 됐다. 사명 변경 주의 정상 운영(별칭표 통합 한 줄 + 대장에서 옛
+법인명 행이 빠짐)은 두 행을 **한 적재에 함께 두지 않으므로** 조건 ①이 거짓이고, 그래서
+`drawing_approval` 0.0 → 1.0(미승인 도면 위 착수 가능)이 **경고 0건·검토요청 0건**으로 지나간다.
+`a8c89bb` 가 고친 blocker 와 데이터 모양·결과가 같다. 대칭 짝(판단이 사라지는 쪽)도 같다.
+
+같은 조건절에 딸린 오탐 둘(상시 충돌 안의 정상 갱신 / 문서번호 열 없는 현장의 "제목만 같으면 통과")도
+이 변경이 함께 없앤다. **네 사실 모두 실행으로 확인했다** — ADR 0009 §5-2 (바) 표가 개정 1 코드와 개정 2
+조건의 결과를 나란히 싣는다.
+
+### 12-b. 작업 분배
+
+| 순서 | 에이전트 | 담당 파일 | 입력 | 출력 (입출력 계약) | 완료 조건 |
+|---|---|---|---|---|---|
+| 0 | **architect** ✅ | `docs/adr/0009-*.md`(개정 2), `CLAUDE.md` §6-3, 이 절 | 리뷰어 REJECT + 재현 | ADR 0009 §5-2 (나)~(사), §5-5 | **완료.** 재현·역방향 확인 전부 실행(§12-e), `pytest tests -q` 703 녹색 유지 |
+| 1 | **bim-ingest** | `services/ingest/persistence.py` | ADR 0009 §5-2 (나)·(다)·(라)·(마)·(사) | §12-c | 아래 6개 완료 조건 |
+| 2 | **bim-ingest** | `config/document_register.yaml` | ADR 0009 §5-2 (사), §5-3 | 경고 문구 2종 정정 | `DOCUMENT_IDENTITY_DRIFT` 문구가 "이동"을 전제하지 않는다. 두 문구의 `cause` 이름이 새 값이다 |
+| 3 | **progress-engine** | `services/progress/document_mapper.py` | ADR 0009 §5-2 (마), §5-3 | §12-d | `_CAUSE_*` 새 값, `IdentityDriftReport.lost_decisions` 항목 계약 확장, 문구 3종 재작성 |
+| 4 | **api** | `services/api/jobs.py`, `docs/api.md` | ADR 0009 §5-2 (사) | 변경 최소 — 요약 카운트 3종 유지 | **`resolve_review` 에 분기를 추가하지 않는다**(§5-3 불변). `docs/api.md` 재생성 |
+| 5 | **frontend** | `apps/web/src/api/types.ts`, `domain/identityDrift.ts`, `pages/ReviewsPage.tsx` | ADR 0009 §5-2 (마), §5-3 | §12-d 의 타입 그대로 | `IdentityDriftCause` 새 값 3종, 카드가 `new_doc_id`/`changed_fields`/`approval_flipped` 를 쓴다. 모르는 `cause` 는 `unspecified` — **`row_moved` 로 떨어뜨리지 않는다** |
+| 6 | **qa** | `tests/integration/test_17_document_identity_drift.py`, `tests/unit/ingest/test_document_identity_persistence.py` | §12-e | 회귀 그물 확장 | §12-e 의 R1·R2·P11·P9·P4·P5·P13 이 테스트로 남는다 + 블라인드 스팟 1건 실측 |
+| 7 | **reviewer** | — | 전체 diff | §9 + §12-f | 승인 |
+
+### 12-c. `services/ingest/persistence.py` (bim-ingest)
+
+```python
+def _row_identity(row: DocumentRow) -> tuple[str | None, ...]:
+    """이 `doc_id` 가 대장의 **어느 행**을 담고 있는가(대장 원문)."""
+    return (row.sender, row.doc_number, row.seq_raw, row.title)
+
+def _row_content(row: DocumentRow) -> tuple[str | None, ...]:
+    """그 행이 지금 **무엇이라고 말하는가**."""
+    return (row.result_raw, row.approval_status)
+```
+
+`_register_row_signature` 는 삭제한다(여섯 필드를 한 덩어리로 쓴 것이 개정 1 오류의 원인이다).
+
+1. **(나) `replaced`** — 이번 적재에 나타난 기존 `doc_id` 중 **(i)** 적재 전후로 `_row_identity` 가 다른
+   것, **또는 (ii)** `absorbed_into` 의 **값**에 있으면서(= 다른 `doc_id` 를 흡수했다) `_row_content` 가
+   다른 것. **`_collision_groups` 를 조건으로 쓰지 않는다.** (ii)를 빼면 ADR 0009 §5-2 (바) P13 이
+   침묵한다(개정 1 이 잡던 경로다 — 반드시 합집합).
+2. **(다) `absorbed`** — 이번 적재에 나타나지 않은 기존 행 중, 그 행의 `_row_identity` 가 이번 적재의
+   **다른** `doc_id` 아래에 그대로 있는 것. `_doc_number_compatible` 도 제목 비교도 쓰지 않는다(행-정체
+   전체 일치). 기존 가드 둘은 유지: (가)가 이미 짝지은 행 제외, 이미 고아였던 행 제외.
+   반환은 `{옛 doc_id: 지금 그 행을 담고 있는 doc_id}` — (나-ii)와 `new_doc_id` 가 이 값을 쓴다.
+3. **`merged`(충돌 묶음)는 남긴다.** `DOCUMENT_IDENTITY_COLLISION` 경고와 `lost_decisions_in_merge`
+   계산에만 쓰고, **판정 조건에서는 뺀다**.
+4. **`cause` 상수 개명**: `orphaned`→`row_moved`, `merge_overwritten`→`row_replaced`,
+   `merge_absorbed`→`row_absorbed`. 우선순위는 그대로(`setdefault`, (가)→(나)→(다)).
+5. **`lost_decisions` 항목 확장**: `{activity_id, doc_id, decision, cause, new_doc_id, changed_fields,
+   approval_flipped}`. `new_doc_id` 는 `row_replaced` 에서 `None`(다시 판단할 곳이 **없다**는 사실이다 —
+   "모른다"가 아니다). `changed_fields` 는 달라진 행-정체 필드명 목록((나-ii)로만 걸렸으면 `[]`).
+   `approval_flipped` 는 `row_moved`/`row_absorbed` 에서 언제나 `False`.
+6. **게이트를 넓힌다**: `if moved or merged or lost_decisions:`. **이 한 줄이 빠지면 1~5 가 전부
+   무효다** — 실측으로 확인했다(새 조건 + 옛 게이트 = `identity_drift=None`, 요청 0건, 고치기 전과 동일).
+   그리고 `moved` 도 `merged` 도 비었는데 `lost_decisions` 가 찬 적재에서는 `DOCUMENT_IDENTITY_DRIFT`
+   경고를 **이동 쌍 없이**(경위별 건수만) 발화한다 — 경고 0건인 채 검토요청만 생기는 적재를 만들지 않는다.
+
+**모델은 바꾸지 않는다(검토하고 기각한 대안).** (나-ii)를 "이번 적재에서 충돌 묶음에 **새로** 들어왔다"로
+쓰려면 지난 적재의 충돌 여부를 알아야 하고, 그러려면 `DocumentRow` 에 컬럼(예: `register_row_count`)이
+필요하다. 그런데 **(다)의 결과가 이미 같은 사실을 준다** — 어떤 `doc_id` 가 다른 `doc_id` 를 흡수했다는
+것은 그 `doc_id` 가 이번에 새로 뭉쳐졌다는 뜻이다. 상시 충돌(같은 두 행이 매주 올라온다)에서는 사라지는
+옛 `doc_id` 가 없어 흡수가 잡히지 않으므로 MINOR-1 오탐도 함께 막힌다. 컬럼과 마이그레이션 없이
+같은 판별이 되므로 `packages/core/models/` 는 이 개정에서 손대지 않는다.
+
+### 12-d. `services/progress/document_mapper.py` (progress-engine) + `apps/web` (frontend)
+
+```python
+IdentityDriftCause = Literal["row_moved", "row_replaced", "row_absorbed"]   # 정본은 ingest 의 상수
+class LostDecision(TypedDict):      # IdentityDriftReport.lost_decisions[] 의 계약
+    activity_id: str
+    doc_id: str
+    decision: Literal["confirmed", "rejected"]
+    cause: str                      # 모르는 값은 그대로 두고 `unspecified` 로 표시 — 폴백 금지
+    new_doc_id: str | None          # None = 다시 판단할 곳이 없다(row_replaced)
+    changed_fields: list[str]       # sender | doc_number | seq_raw | title
+    approval_flipped: bool
+```
+
+문구(§5-3): **경위 이름이 아니라 관측한 값으로 쓴다.**
+
+- `row_moved` — "대장 행은 그대로인데 우리 식별 규칙이 그 행을 새 doc_id(`new_doc_id`)로 옮겼습니다."
+  **"고아"라고 쓰지 않는다** — 시트명 변경 경로에서 `is_orphaned=False` 다(실측).
+- `row_replaced` — "이 문서가 담고 있던 대장 행이 바뀌었습니다(`changed_fields` 를 값으로 나열)."
+  **"병합"이라고 쓰지 않는다** — 그 `doc_id` 가 실제로 `merged` 묶음에 있을 때만 쓴다(주 경로는 `merged=0`).
+  `approval_flipped` 가 참일 때만 "도면 승인 근거가 뒤집혔습니다"를 덧붙인다.
+- `row_absorbed` — "판단이 가리키던 대장 행이 지금은 다른 문서(`new_doc_id`) 아래에 있습니다."
+
+`_CAUSE_ORDER` 는 위험 순서 그대로 `(row_replaced, row_absorbed, row_moved)`.
+
+### 12-e. 검증 시나리오 (qa) — 그리고 반증
+
+**전부 이미 실행으로 확인된 값이다(ADR 0009 §5-2 (바)).** 각 줄은 개정 1 코드에서 어떤 값이 나오는지도
+함께 적었다 — 그것이 이 시나리오가 결함을 잡는다는 증거다(CLAUDE.md §6-2).
+
+| ID | 시나리오 | 개정 1 코드에서 | 고정할 단언 |
+|---|---|---|---|
+| V7a | 별칭 통합 + 옛 법인명 행 삭제, 판단은 **살아남는** 쪽 | 침묵(review_id None) | `cause="row_replaced"` **그리고** `drawing_approval` 0.0→1.0 **그리고** 검토요청 1건 — **셋을 함께**(§6-2 규칙 4) |
+| V7b | 같은 삭제, config 만 안 바꿈(음성 대조군) | 동일 | `identity_drift is None`, `is_orphaned=True`, 0.0→0.5 |
+| V7c | 같은 사건, 판단이 **사라지는** 쪽 | 침묵 | `cause="row_absorbed"`, `new_doc_id` 가 살아남은 doc_id |
+| V7d | V7a 를 **문서번호 열이 없는** 대장에서 | 침묵 | 발화 유지(행-정체가 3필드로 줄어도) |
+| V7e | 상시 충돌 묶음 **안**의 정상 처리결과 갱신(MINOR-1) | 오탐 1건 | `lost_decisions == []`, 요청 0건. **COLLISION 경고는 그대로 뜬다** |
+| V7f | 무관한 충돌 + 제목 같고 문서번호 빈 행을 진짜 삭제(MINOR-2) | 오탐 1건 | `lost_decisions == []`, 고아 표시만 |
+| V7g | 문서번호 열 없음 + 행-정체까지 같은 두 행이 시트 둘에 있고 `sheet_doc_types` 로 병합 | **발화(1건)** | 발화 유지 — **(나-ii)가 빠지면 실패해야 하는 시나리오다** |
+| V7h | 게이트 회귀 — V7a 에서 `moved`·`merged` 가 둘 다 0인지 | — | `identity_drift_moved == identity_drift_merged == 0` **이면서** `identity_drift_review_id is not None` |
+| V7i | 블라인드 스팟 실측(§6-1) — `column_aliases.sender` 를 바꿔 열 자체를 옮긴다 | 미실측 | **결과를 먼저 관측하고 그 값을 단언으로 적는다.** ADR 0009 §5-2 (바) "놓치는 것" 3 에 실측값을 채워 넣는다 |
+
+**반증(이 단언들만으로는 결함을 못 잡는 것).**
+
+- `identity_drift_review_id is not None` **하나만** 걸면 오탐 코드(P6·P7 을 포함해 무엇이든 발화하는 코드)도
+  통과한다. 그래서 V7e·V7f 음성이 **같은 PR 에** 있어야 한다.
+- `cause` 문자열만 걸면 **문구가 거짓인 채로** 통과한다. 제목 단언은 문장을 베끼지 말고 "그 상황에서 참일
+  수 없는 말이 없다"로 건다(§6-4 규칙 3) — `row_replaced` 인데 "고아"·"병합"·"이동"이 제목에 있으면 실패.
+- V7a 에서 `drawing_approval` 만 걸면 **탐지가 사라져도 초록**이다(뒤집힘 자체는 의도된 동작이다).
+
+### 12-f. reviewer 추가 체크
+
+1. `services/ingest/persistence.py` 의 병합 판정에서 **`_collision_groups` 가 조건으로 쓰이지 않는가**
+   (경고·`lost_decisions_in_merge` 계산에만 쓰여야 한다).
+2. 게이트가 `moved or merged or lost_decisions` 인가. 셋 중 하나라도 빠지면 반려.
+3. `cause` 값 셋이 세 자리(ingest·document_mapper·web)에서 **같은 문자열**인가(ADR 0009 §Deferred 5).
+4. 새 문구에 그 경위에서 **참일 수 없는 말**(고아·병합·이동)이 없는가(§6-4).
+5. §12-e 표의 음성 대조군 V7e·V7f 가 같은 PR 에 있는가(§6-2 규칙 3).
+
+### 12-g. 다음 호출
+
+```
+@bim-ingest      계획 0003 §12-c 대로 services/ingest/persistence.py 의 병합 판정을 행-정체/행-내용
+                 분리로 바꾸고 게이트를 넓혀줘. config/document_register.yaml 경고 문구 2종도 함께.
+@progress-engine 계획 0003 §12-d 대로 document_mapper.py 의 _CAUSE_* 와 문구 3종을 고쳐줘.
+@api             계획 0003 §12-b 4번 — jobs.py 요약은 그대로 두고 docs/api.md 만 재생성해줘.
+@frontend        계획 0003 §12-d 타입대로 identityDrift.ts·types.ts·ReviewsPage.tsx 를 맞춰줘.
+@qa              계획 0003 §12-e 의 V7a~V7i 를 붙여줘. 각 줄의 "개정 1 코드에서" 값을 주석에 남겨.
+@reviewer        계획 0003 §12-f 추가 체크 포함해서 리뷰해줘.
+```
+
+---
+
+## 다음 호출 (개정 1까지)
 
 ```
 @progress-engine 계획 0003 §2 순서 1~4 (importers/document_register.py, config_loader.py,
