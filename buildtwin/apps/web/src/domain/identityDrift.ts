@@ -139,17 +139,77 @@ export interface LostDecisionGroup {
    * **모른다**.
    *
    * 한정어 역방향 확인 — 이 값을 "`approvalFlippedDocuments === 0`"으로 갈음하면 안 된다. 0 은
-   * "뒤집히지 않았다"(사실)와 "필드가 없어 모른다"(미상)를 같은 값으로 뭉갠다. 뭉개면 화면이 구버전
-   * 응답에 대고 "승인 상태 값은 CM 이 판단할 때와 같습니다"라고 **관측하지 못한 사실**을 단정하게 된다.
-   * `noNewDocId` 가 부재와 `null` 을 가르는 것과 같은 이유다(ADR 0009 §5-2 (마)).
+   * "뒤집히지 않았다"(사실)와 "필드가 없어 모른다"(미상)를 같은 값으로 뭉갠다. 뭉개면 승인 상태를
+   * 단정하는 문장이 **관측하지 못한 사실** 위에 서게 된다. `noNewDocId` 가 부재와 `null` 을 가르는 것과
+   * 같은 규칙이다(ADR 0009 §5-2 (마)·§5-3-b).
+   *
+   * **다만 이 갈래는 지금 어떤 저장된 요청에도 닿지 않는다 — 다음 필드를 위한 선제 방어다(실측).**
+   * 이전 판에서 이 자리는 "구버전 응답에 대고 단정하게 된다"고 적었는데, 그 말은 실행으로 재현되지
+   * 않는다. 두 사실이 함께 그렇게 만든다:
+   *
+   * 1. **이 값을 읽는 자리는 `identityDriftGroupFacts` 의 `group.cause === "row_replaced"` 안뿐이다**
+   *    (승인 상태를 단정하는 문장이 거기에만 있다). 그런데 개정 2 이전에 저장된 요청은 `cause` 도 옛
+   *    이름(`orphaned`·`merge_overwritten`·`merge_absorbed`)이라 `classifyIdentityDriftCause` 가
+   *    `unspecified` 로 보낸다 — 그 문장에 **닿지 못한다**(§5-3-a).
+   * 2. **새 `cause` 를 싣고 `approval_flipped` 는 안 싣는 기록은 생긴 적이 없다.** 실측 —
+   *    `services/ingest/persistence.py` 의 모든 리비전에서 `_CAUSE_ROW_REPLACED` 와 `approval_flipped`
+   *    는 **함께 0 이거나 함께 있다**(둘 다 `71fc0de` 에서 처음 들어왔고, 그 이전 리비전은 둘 다 0).
+   *
+   * 뮤테이션으로 갈랐다: 이 값을 `false` 로 고정해도 구버전 요청 회귀(`ReviewsPage` 의
+   * `LEGACY_DRIFT_REVIEW`)는 **초록**이고, 죽는 것은 `cause:"row_replaced"` 를 손으로 넣은 단위 입력
+   * 3건뿐이다. **대조** — `noNewDocId` 의 부재/`null` 구분을 같은 식으로 뭉개면 그 구버전 회귀가
+   * **죽는다**. 그 값을 읽는 자리(`newDocIds`/`noNewDocId` 절)는 경위 게이트 **밖**이라 옛 요청에도
+   * 닿기 때문이다. 두 갈래는 이름만 닮았고 도달 여부가 다르다.
+   *
+   * **역방향 확인(CLAUDE.md §6-3) — 그러면 무엇이 바뀌면 닿는가.** 셋 다 이 파일을 고치지 않고
+   * 일어날 수 있고, 그때 이 갈래가 없으면 화면은 조용히 거짓을 말한다:
+   * ① `classifyIdentityDriftCause` 가 옛 이름을 새 갈래로 번역하도록 바뀌면(지금은 §5-3-a 가 금지)
+   *    저장된 옛 요청이 그대로 `row_replaced` 로 들어온다. ② 생산자·백필이 저장된 JSON 의 `cause` 만
+   *    새 이름으로 마이그레이션하고 `approval_flipped` 는 채우지 않으면 같은 모양이 된다(요청 본문에는
+   *    마이그레이션이 없다는 §5-3-a 의 전제가 깨지는 경우다). ③ `LostDecision` TypedDict 를 거치지 않는
+   *    다른 생산자(리포트·수동 보정)가 새 `cause` 를 부분 필드로 실으면 같다.
+   * §5-3-b 가 "새 필드를 `LostDecision` 에 더할 때마다 '개정 이전에 저장된 요청에서 이 필드가 없으면
+   * 무엇을 말하는가'를 답한다"고 적은 그 답이, 이 필드에 대해서는 이것이다.
+   *
+   * **역방향 확인을 태운 결과**(§6-1: 적어 둔 블라인드 스팟은 최소 한 건 실제로 태운다). 저장된 옛
+   * 항목 `{cause:"merge_overwritten"}` 하나를 넣고 `identityDriftGroupFacts` 가 내놓는 문장을 읽었다:
+   *   - 지금 그대로            → `cause=unspecified`, 문장 `[]`   (이 갈래에 닿지 않는다)
+   *   - 조건 ① 만 적용         → `cause=row_replaced`, 문장 `[]`  (닿지만 갈래가 둘 다 침묵시킨다)
+   *   - 조건 ① + 두 갈래 제거  → "대장 원문(발신·문서번호·번호·제목)은 그대로인데 … — 처리결과 표기.",
+   *                             "승인 상태 값은 CM 이 판단할 때와 같습니다."
+   * 셋째 줄의 세 단정(원문 네 필드가 그대로다 / 달라진 것은 처리결과 표기뿐이다 / 승인 상태 값이 같다)은
+   * 그 기록에서 **아무것도 관측된 적이 없다.** 두 갈래가 막는 것이 바로 이것이고, 그 기록이 실제로
+   * 말할 수 있는 것은 `IDENTITY_DRIFT_CAUSE_NOTES` 의 경위 설명뿐이다.
    *
    * 서버(`_identity_drift_clause`)에는 이 갈래가 없다 — `LostDecision` TypedDict 가 `approval_flipped`
-   * 를 **필수**로 요구하므로 생산 시점에는 부재가 존재할 수 없다. 화면은 DB 에 남은 개정 2 이전 요청을
-   * 그대로 받아 그리므로 여기서만 필요하다(웹 `LostDecision.approval_flipped?: boolean | null`).
+   * 를 **필수**로 요구하므로 생산 시점에는 부재가 존재할 수 없다. 화면은 DB 에 남은 요청을 그대로 받아
+   * 그리므로 여기서만 필요하다(웹 `LostDecision.approval_flipped?: boolean | null`).
    */
   approvalFlippedUnknown: boolean;
   /** 이 묶음에서 실제로 달라진 행-정체 필드(서버가 실은 순서 그대로, 중복 제거). */
   changedFields: string[];
+  /**
+   * **어느 항목도 `changed_fields` 를 배열로 싣지 않았다** = 대장 원문 네 필드가 움직였는지 **모른다**.
+   *
+   * 한정어 역방향 확인 — 부재를 `?? []` 로 뭉개면 안 된다. 빈 배열은 이 화면에서 **관측된 사실**로
+   * 문장이 되기 때문이다("대장 원문(발신·문서번호·번호·제목)은 그대로인데…", `identityDriftGroupFacts`).
+   * 즉 부재를 `[]` 로 읽으면 화면이 관측한 적 없는 "원문 네 필드는 그대로"를 단정하고, 그 위에 선
+   * 꼬리 목록("처리결과 표기"/"승인 상태")까지 함께 거짓이 된다 — 행-정체가 움직였을 수도 있는데
+   * **달라진 것이 행-내용뿐**이라고 세어 주기 때문이다(실측: `{cause:"row_replaced",
+   * approval_flipped:false}` 하나에 "…달라졌습니다 — 처리결과 표기."가 붙었다). 그래서 이 값이 참이면
+   * 그 문장을 통째로 적지 않는다.
+   * `approvalFlippedUnknown`·`noNewDocId` 와 **같은 규칙을 같은 객체의 세 번째 필드에도** 적용한다
+   * (ADR 0009 §5-3-b: 저장된 과거 기록을 읽는 소비자는 **언제나** "값이 없다" 갈래를 하나 더 가진다).
+   * 셋 중 둘에만 적용하면 그것은 규칙이 아니라 그때그때의 재량이다.
+   *
+   * `null` 도 부재로 읽는다(`Array.isArray` 로 가른다) — 서버는 `row_replaced` 에 언제나 목록을 싣고
+   * (`persistence._ROW_IDENTITY_FIELDS`), 목록이 아닌 값은 "달라진 필드가 없다"는 관측이 아니다.
+   *
+   * 도달 여부도 `approvalFlippedUnknown` 과 같다 — **지금은 닿지 않는다**(저장된 옛 요청은 `cause` 가
+   * 옛 이름이라 `unspecified` 로 가고, 이 갈래를 쓰는 문장은 `row_replaced` 안에만 있다). 무엇이 바뀌면
+   * 닿는지는 `approvalFlippedUnknown` 의 역방향 확인 세 항목과 같다.
+   */
+  changedFieldsUnknown: boolean;
   /** 다시 판단할 수 있는 `doc_id` 들(중복 제거). 비어 있다고 "없다"는 뜻은 아니다 — `noNewDocId` 참고. */
   newDocIds: string[];
   /**
@@ -204,6 +264,7 @@ export function groupLostDecisionsByCause(lost: readonly LostDecision[]): LostDe
       approvalFlippedUnknown:
         items.length > 0 && items.every((d) => typeof d.approval_flipped !== "boolean"),
       changedFields,
+      changedFieldsUnknown: items.length > 0 && items.every((d) => !Array.isArray(d.changed_fields)),
       newDocIds,
       noNewDocId: items.length > 0 && items.every((d) => d.new_doc_id === null),
     };
@@ -232,7 +293,10 @@ export function groupLostDecisionsByCause(lost: readonly LostDecision[]): LostDe
  *    적으면 승인 상태가 그대로인 적재(실측 P13b: 행-정체가 같은 두 행의 처리결과가 `반려`/`부적합` —
  *    둘 다 `REJECTED` 라 `approval_flipped=False`)에서 CM 은 자기 승인 근거가 움직였다고 읽는다.
  *    서버 `_identity_drift_clause` 가 `132d116` 에서 같은 정정을 했다("담은 처리결과 표기가" /
- *    "담은 승인 상태가"). `approval_flipped` 를 아예 모르면(구버전 응답) 목록 자체를 적지 않는다.
+ *    "담은 승인 상태가"). `approval_flipped` 를 아예 모르면 목록 자체를 적지 않는다. 그리고
+ *    `changed_fields` **필드 자체가 없으면 이 문장을 통째로 적지 않는다**(`changedFieldsUnknown` —
+ *    빈 배열은 관측이고 부재는 미상이다, ADR 0009 §5-3-b 보정 3-b 가 같은 결정을 적었다). 앞절도
+ *    꼬리 목록도 "행-정체는 그대로"라는 그 관측 위에서만 참이기 때문이다.
  * 3. 지금 승인 상태는 어떤가 — `approval_flipped` **값**으로 세 갈래(아래 `row_replaced` 블록,
  *    서버 §5-3-b 결정표와 같은 규칙). 이 문장은 개정 2 까지 `IDENTITY_DRIFT_CAUSE_NOTES` 안에서
  *    **경위 이름만 보고 한정어 없이** "지금 보이는 승인 상태는 CM 이 보고 판단한 그 대장 행의 것이
@@ -253,7 +317,15 @@ export function identityDriftGroupFacts(group: LostDecisionGroup): string[] {
   if (group.changedFields.length > 0) {
     const labels = group.changedFields.map((name) => IDENTITY_DRIFT_FIELD_LABELS[name] ?? name);
     facts.push(`달라진 대장 원문: ${labels.join("·")}.`);
-  } else if (group.cause === "row_replaced") {
+  } else if (group.cause === "row_replaced" && !group.changedFieldsUnknown) {
+    // 역방향 확인 — `changed_fields` 를 **아예 모르면** 이 문장을 통째로 적지 않는다(ADR 0009 §5-3-b
+    // 보정 3-b). 두 절 모두 빈 배열이라는 **관측**에 기대고 있기 때문이다: 앞절("대장 원문 …은 그대로")은
+    // 그 관측 자체이고, 꼬리 목록("처리결과 표기"/"승인 상태")은 **행-정체가 그대로라서 달라진 것은
+    // 행-내용뿐**이라는 (나-ii) 전제 위에서만 참이다 — 실측으로 확인했다: 부재를 `[]` 로 읽으면
+    // `{cause:"row_replaced", approval_flipped:false}` 하나에 "…달라졌습니다 — 처리결과 표기."가 붙는데,
+    // 그 기록은 발신·제목이 바뀐 것일 수도 있다. 이 경위에서 언제나 참인 "담은 내용이 달라졌다"는
+    // `IDENTITY_DRIFT_CAUSE_NOTES.row_replaced` 가 카드에 늘 함께 그려 주므로(`ReviewsPage`) 잃지 않는다.
+    //
     // 값에서 유도한 목록은 **꼬리에 붙인다**(`달라진 대장 원문: …` 과 같은 형태). 문장 가운데 넣으면
     // 뒤에 조사가 붙는데, 라벨의 받침이 런타임에 갈려 절반이 틀린다(서버가 `_particle` 을 태우는 이유).
     const head = "대장 원문(발신·문서번호·번호·제목)은 그대로인데, 그 doc_id 가 담은 내용이 달라졌습니다";
@@ -283,6 +355,9 @@ export function identityDriftGroupFacts(group: LostDecisionGroup): string[] {
       // 역방향 확인 — 이 갈래에서 "달라진 것은 대장 원문"이라고 적으면 `changed_fields === []` 가 말하는
       // 바로 그 사실(원문 네 필드는 그대로)을 뒤집는 거짓이 된다. 무엇이 달라졌는지는 위 문장이 이미
       // 적었으므로 여기서는 승인 상태만 말한다(서버 §5-3-b 결정표 셋째 줄).
+      // 이 자리는 `changedFieldsUnknown`(필드 부재)도 함께 받는다 — 그때도 이 문장은 참이다.
+      // `approval_flipped=false` 는 **관측한 값**이라 승인 상태는 단정할 수 있고, 대장 원문에 대해
+      // 이 문장은 아무 말도 하지 않기 때문이다(그 말을 하던 위 문장은 부재일 때 아예 빠진다).
       facts.push("승인 상태 값은 CM 이 판단할 때와 같습니다.");
     }
   }

@@ -103,6 +103,34 @@ describe("groupLostDecisionsByCause", () => {
     expect(g.approvalFlippedDocuments).toBe(1);
   });
 
+  it("`changed_fields` **부재**는 '원문 네 필드는 그대로'가 아니라 '모른다'다", () => {
+    // `?? []` 로 뭉개면 빈 배열이 되는데, 빈 배열은 이 화면에서 **관측된 사실**로 문장이 된다
+    // ("대장 원문(…)은 그대로인데…"). 그래서 `approval_flipped`·`new_doc_id` 와 같은 규칙을 이 필드에도
+    // 적용한다(ADR 0009 §5-3-b — 저장된 기록을 읽는 소비자는 **언제나** '값이 없다' 갈래를 더 가진다).
+    const [missing] = groupLostDecisionsByCause([{ doc_id: "d1", cause: "row_replaced" }]);
+    expect(missing.changedFields).toEqual([]);
+    expect(missing.changedFieldsUnknown).toBe(true);
+
+    // 빈 배열은 관측이다 — 부재와 같은 값으로 뭉개지 않는다.
+    const [observedEmpty] = groupLostDecisionsByCause([
+      { doc_id: "d1", cause: "row_replaced", changed_fields: [] },
+    ]);
+    expect(observedEmpty.changedFieldsUnknown).toBe(false);
+
+    // 목록이 아닌 값(`null`)도 관측이 아니다 — 서버는 이 경위에 언제나 목록을 싣는다.
+    const [nulled] = groupLostDecisionsByCause([
+      { doc_id: "d1", cause: "row_replaced", changed_fields: null },
+    ]);
+    expect(nulled.changedFieldsUnknown).toBe(true);
+
+    // 한 항목이라도 목록을 실었으면 '모른다'가 아니다.
+    const [partial] = groupLostDecisionsByCause([
+      { doc_id: "d1", cause: "row_replaced" },
+      { doc_id: "d2", cause: "row_replaced", changed_fields: ["sender"] },
+    ]);
+    expect(partial.changedFieldsUnknown).toBe(false);
+  });
+
   it("`approval_flipped` **부재**는 '뒤집히지 않았다'가 아니라 '모른다'다", () => {
     // approvalFlippedDocuments === 0 은 두 사실을 뭉갠다 — false(관측)와 부재(미상). 뭉개면 화면이
     // 구버전 응답에 대고 "승인 상태 값은 CM 이 판단할 때와 같습니다"라고 단정하게 된다(`noNewDocId` 와
@@ -187,6 +215,29 @@ describe("identityDriftGroupFacts — 값이 없으면 문장도 없다", () => 
     const unknown = contentFact([{ doc_id: "d1", cause: "row_replaced", changed_fields: [], new_doc_id: null }]);
     expect(unknown).toMatch(/내용이 달라졌습니다\.$/);
     expect(unknown).not.toMatch(/처리결과 표기|승인 상태/);
+  });
+
+  it("`changed_fields` 를 모르면 대장 원문에 대해 **어느 쪽으로도** 말하지 않는다", () => {
+    // 부재를 `[]` 로 읽으면 화면은 "원문 네 필드는 그대로"라고 관측한 적 없는 사실을 단정한다.
+    // 문장을 통째로 베끼지 않고 "그 상황에서 참일 수 없는 말이 없다"를 건다(CLAUDE.md §6-4 규칙 3).
+    const unknown = factsFor([
+      { doc_id: "d1", cause: "row_replaced", approval_flipped: false, new_doc_id: null },
+    ]);
+    // 원문 네 필드를 관측했다는 말은 어느 형태로도 있을 수 없다 — "그대로"(부재를 관측으로 읽음)도,
+    // "달라진 대장 원문: …"(무엇이 달라졌는지 안다)도.
+    expect(unknown).not.toMatch(/대장 원문/);
+    // 꼬리 목록도 같은 관측 위에 서 있다 — "달라진 것은 처리결과 표기뿐"은 행-정체가 그대로라는 사실
+    // ((나-ii))이 있어야 참이고, 부재는 그 사실이 아니다.
+    expect(unknown).not.toMatch(/처리결과 표기/);
+    // 그렇다고 승인 상태까지 함께 삼키지는 않는다 — `approval_flipped=false` 는 **관측한 값**이다.
+    expect(unknown).toMatch(/승인 상태 값은 CM 이 판단할 때와 같습니다/);
+
+    // 반대쪽 — 빈 배열은 관측이므로 그 절이 살아 있어야 한다. 한쪽만 걸면 그 문장을 아예 안 적는
+    // 구현도 통과한다(CLAUDE.md §6-2).
+    const observed = factsFor([
+      { doc_id: "d1", cause: "row_replaced", approval_flipped: false, new_doc_id: null, changed_fields: [] },
+    ]);
+    expect(observed).toMatch(/대장 원문\(발신·문서번호·번호·제목\)은 그대로인데/);
   });
 
   it("다시 판단할 곳은 new_doc_id **값**에서 읽는다 — 없으면 없다고, 모르면 아무 말도 하지 않는다", () => {
