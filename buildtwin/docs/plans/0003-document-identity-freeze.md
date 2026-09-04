@@ -2,6 +2,9 @@
 
 - 작성: architect
 - 날짜: 2026-09-04
+- **개정 2 보정: 2026-09-04 — 실행이 잡아낸 §12 의 오류 5건을 §12-h 에 정정.** ADR 0009 쪽 대응은 그
+  문서의 "개정 2 보정"이다(블라인드 스팟 실측 채움 · "한 적재는 여러 경위" 명시 · 구버전 저장 요청 경로
+  결정 · `cause` 정본 세 자리 → 네 자리).
 - **개정 1: 2026-09-04 — 실행이 잡아낸 이 계획의 오류 9건을 정정.** 이 계획은 이미 실행된 문서이지만
   다음 사이클이 참고 사례로 읽으므로 **틀린 문장을 지우지 않고 정정 블록과 함께 남긴다.** 정정 목록은
   §11. 가장 값진 것은 **§7 V3b 가 왜 blocker 를 못 보게 만들었는가**(양성 케이스에 사람 판단을 걸지 않아
@@ -675,10 +678,10 @@ ADR 0009 §5 규칙 5(스킴 상향으로 재적재를 구분한다)가 무력�
 |---|---|---|---|---|---|
 | 0 | **architect** ✅ | `docs/adr/0009-*.md`(개정 2), `CLAUDE.md` §6-3, 이 절 | 리뷰어 REJECT + 재현 | ADR 0009 §5-2 (나)~(사), §5-5 | **완료.** 재현·역방향 확인 전부 실행(§12-e), `pytest tests -q` 703 녹색 유지 |
 | 1 | **bim-ingest** | `services/ingest/persistence.py` | ADR 0009 §5-2 (나)·(다)·(라)·(마)·(사) | §12-c | 아래 6개 완료 조건 |
-| 2 | **bim-ingest** | `config/document_register.yaml` | ADR 0009 §5-2 (사), §5-3 | 경고 문구 2종 정정 | `DOCUMENT_IDENTITY_DRIFT` 문구가 "이동"을 전제하지 않는다. 두 문구의 `cause` 이름이 새 값이다 |
+| 2 | ~~bim-ingest~~ → **progress-engine** (정정 → §12-h 4) | `config/document_register.yaml` | ADR 0009 §5-2 (사), §5-3 | 경고 문구 2종 정정 | `DOCUMENT_IDENTITY_DRIFT` 문구가 "이동"을 전제하지 않는다. 두 문구의 `cause` 이름이 새 값이다 |
 | 3 | **progress-engine** | `services/progress/document_mapper.py` | ADR 0009 §5-2 (마), §5-3 | §12-d | `_CAUSE_*` 새 값, `IdentityDriftReport.lost_decisions` 항목 계약 확장, 문구 3종 재작성 |
 | 4 | **api** | `services/api/jobs.py`, `docs/api.md` | ADR 0009 §5-2 (사) | 변경 최소 — 요약 카운트 3종 유지 | **`resolve_review` 에 분기를 추가하지 않는다**(§5-3 불변). `docs/api.md` 재생성 |
-| 5 | **frontend** | `apps/web/src/api/types.ts`, `domain/identityDrift.ts`, `pages/ReviewsPage.tsx` | ADR 0009 §5-2 (마), §5-3 | §12-d 의 타입 그대로 | `IdentityDriftCause` 새 값 3종, 카드가 `new_doc_id`/`changed_fields`/`approval_flipped` 를 쓴다. 모르는 `cause` 는 `unspecified` — **`row_moved` 로 떨어뜨리지 않는다** |
+| 5 | **frontend** | `apps/web/src/api/types.ts`, `domain/identityDrift.ts`, `pages/ReviewsPage.tsx` | ADR 0009 §5-2 (마), §5-3 | §12-d 의 타입 그대로 | `IdentityDriftCause` 새 값 3종, 카드가 `new_doc_id`/`changed_fields`/`approval_flipped` 를 쓴다. 모르는 `cause` 는 `unspecified` — **`row_moved` 로 떨어뜨리지 않는다**. **(정정 → §12-h 3)** 여기에 `row_absorbed` **문구 정정**이 빠져 있었다: 옛 웹 문구는 "흡수돼 **사라졌습니다** / 다시 확정할 새 doc_id 가 **없습니다**"인데, `row_absorbed` 는 `new_doc_id` 가 **있다**(§12-d 셋째 항목이 정본) |
 | 6 | **qa** | `tests/integration/test_17_document_identity_drift.py`, `tests/unit/ingest/test_document_identity_persistence.py` | §12-e | 회귀 그물 확장 | §12-e 의 R1·R2·P11·P9·P4·P5·P13 이 테스트로 남는다 + 블라인드 스팟 1건 실측 |
 | 7 | **reviewer** | — | 전체 diff | §9 + §12-f | 승인 |
 
@@ -749,6 +752,20 @@ class LostDecision(TypedDict):      # IdentityDriftReport.lost_decisions[] 의 �
 
 `_CAUSE_ORDER` 는 위험 순서 그대로 `(row_replaced, row_absorbed, row_moved)`.
 
+**(정정 → §12-h 2) 문구의 꼬리 — "어디를 되돌려야 하는가".** 위 세 항목은 문장의 **몸통**(무슨 일이
+일어났는가)만 지시했고, 그래서 몸통을 고치는 동안 꼬리는 손대지 않은 채 남아 **검토요청 제목**
+(`_identity_drift_review_title`)과 **화면 안내**(`identityDriftRemedyNote`) 두 자리가 무조건
+"config 를 되돌리십시오"라고 적고 있었다. 그 문장은 **워크북 시트명 변경 경로에서 거짓**이다 —
+config 를 한 글자도 바꾸지 않았으므로(`fingerprint_changed=False`, ADR 0009 §5-2 서두) CM 은 바뀐 적 없는
+config 를 뒤지게 되고 진짜 원인(대장 파일 쪽 입력)은 문구 밖에 남는다. 꼬리는 **지문에서 유도한다**:
+
+- 지문이 달라졌다 → "식별 표면 config 가 바뀌었습니다 — 되돌리고 대장을 다시 올리십시오"
+- 지문이 같다 → "config 는 그대로입니다 — 대장 파일 쪽 입력(워크북 시트명 등)을 확인하십시오"
+- 이전 지문이 없다(첫 적재) → **어느 쪽도 단정하지 않는다**
+
+두 방향을 **짝으로** 고정해야 걸린다(V7a 는 지문이 바뀐 쪽, 시트명 경로는 안 바뀐 쪽) — 한쪽만 있으면
+"언제나 config 라고 쓰는" 구현이 그대로 통과한다.
+
 ### 12-e. 검증 시나리오 (qa) — 그리고 반증
 
 **전부 이미 실행으로 확인된 값이다(ADR 0009 §5-2 (바)).** 각 줄은 개정 1 코드에서 어떤 값이 나오는지도
@@ -760,7 +777,7 @@ class LostDecision(TypedDict):      # IdentityDriftReport.lost_decisions[] 의 �
 | V7b | 같은 삭제, config 만 안 바꿈(음성 대조군) | 동일 | `identity_drift is None`, `is_orphaned=True`, 0.0→0.5 |
 | V7c | 같은 사건, 판단이 **사라지는** 쪽 | 침묵 | `cause="row_absorbed"`, `new_doc_id` 가 살아남은 doc_id |
 | V7d | V7a 를 **문서번호 열이 없는** 대장에서 | 침묵 | 발화 유지(행-정체가 3필드로 줄어도) |
-| V7e | 상시 충돌 묶음 **안**의 정상 처리결과 갱신(MINOR-1) | 오탐 1건 | `lost_decisions == []`, 요청 0건. **COLLISION 경고는 그대로 뜬다** |
+| V7e | 상시 충돌 묶음 **안**의 정상 처리결과 갱신(MINOR-1). **(정정 → §12-h 1) 기존 `n1b` 로 갈음할 수 없다** — 저쪽은 갱신된 문서가 묶음 **밖**이라 개정 1 의 조건 ①이 애초에 거짓이었고 오탐을 재현하지 못한다 | 오탐 1건 | `lost_decisions == []`, 요청 0건. **COLLISION 경고는 그대로 뜬다** |
 | V7f | 무관한 충돌 + 제목 같고 문서번호 빈 행을 진짜 삭제(MINOR-2) | 오탐 1건 | `lost_decisions == []`, 고아 표시만 |
 | V7g | 문서번호 열 없음 + 행-정체까지 같은 두 행이 시트 둘에 있고 `sheet_doc_types` 로 병합 | **발화(1건)** | 발화 유지 — **(나-ii)가 빠지면 실패해야 하는 시나리오다** |
 | V7h | 게이트 회귀 — V7a 에서 `moved`·`merged` 가 둘 다 0인지 | — | `identity_drift_moved == identity_drift_merged == 0` **이면서** `identity_drift_review_id is not None` |
@@ -779,7 +796,7 @@ class LostDecision(TypedDict):      # IdentityDriftReport.lost_decisions[] 의 �
 1. `services/ingest/persistence.py` 의 병합 판정에서 **`_collision_groups` 가 조건으로 쓰이지 않는가**
    (경고·`lost_decisions_in_merge` 계산에만 쓰여야 한다).
 2. 게이트가 `moved or merged or lost_decisions` 인가. 셋 중 하나라도 빠지면 반려.
-3. `cause` 값 셋이 세 자리(ingest·document_mapper·web)에서 **같은 문자열**인가(ADR 0009 §Deferred 5).
+3. `cause` 값 셋이 **네 자리**에서 **같은 문자열**인가(ADR 0009 §Deferred 5 표) — `services/ingest/persistence.py`(생산), `services/progress/document_mapper.py`(소비·문구), `apps/web/src/domain/identityDrift.ts`(화면), 그리고 `packages/core/models/review.py` 의 `ReviewKind` **주석**. 네 번째는 상수가 아니라 주석이라 **어떤 테스트도 실패시키지 않는다** — 그래서 개정 2 개명이 실제로 이 자리를 옛 이름에 남겨 둔 채 커밋됐다(정정 → §12-h 5). 이 체크가 "세 자리"라고 적혀 있던 것이 그 누락을 통과시킨 장치다.
 4. 새 문구에 그 경위에서 **참일 수 없는 말**(고아·병합·이동)이 없는가(§6-4).
 5. §12-e 표의 음성 대조군 V7e·V7f 가 같은 PR 에 있는가(§6-2 규칙 3).
 
@@ -794,6 +811,29 @@ class LostDecision(TypedDict):      # IdentityDriftReport.lost_decisions[] 의 �
 @qa              계획 0003 §12-e 의 V7a~V7i 를 붙여줘. 각 줄의 "개정 1 코드에서" 값을 주석에 남겨.
 @reviewer        계획 0003 §12-f 추가 체크 포함해서 리뷰해줘.
 ```
+
+### 12-h. 개정 2 — 실행이 잡아낸 **이 절(§12)의** 오류 (전수)
+
+§12 도 이미 실행됐다(`71fc0de` — pytest 719 / vitest 219 / lint 0). 이 표는 되돌리기 위한 것이 아니라
+**다음 사이클이 참고 사례로 읽기 위한** 것이며, §11 과 같은 규칙으로 **틀린 문장을 지우지 않고** 정정
+마커(`(정정 → §12-h N)`)를 원문 옆에 붙였다. 다섯 건 전부 하류(qa·frontend·bim-ingest)가 **실행으로**
+잡았다 — 계획을 쓰는 시점에는 보이지 않는 종류다(CLAUDE.md §6 머리말).
+
+| # | 자리 | 오류 | 정정 |
+|---|---|---|---|
+| 1 | §12-e V7e | 시나리오 설명이 기존 `n1b`(묶음 **밖** 갱신)로 **갈음할 수 있는 것처럼** 읽혔다 | `n1b` 는 개정 1 의 조건 ①이 **애초에 거짓**이라 오탐을 재현하지 못한다. 조건 ①이 실제로 걸리던 자리는 갱신이 묶음 **안**인 적재다 — qa 의 뮤테이션 검증 6건이 그 자리를 확인했고, 회귀 `test_v7e_*` 의 도스트링이 `n1b` 와의 차이를 그대로 적어 두었다 |
+| 2 | §12-d | 문구의 **몸통**만 지시하고 **꼬리**(어디를 되돌려야 하는가)를 언급하지 않았다 → 검토요청 제목과 화면 안내 **두 자리**가 무조건 "config 를 되돌리십시오"라고 적었다. **시트명 경로에서 거짓**(`fingerprint_changed=False`) | 꼬리를 지문에서 유도하고, 지문이 바뀐 쪽/안 바뀐 쪽을 **짝으로** 고정(§12-d 정정 블록) |
+| 3 | §12-b 5행(프런트 몫) | `row_absorbed` **문구 정정**을 지목하지 않았다 | 옛 웹 문구는 "흡수돼 **사라졌습니다** / 다시 확정할 새 doc_id 가 **없습니다**"인데 `row_absorbed` 는 `new_doc_id` 가 **있다**(§12-d 셋째 항목이 정본). 이름만 바꾸고 문구를 두면 개명이 걷어낸 거짓이 남는다 |
+| 4 | §12-b 2행 | `config/document_register.yaml` 을 **bim-ingest** 에 배정했다 — 이 계획 **자신의 §3-c**("(progress-engine)")·`config/README.md`·CLAUDE.md §2 와 어긋난다 | 소유는 **progress-engine** 이다. 이 파일은 대장 레이아웃·처리결과 정규화·매핑 가중치를 담고 `services/progress` 만 읽는다. `config/` 안에서 bim-ingest 몫은 `ingest.yaml` 하나다. **계획 쪽이 틀렸으므로 계획을 고친다**(§12-b 2행). 개정 2 구현에서 bim-ingest 가 이 배정대로 그 파일을 고쳤다 — CLAUDE.md §2 의 예외("architect 가 계획에 명시한 경우")에 걸려 규칙 위반은 아니지만 그 예외를 **오배정으로** 쓴 것이다. 다음 변경부터 progress-engine 이 가져간다 |
+| 5 | §12-f 체크 3 | `cause` 정본이 "**세 자리**"라고 적었다 | 실제로는 **네 자리** — `packages/core/models/review.py` 의 `ReviewKind` 주석이 빠져 있었다. 그 결과 개정 2 의 개명이 코드 세 자리만 고치고 **주석은 옛 이름(`orphaned` = "판단이 가리키던 행이 고아가 됐다")에 남긴 채** 커밋됐다 — ADR 0009 §5-3 정정 ①이 거짓이라고 지목한 바로 그 문장이다. ADR §Deferred 5 의 목록도 함께 고쳤다 |
+
+**이 목록에서 뽑아 낼 것.** 1·3 은 **"이미 있는 것으로 갈음된다"** 는 확인하지 않은 약속이고
+(§11 #5·#9-4 와 같은 모양 — CLAUDE.md §6-1 "다른 절을 가리켜 확인을 갈음하지 않는다"), 2·3 은 값을 고치는
+지시가 **그 값을 읽는 문구까지 따라가지 않은** 것이다(CLAUDE.md §6-3 마지막 항목: "조건을 바꾸면 그 결과를
+소비하는 게이트·문구도 같은 PR 에서 확인한다" — 게이트에는 적용해 놓고 문구의 꼬리에는 적용하지 않았다).
+4·5 는 **목록의 자리 수**가 틀린 것이고, 5 는 그 목록이 곧 리뷰어의 체크였으므로 **누락을 통과시키는
+장치**로 작동했다. 특히 5 는 CLAUDE.md §6-4 규칙 2 의 사각지대다 — 문구·값의 정본이 **주석**에 있으면
+테스트가 없고, 없는 것은 조용히 낡는다.
 
 ---
 
