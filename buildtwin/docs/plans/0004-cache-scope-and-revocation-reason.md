@@ -57,7 +57,7 @@
 | **5** | `frontend` | `apps/web/src/api/sessionCache.ts`(신규), `main.tsx`, `test/utils.tsx` | ADR 0010 규칙 2·3 | `installSessionCacheGuard(qc, store)` + 진입점 설치 + **테스트 유틸에도 설치** | 스토어가 React Query 를 import 하지 않는다. `logout()` 본문 불변. `renderWithProviders` 가 가드를 설치한다 |
 | **6** | `frontend` | `apps/web/src/api/hooks.ts` | ADR 0010 규칙 4 | `useResolveReview` 가 `drawingMappings` 도 무효화 | `kind=="mapping"` 해소 후 뷰어 2D↔3D 매핑이 갱신된다. `drawingMappings` 무효화 호출 ≥ 1곳 |
 | **2-a** | `api` | `services/api/errors.py`, `services/api/scripts/gen_api_doc.py`, `docs/api.md`, `docs/glossary.md`(행 추가) | ADR 0011 규칙 1-a | `RevocationReasonRequiredError` 전용 핸들러 → 409 + `code="revocation_reason_required"` | 상태코드 409 유지, `from_state`/`to_state`/`actor` 유지. **초판 계획에 이 행이 없었다** — 아래 §계획과 사실이 어긋난 자리 |
-| **7** | `qa` | `tests/unit/`, `tests/integration/`(**`test_18_revocation_reason.py` 포함**), `apps/web/src/**/*.test.tsx` | 아래 §검증 시나리오 **V1~V10**(초판은 "V1~V7"이라고 적었다) | 테스트 + `tests/metrics.json` 갱신 | **각 시나리오가 §6-2 반증 조건을 통과**해야 한다(아래 반증 목록) |
+| **7** | `qa` | `tests/unit/`, `tests/integration/`(**`test_18_revocation_reason.py` 포함**), `apps/web/src/**/*.test.tsx`, `apps/web/src/test/**`(하네스 — 작업 5 와 공동 편집, 아래 §계획과 사실이 어긋난 자리 참조) | 아래 §검증 시나리오 **V1~V10**(초판은 "V1~V7"이라고 적었다) | 테스트 + `tests/metrics.json` 갱신 | **각 시나리오가 §6-2 반증 조건을 통과**해야 한다(아래 반증 목록) |
 | **8** | `reviewer` | — | 전체 | 리뷰 | ADR 0010·0011 이 §6-1·§6-3 을 지켰는지, 대조표 칸이 참조로 갈음되지 않았는지, 새 문구가 §6-4 를 지켰는지 |
 
 **순서 제약.** 1 은 어디에도 매이지 않는다(먼저·독립). 2 → 3(모델이 먼저 서야 화면 요건이 거짓말이
@@ -173,10 +173,17 @@ Zustand 슬라이스 정의 파일 전부)
 
 ## 열린 질문 / 리스크
 
-1. **같은 사용자의 프로젝트 역할 변경**(ADR 0010 §Deferred 1). `useAddMember`/`useUpdateMember` 가
-   `members(pid)` 만 무효화하고 `my_role` 의 출처인 `project(pid)` 를 무효화하지 않는다. ADR 0010
-   규칙 1 을 적용하면 `["projects", pid]` 로 덮을 수 있는 자리가 열리지만, **실측을 하지 않았으므로
-   이번 범위에 넣지 않는다.** 다음 사이클에서 태워야 한다.
+1. **같은 사용자의 프로젝트 멤버십 변경**(ADR 0010 §Deferred 1). `useAddProjectMember`
+   (`hooks.ts:459`)·`useRemoveProjectMember`(`hooks.ts:466`) 가 `members(pid)` 만 무효화하고 `my_role`
+   의 출처인 `project(pid)` 를 무효화하지 않는다. **역할 변경 API 는 없다**(`routers/projects.py` 의
+   멤버십 엔드포인트는 `GET`·`POST`·`DELETE` 뿐) — 역할을 바꾸는 경로는 remove → add 이므로
+   **두 훅이 같은 모양을 각각 갖는다.** 다만 **"두 줄 고치면 닫힌다"는 것은 거짓이다**(재심 중 추가
+   발견, ADR 0010 §Deferred 1 에 실측과 함께 적었다): 두 훅을 부르는 화면은 `RequireAdmin` 뒤의
+   `ProjectMembersPage` 하나뿐이고 **admin 의 `my_role` 은 항상 `None`** 이라, 무효화를 수행하는
+   클라이언트에서 `project(pid)` 는 멤버십에 따라 달라지는 값을 싣지 않는다. 낡은 역할을 보는 것은
+   **다른 브라우저**이므로 클라이언트측 무효화로는 원리상 닫히지 않는다 — 서버→클라이언트 통보
+   문제다. **실측(그 화면이 언제 새 `my_role` 을 받는가)을 하지 않았으므로 이번 범위에 넣지 않는다.**
+   다음 사이클에서 태워야 한다.
 2. **검토요청 반려의 `requireNote` 가 화면에만 있다**(ADR 0011 §Deferred 2). `ReviewsPage.tsx:177` ↔
    `usecases.resolve_review(… note: str | None …)`. ADR 0011 과 같은 모양이지만 다른 경로다.
 3. **`drawingEntities`/`planSection` 재업로드 경로.** `UploadPage.tsx:150` 은 `["projects", pid]` 로
@@ -214,6 +221,34 @@ V8~V10 을 받을 칸 자체가 없었기 때문이다. **§6-3 의 마지막 �
 V10 의 웹 테스트는 frontend 가 썼다(`2520619`). 테스트 자체의 품질 문제가 아니라 **소유가 비어 있었다**는
 문제다. ②의 실해는 계획 문서의 거짓 문장 하나(고쳤다).
 
+### 같은 모양이 한 커밋 뒤에서 반대 방향으로 (재심 major-2, 2026-09-04)
+
+`2038bbb` 는 api ↔ `test_18` 의 소유를 위처럼 명시했지만 **바로 앞 커밋의 자기 위반은 보지 못했다.**
+`91e132a`(qa 커밋)가 `apps/web/src/test/utils.tsx` 를 고쳤는데, 이 계획 **작업 5 가 그 파일을
+`frontend` 에 배정**했고(같은 표), qa 에이전트 정의의 예외는 `apps/web/src/**/*.test.ts(x)` 뿐이라
+접미사가 없는 `utils.tsx` 는 매칭되지 않았다 → 형식 체크 3 FAIL. §6-3 ②("규칙과 그 위반은 같은 커밋
+범위에서 함께 태어난다")의 세 번째 사례다.
+
+**실해 0.** `apps/web/src/test/` 에는 `fixtures.ts`·`setup.ts`·`utils.tsx` 셋뿐이고 비-테스트 코드의
+import 는 **0건**이다(실측: `grep -rn "test/utils\|test/fixtures\|test/setup" apps/web/src` 에서
+`*.test.tsx` 를 뺀 히트 0, 유일한 참조는 `apps/web/vite.config.ts:20 setupFiles`).
+
+**어느 쪽으로 닫았는가 — 에이전트 정의 쪽(`.claude/agents/qa.md`).** 근거 셋.
+① **자리가 맞다.** `.claude/agents/` 는 architect 소유다(CLAUDE.md §2 디렉터리 표).
+② **이 구멍은 이 계획의 것이 아니다.** 계획 작업 7 의 파일 목록만 고치면 **이 사이클만** 닫히고,
+다음 계획에서 qa 가 같은 하네스를 건드리는 날 같은 FAIL 이 다시 난다. 뚫린 것은 계획의 한 행이 아니라
+**qa 예외의 생성 축**이다 — 그 축이 **파일명 접미사**(`*.test.ts(x)`)라 "테스트 지원 파일"을 받을 칸이
+없었다(§6-1: 생성 기준이 곧 목록의 한계).
+③ 그럼에도 계획 작업 7 의 파일 목록에도 같은 항목을 **함께** 넣었다. 두 자리가 서로 다른 축으로 남으면
+그것이 정확히 회차 8(한 문서 두 표의 축 불일치)의 모양이기 때문이다 — 읽는 사람이 어느 쪽을 열어도
+같은 답이 나와야 한다.
+
+*역방향 확인 — 넓힌 예외가 들이는 것.* `apps/web/src/test/**` 는 **배타 소유가 아니라 공동 편집
+자리**로 넓혔다(작업 5 가 가드 설치를 frontend 에 배정한 것이 그대로 유효하다). 그리고 "테스트 전용
+디렉터리"라는 근거는 **비-테스트 코드가 여기서 import 하지 않는다**에 기대고 있다 — 앱 모듈이 여기서
+import 하는 날 이 예외의 근거는 사라진다. 그 전제는 위 실측(import 0건)이고, 낡을 수 있는 값이므로
+qa 정의에도 같은 문장으로 적어 두었다.
+
 **다음 계획에 거는 요구(§6-1 규칙의 이행).** 계획 문서 안에 표가 둘 이상이면, 각 표의 **생성 축**을
 표 옆에 적고 **한 표의 행이 다른 표의 어느 칸으로 들어가는지**를 마지막에 한 번 대조한다. 여기서는
 "시나리오 V# → 그것을 쓰는 작업 행"의 대응이 그 대조였다.
@@ -235,10 +270,20 @@ V10 의 웹 테스트는 frontend 가 썼다(`2520619`). 테스트 자체의 품
    이 grep 밖이다. 그리고 현재 시제로 적힌 거짓("핸들러는 다섯뿐" 같은 개수·목록 주장)도 밖이다.
    즉 이것은 **부분 방어**이고, 그렇게 적어 두는 것이 이 검사의 값이다 — "커버한다"고 적으면
    다음 사이클이 그것을 커버리지로 읽는다(§6-1: "놓칠 수 있다"고 적는 것은 커버리지가 아니다).
-   *리뷰어가 함께 제안한 대안(주석이 언급하는 심볼·경로가 실재하는지 보는 grep)은 채택하지 않는다.*
-   이번 거짓 문장이 언급한 심볼·경로(`services/api/errors.py`, `revocation_reason_required`)는
-   **전부 실재한다** — 그 검사는 이번 major 를 잡지 못했다. 관측된 적 없는 종류(끊어진 참조)를 막느라
-   관측된 종류를 놓치는 검사를 CI 에 넣지 않는다.
+   *리뷰어가 함께 제안한 대안(주석이 언급하는 심볼·경로가 실재하는지 보는 grep)은 이 항목에
+   채택하지 않는다.* 이번 거짓 문장이 언급한 심볼·경로(`services/api/errors.py`,
+   `revocation_reason_required`)는 **전부 실재한다** — 그 검사는 이번 major 를 잡지 못한다.
+   리뷰어가 재심에서 `0dd2a12` 트리에 실제로 태워 **MISSING 0건**으로 그 결론을 확인했다.
+   *역방향 확인 — 이 기각의 근거가 놓치는 것(§6-1 ②를 기각문 자신에 대해 답한다).* 초판은 근거를
+   "**관측된 적 없는 종류**(끊어진 참조)를 막느라 관측된 종류를 놓친다"고 적었는데 **그 근거는
+   거짓이다.** 끊어진 참조는 이 사이클에 **2건 관측됐다** — ADR 0010 §Deferred 1 과 이 계획 §열린 질문 1
+   이 코드에 없는 `useAddMember`·`useUpdateMember` 를 이름 붙였다(재심 major-1, 위에서 고쳤다).
+   그러므로 기각의 근거는 "그런 종류가 없다"가 아니라 **"자리가 다르다"**이다: 이 항목의 검사 범위는
+   `packages/core/models/` 주석인데 관측된 2건은 `docs/` 에 있었고, 그 검사를 `docs/` 로 넓혀도
+   이 항목이 막으려는 낡은 주석 3건(값·개수 주장)은 여전히 밖이다. 즉 두 검사는 **서로 다른 결함
+   집합**을 덮으며 하나가 다른 하나를 대체하지 못한다. `docs/` 쪽 검사 자체의 값은 리뷰어 실측으로
+   신호 2 / 잡음 4(SHA·grep 패턴 인용, 기계적 제거 가능)였다 — **별개 항목으로 다룰 값이 있으나**
+   이 항목의 `make lint` 한 줄에 섞지 않는다(범위가 다르면 완료 조건도 다르다).
 2. **`apps/web/src/components/ErrorBox.test.tsx:48`(qa/frontend).** 그 테스트가 픽스처로 들고 있는
    `detail` 문자열이 서버의 옛 문구(`… by cm not allowed. leaving CONFIRMED requires evidence.note …`)다.
    단언은 그 값을 **입력**으로만 쓰므로 이번 변경으로 깨지지 않지만(vitest 확인), 지금은 서버가 내지
@@ -246,6 +291,23 @@ V10 의 웹 테스트는 frontend 가 썼다(`2520619`). 테스트 자체의 품
 3. **`docs/api.md`(api 소유, 자동 생성) — 확인했고 조치 없음.** `RevocationReasonRequiredError` 를
    언급하는 자리(`:221`·`:230`·`:234`)는 응답 **모양**과 code 규약만 적고 `detail` **문구**를 인용하지
    않는다(`grep -n "detail\|not allowed" docs/api.md`). 재생성 불필요.
+4. **`hooks.test.tsx` 곱 표 주석 두 곳(qa 소유 — architect 가 고칠 수 없다).** 재심 후속 ①②.
+   ① 그 주석은 곱의 오른쪽 축을 "`queryKeys` 팩토리 전수"라 적었으나 표에 `objectsRoot`·
+   `activitiesRoot` 행이 없다. ② 같은 주석의 "현재 저장소에는 `["projects", pid, ...]` 형태의 인라인
+   리터럴만 있다"가 `hooks.ts:273`(`useTransition` 의 `qc.invalidateQueries({ queryKey: ["projects"] })`)
+   을 빠뜨린다. **둘 다 관측 가능한 구멍은 없다** — 실측: 두 팩토리는 표에 ✓ 로 있는 행들의 **접두사**
+   이고(`objectsRoot(pid)` = `["projects",pid,"objects"]`, `activitiesRoot(pid)` =
+   `["projects",pid,"activities"]`), `["projects"]` 는 표 전체의 **루트 접두사**라 곱의 어느 칸도
+   뒤집지 않는다. 그러나 §6-1 은 "기준의 한계는 결과가 아니라 기준에서 판단한다"고 요구하므로
+   **주석의 두 전수 주장은 지금 거짓이다.** 파일이 `apps/web/src/**/*.test.tsx`(qa 예외)라 architect
+   가 고치지 않고 넘긴다.
+5. **CLAUDE.md §6-3 표 헤더 — 이번에 고쳤다(재심 후속 ③).** 헤더가 "조건절에 쓴 한정어"였는데
+   7·8 회차 칸은 한정어가 아니다(7 = 근거 문장, 8 = 표의 생성 축). §6 **압축 규칙**이 이 표의 열
+   이름을 이미 `회차/어디/조건절·기준/밀려난 것/관측값` 으로 정해 두었으므로 헤더를 그 이름으로
+   맞췄다 — 한 문서가 같은 표의 열을 두 이름으로 부르던 것이 회차 8 과 같은 모양이다.
+   **본문의 "1~6 은 조건절 계열, 7·8 은 조건절 밖" 문장은 남긴다.** 헤더가 참이 된 뒤 그 문장은
+   필요조건이 아니지만, 지우는 것은 **§6-3 근거 서사의 압축**이고 압축 규칙의 재심 판단이
+   "이번 사이클에는 압축하지 않는다 / 다음은 §6-1 하나만"으로 순서를 못박았다. 압축 큐에 남긴다.
 
 ---
 

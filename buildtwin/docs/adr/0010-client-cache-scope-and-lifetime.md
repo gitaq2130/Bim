@@ -237,10 +237,11 @@ export function installSessionCacheGuard(qc: QueryClient, store = useStore): () 
 - **`userId` 대신 `token` 으로 하면 무엇이 더 들어오는가**: 같은 사람의 토큰 갱신·재로그인까지 들어와
   캐시를 불필요하게 버린다(위 표 4행이 그 대조군이다).
 - **`userId` 때문에 무엇이 빠지는가**: ① **같은 `user_id` 인데 프로젝트 역할이 바뀐 경우**
-  (admin 이 멤버십 role 을 바꿈). `my_role` 은 서버가 주는 값이고 캐시에 남는다 — 규칙 2 는 이것을
-  덮지 못한다. 다만 이것은 **세션 경계 문제가 아니라 멤버십 변경 경보 문제**이고,
-  `useAddMember`·`useUpdateMember` 가 `members(pid)` 만 무효화하고 `project(pid)`(= `my_role` 의 출처)를
-  무효화하지 않는 별개의 결함이다 — **§Deferred 1 에 적고 이 ADR 에서 결정하지 않는다.**
+  (admin 이 멤버십을 **빼고 다시 넣음** — 역할 변경 API 는 없다, §Deferred 1). `my_role` 은 서버가 주는
+  값이고 캐시에 남는다 — 규칙 2 는 이것을 덮지 못한다. 다만 이것은 **세션 경계 문제가 아니라 멤버십
+  변경 경보 문제**이고, `useAddProjectMember`·`useRemoveProjectMember` 가 `members(pid)` 만 무효화하고
+  `project(pid)`(= `my_role` 의 출처)를 무효화하지 않는 별개의 결함이다 —
+  **§Deferred 1 에 적고 이 ADR 에서 결정하지 않는다.**
   ② 서버가 세션을 만료시켰는데 화면이 아직 401 을 받지 않은 구간. 이건 401 이 오는 순간 덮인다.
 - **옛 조건(`logout()` 호출 지점)이 잡던 것**: 두 호출 지점. 규칙 2 는 둘 다 `userId` 전이를 만들므로
   포함한다(위 표 1·5행에서 각각 태웠다). 잃는 것은 없다.
@@ -273,13 +274,17 @@ React 리렌더 전에 비워지고, 그다음 리렌더에서 `RequireAuth` 가
   존재할 수 없어 ADR 0006 의 "존재를 숨긴다"가 화면까지 이어진다. ③ 새 무효화 호출 지점이 늘어도
   세션 축은 영향받지 않는다.
 - **치러야 하는 값.** ① `objectDetail` 키가 바뀌므로 그 키를 직접 쓰는 자리를 함께 옮겨야 한다
-  (저장소 루트 전수: `apps/web/src/api/hooks.ts:53,242,258`, `apps/web/src/api/hooks.test.tsx:129,130,132`
-  — `git grep -n "objectDetail"` 기준. 나머지 히트는 전부 `objectDetailFixture` 라는 **다른 식별자**다).
+  (**ADR 작성 시점(변경 전) 트리** 전수: `apps/web/src/api/hooks.ts:53,242,258`,
+  `apps/web/src/api/hooks.test.tsx:129,130,132` — `git grep -n "objectDetail"` 기준. 나머지 히트는 전부
+  `objectDetailFixture` 라는 **다른 식별자**다). 작업 4 머지 후 같은 grep 은
+  `hooks.ts:60,62,256,272` · `hooks.test.tsx:134,135,137,297,310,320,322,374,376,388,469,504` 이고
+  **전부 새 키를 쓴다**(2026-09-04 재확인). 위 세 쌍은 옮기기 전 자리이므로 지금 트리의 그 행을
+  가리키지 않는다.
   ② 로그아웃 후 재로그인 시 캐시가 비어 있으므로 첫 화면이 한 번 더 로딩을 보여준다. 의도한 값이다.
   ③ `installSessionCacheGuard` 를 **테스트 유틸(`test/utils.tsx`)에서도 설치**해야 웹 테스트가 진짜
   경로를 탄다 — 안 하면 §6-2 가 말하는 "결함이 있어도 통과하는 시나리오"가 된다.
 - **잡지 못하는 것.** 서버가 이미 보낸 응답이 브라우저 HTTP 캐시나 개발자 도구에 남는 것,
-  그리고 규칙 2 의 역방향 확인 ①(같은 사용자의 역할 변경). 전자는 범위 밖, 후자는 Deferred 1.
+  그리고 규칙 2 의 역방향 확인 ①(같은 사용자의 멤버십 변경). 전자는 범위 밖, 후자는 Deferred 1.
 
 ## Alternatives
 
@@ -298,9 +303,30 @@ React 리렌더 전에 비워지고, 그다음 리렌더에서 `RequireAuth` 가
 
 ## Deferred
 
-1. **같은 사용자의 프로젝트 역할 변경이 캐시에 남는다.** `useAddMember`·`useUpdateMember`
-   (`hooks.ts:435,442`)는 `members(pid)` 만 무효화하고 `project(pid)` 를 무효화하지 않는데,
-   `my_role` 의 출처는 `project(pid)` 다(`useProjectRole` → `useProject`). 즉 admin 이 방금 역할을
-   바꿔도 그 사람 화면의 행위 버튼은 옛 역할을 따른다. 규칙 1 을 적용하면 `["projects", pid]` 접두사
-   하나로 덮이므로 **고칠 자리는 이미 열려 있다.** 다만 별도 결함이고 실측을 아직 하지 않았으므로
-   이 ADR 에서 결정하지 않는다 — 계획 0004 §열린 질문 1.
+1. **같은 사용자의 프로젝트 멤버십 변경이 캐시에 남는다.** `useAddProjectMember`(`hooks.ts:459`)
+   ·`useRemoveProjectMember`(`hooks.ts:466`) **둘 다** `members(pid)` 만 무효화하고 `project(pid)` 를
+   무효화하지 않는데, `my_role` 의 출처는 `project(pid)` 다(`useProjectRole` → `useProject`). 즉 admin 이
+   방금 멤버십을 빼거나 넣어도 그 사람 화면의 행위 버튼은 옛 역할을 따른다.
+   **역할 변경은 지원되는 연산이 아니다** — `services/api/routers/projects.py` 의 멤버십 엔드포인트는
+   `GET`·`POST`·`DELETE` 셋뿐이라 `PUT`/`PATCH` 가 0건이고, `POST` 는 이미 멤버인 `user_id` 를
+   `duplicate_member`(409)로 막는다(`:127`). 그래서 운영에서 역할을 바꾸는 **유일한** 경로가
+   remove → add 이고, **두 훅이 같은 모양의 무효화를 각각 갖는다.**
+
+   **다만 "`project(pid)` 를 함께 무효화하면 고쳐진다"는 것은 거짓이다(2026-09-04 실측 — 재심 중
+   추가 발견).** 두 훅을 부르는 화면은 `ProjectMembersPage` 하나뿐이고
+   (`git grep -n "useAddProjectMember\|useRemoveProjectMember" -- apps/web/src` → `hooks.ts` 정의 2 +
+   그 페이지 3), 그 라우트는 `RequireAdmin` 뒤에 있으며(`App.tsx:45`) 서버 쪽 세 엔드포인트도
+   `require_role("admin")` 이다. 그런데 `ProjectView` 의 필드는
+   `project_id`·`name`·`created_at`·`description`·`my_role` 뿐이고 **admin 의 `my_role` 은 항상 `None`**
+   이다(`schemas/projects.py:22` 주석 · `routers/projects.py:69` 가 `ctx.role` 을 그대로 싣고,
+   `deps.py:121` 의 admin 분기가 `role=None` 을 돌려준다 — `usecases.caller_project_role` 도 같다).
+   즉 **무효화를 수행하는 그 클라이언트에서는
+   `project(pid)` 가 멤버십에 따라 달라지는 값을 하나도 싣지 않는다.** 낡은 `my_role` 을 보는 것은
+   **역할이 바뀐 그 사람의 다른 브라우저**이고, 거기에는 이 뮤테이션이 도달하지 않는다 —
+   클라이언트측 무효화로는 원리상 닫히지 않는 결함이다.
+
+   **그러므로 이것은 "훅 두 줄"이 아니라 서버→클라이언트 통보 문제**다(폴링·`staleTime` 단축·
+   SSE/WebSocket·401 류의 강제 재조회 중 택일). 규칙 1 이 여는 것은 "접두사 하나로 덮을 수 있다"는
+   **편의**일 뿐 이 결함의 해법이 아니다. 다음 사이클에서 실측할 것: 역할이 바뀐 사용자의 화면이
+   **언제** 새 `my_role` 을 받는가(마운트·`staleTime` 만료·수동 새로고침). 그 값이 나오기 전에는
+   범위조차 판단할 수 없으므로 이 ADR 에서 결정하지 않는다 — 계획 0004 §열린 질문 1.
