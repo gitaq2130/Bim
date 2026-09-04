@@ -27,13 +27,22 @@
 | 화면(상태) | `apps/web/src/api/hooks.ts` | frontend | `objectDetail` 재루팅 · `objectsRoot` 추가 · 무효화 3곳 |
 | 화면(세션) | `apps/web/src/api/sessionCache.ts`(신규) · `main.tsx` · `test/utils.tsx` | frontend | 세션 캐시 가드 + 설치 |
 | 화면(문구) | `apps/web/src/components/ObjectDetailPanel.tsx` | frontend | `:385` 문구 · `requireNote` |
-| 서버 | 없음 | — | **`services/` 는 이 계획에서 수정하지 않는다** |
+| 서버 | `services/api/errors.py`, `services/api/scripts/gen_api_doc.py`, `docs/api.md` | api | `RevocationReasonRequiredError` 전용 핸들러 + 문서 재생성 (**초판은 "`services/` 는 수정하지 않는다"였다 — 아래**) |
+| 용어 | `docs/glossary.md` "오류 응답 code 어휘" | api 추가 / architect 승인 | `revocation_reason_required` 행 |
 | 테스트 | `tests/unit/…`, `tests/integration/…`, `apps/web/src/**/*.test.tsx` | qa | 아래 §검증 시나리오 |
 
-**`services/` 무수정이 성립하는 이유(실측).** ADR 0011 의 불변식은 `packages/core/models/state.py` 의
-모델 검증자에 들어가고, `services/progress/state_machine.py:180` 이 그 모델을 구성하는 유일한 운영
-경로다. `services/api/usecases.py:187-188` 이 `req.note` 를 이미 `evidence.note` 로 합류시키므로
-API 스키마도 바꿀 것이 없다.
+**초판의 "`services/` 무수정"은 왜 거짓이 됐는가(2026-09-04 리뷰 m8, §6-4 규칙 1 로 여기서 고친다).**
+그 판단은 ADR 0011 §Decision 의 **초판 코드 블록**(`raise ValueError(…)`)에서 계산한 것이다.
+`ValueError` 면 서버는 손댈 곳이 없다 — 실제로 없다. 그런데 구현 단계에서 그 설계가 바뀌었다:
+`ValueError` 는 pydantic 이 `ValidationError` 로 감싸고 `services/api/errors.py` 에 그 핸들러가 없어
+**500 + `code` 없음**이 되므로(ADR 0011 규칙 1-a) 전용 예외 타입 + 전용 핸들러가 필요했고, 그 순간
+`services/api/` 가 범위 안으로 들어왔다. **영향 범위 표는 ADR 의 코드 블록에서 파생됐는데, 바뀐 것이
+바로 그 코드 블록이었다.** 파생을 다시 계산한 사람이 없어 계획만 옛 사실에 남았다.
+
+여전히 참인 것: 불변식 자체는 `packages/core/models/state.py` 의 모델 검증자에 있고,
+`services/progress/state_machine.py:180` 이 그 모델을 구성하는 유일한 운영 경로이며,
+`services/api/usecases.py:187-188` 이 `req.note` 를 `evidence.note` 로 합류시키므로 **API 스키마·
+유스케이스 로직은 바꿀 것이 없다.** 바뀐 것은 오류 표현 계층뿐이다.
 
 ---
 
@@ -47,7 +56,8 @@ API 스키마도 바꿀 것이 없다.
 | **4** | `frontend` | `apps/web/src/api/hooks.ts` | ADR 0010 규칙 1 | `objectDetail` 재루팅 + `objectsRoot` + `hooks.ts:378` 교체 | **한 커밋 안에서 둘 다.** 저장소 루트 잔여 0: `git grep -n '\["objects"' -- apps/web/src` 가 `hooks.ts` 에서 0줄. `git grep -n 'objectDetail' -- apps/web/src` 의 모든 히트가 새 키를 씀 |
 | **5** | `frontend` | `apps/web/src/api/sessionCache.ts`(신규), `main.tsx`, `test/utils.tsx` | ADR 0010 규칙 2·3 | `installSessionCacheGuard(qc, store)` + 진입점 설치 + **테스트 유틸에도 설치** | 스토어가 React Query 를 import 하지 않는다. `logout()` 본문 불변. `renderWithProviders` 가 가드를 설치한다 |
 | **6** | `frontend` | `apps/web/src/api/hooks.ts` | ADR 0010 규칙 4 | `useResolveReview` 가 `drawingMappings` 도 무효화 | `kind=="mapping"` 해소 후 뷰어 2D↔3D 매핑이 갱신된다. `drawingMappings` 무효화 호출 ≥ 1곳 |
-| **7** | `qa` | `tests/unit/`, `tests/integration/`, `apps/web/src/**/*.test.tsx` | 아래 §검증 시나리오 V1~V7 | 테스트 + `tests/metrics.json` 갱신 | **각 시나리오가 §6-2 반증 조건을 통과**해야 한다(아래 반증 목록) |
+| **2-a** | `api` | `services/api/errors.py`, `services/api/scripts/gen_api_doc.py`, `docs/api.md`, `docs/glossary.md`(행 추가) | ADR 0011 규칙 1-a | `RevocationReasonRequiredError` 전용 핸들러 → 409 + `code="revocation_reason_required"` | 상태코드 409 유지, `from_state`/`to_state`/`actor` 유지. **초판 계획에 이 행이 없었다** — 아래 §계획과 사실이 어긋난 자리 |
+| **7** | `qa` | `tests/unit/`, `tests/integration/`(**`test_18_revocation_reason.py` 포함**), `apps/web/src/**/*.test.tsx` | 아래 §검증 시나리오 **V1~V10**(초판은 "V1~V7"이라고 적었다) | 테스트 + `tests/metrics.json` 갱신 | **각 시나리오가 §6-2 반증 조건을 통과**해야 한다(아래 반증 목록) |
 | **8** | `reviewer` | — | 전체 | 리뷰 | ADR 0010·0011 이 §6-1·§6-3 을 지켰는지, 대조표 칸이 참조로 갈음되지 않았는지, 새 문구가 §6-4 를 지켰는지 |
 
 **순서 제약.** 1 은 어디에도 매이지 않는다(먼저·독립). 2 → 3(모델이 먼저 서야 화면 요건이 거짓말이
@@ -71,8 +81,16 @@ export function installSessionCacheGuard(qc: QueryClient, store?: typeof useStor
 ```python
 # packages/core/models/state.py :: StateTransition._check  (추가 1줄)
 if self.from_state == S.CONFIRMED and not (self.evidence.note or "").strip():
-    raise ValueError("leaving CONFIRMED requires evidence.note (revocation reason)")
+    raise RevocationReasonRequiredError(self.from_state, self.to_state, self.actor)
+
+# 같은 파일 (ADR 0011 규칙 1-a·1-b). `InvalidTransitionError` 하위 타입이되 부모 포맷("… not allowed.")은
+# 쓰지 않는다 — 이 거부에서 그 앞머리는 거짓이다.
+class RevocationReasonRequiredError(InvalidTransitionError):
+    def __init__(self, from_state, to_state, actor) -> None: ...   # "{from} -> {to} by {actor} requires evidence.note (revocation reason)"
 ```
+
+**초판은 이 자리에 `raise ValueError(…)` 라고 적었다.** 그 한 줄이 "`services/` 무수정"의 근거였고,
+설계가 바뀌면서 근거가 사라졌다(위 §영향 범위).
 
 ---
 
@@ -166,6 +184,68 @@ Zustand 슬라이스 정의 파일 전부)
    재업로드하는 경로가 실제로 있는지 확인하지 않았다 — 있으면 작업 6 과 같은 종류의 결함이 2건 더 있다.
 4. **리스크: 작업 4 의 반쪽 머지.** 키만 옮기고 `hooks.ts:378` 을 남기면 무효화가 **완전 무동작**이 되고
    vitest 233 은 그대로 초록이다(실측). 작업 4 의 완료 조건에 `git grep` 잔여 0 을 넣은 이유다.
+
+---
+
+## 계획과 사실이 어긋난 자리 (2026-09-04 리뷰 반려 m8 — 왜 생겼는가)
+
+**어긋난 것 둘.** ① 작업 7 의 입력이 "V1~V7"인데 검증 시나리오 표는 **V10 까지**다 →
+**V8·V9·V10 이 무주공산**이었다. ② 영향 범위의 "`services/` 는 수정하지 않는다"가 거짓이 됐다.
+둘 다 위에서 사실에 맞게 고쳤다.
+
+**①은 드리프트가 아니라 태어날 때부터 있었다.** `git show de5734f -- docs/plans/0004-*.md` 로 확인했다 —
+계획 최초 커밋에 이미 시나리오 표는 V10 까지이고 작업 7 의 입력은 "V1~V7"이다.
+
+**왜 생겼는가(§6-1).** 한 문서 안의 두 표를 **다른 축으로** 만들고 교차 확인을 하지 않았다.
+
+| 표 | 생성 축 | 그 축에 없는 칸 |
+|---|---|---|
+| 작업 분배 | **ADR 규칙 하나당 한 행**(0010 규칙 1·2·3·4 → 작업 4·5·6, 0011 규칙 3-1단계·1·2 → 작업 1·2·3) | ADR 이 "규칙"으로 적지 않은 일 — 오류 표현 계층(→ 작업 2-a 누락), 그리고 **시나리오** |
+| 검증 시나리오 | **결함 하나당 한 행**(백로그 1·2·3 의 실측 5건 → V1~V7, V8~V10) | 그 시나리오를 **누가** 쓰는가 |
+
+작업 7 의 "입력" 칸은 ADR 0010 시나리오를 훑으며 적혔고, ADR 0011 의 V8~V10 이 시나리오 표에 뒤이어
+붙을 때 **작업 분배 표로 되돌아간 사람이 없었다** — 그 표의 축이 "시나리오"가 아니라 "ADR 규칙"이라
+V8~V10 을 받을 칸 자체가 없었기 때문이다. **§6-3 의 마지막 항("같은 문서 안에 이미 반박이 적혀 있어도
+결론이 그것을 따라가지 못한다")이 그대로 재현됐다**: 시나리오 표 V8~V10 이 작업 7 의 "V1~V7"을
+같은 파일 40줄 아래에서 이미 반박하고 있었다.
+
+**치른 값(실해).** V8·V9 의 통합 테스트를 **api 가** 썼다(`tests/integration/test_18_revocation_reason.py`,
+`3f358db`) — qa 소유 트리를 명시 허가 없이 건드린 것이고 reviewer 형식 체크 3 이 FAIL 했다.
+V10 의 웹 테스트는 frontend 가 썼다(`2520619`). 테스트 자체의 품질 문제가 아니라 **소유가 비어 있었다**는
+문제다. ②의 실해는 계획 문서의 거짓 문장 하나(고쳤다).
+
+**다음 계획에 거는 요구(§6-1 규칙의 이행).** 계획 문서 안에 표가 둘 이상이면, 각 표의 **생성 축**을
+표 옆에 적고 **한 표의 행이 다른 표의 어느 칸으로 들어가는지**를 마지막에 한 번 대조한다. 여기서는
+"시나리오 V# → 그것을 쓰는 작업 행"의 대응이 그 대조였다.
+
+---
+
+## 후속 — 다음 사이클로 넘기는 것
+
+1. **`packages/core/models/` 주석의 기계적 감사(리뷰어 격상 Deferred (d), qa 소유).** §6-1 이
+   **이름 붙은 블라인드 스팟**으로 지목한 디렉터리에서 **세 사이클 연속** 주석이 낡았다
+   (0009 `review.py` 의 `cause` 정본 · `moved=9` 오기, 이번 `state.py:94` 의 시제 문장).
+   `make lint` 에 다음 한 줄을 얹는다 — **`Makefile`·`.github/workflows/` 는 qa 소유이므로 architect 가
+   직접 넣지 않는다.**
+   ```
+   ! grep -rnE "그 후속이|후속이 오|오기 전까지|아직 .*않는다|나중에|추후|TODO|FIXME|예정이다" packages/core/models/
+   ```
+   *역방향 확인 — 이 검사가 놓치는 것(§6-1 ②).* **셋 중 하나만 잡는다.** 이번 `state.py:94`(미래 시제
+   약속)는 잡지만, 0009 의 두 건은 **시제가 아니라 값**이 낡은 것이라(`cause` 정본 자리, `moved=9`)
+   이 grep 밖이다. 그리고 현재 시제로 적힌 거짓("핸들러는 다섯뿐" 같은 개수·목록 주장)도 밖이다.
+   즉 이것은 **부분 방어**이고, 그렇게 적어 두는 것이 이 검사의 값이다 — "커버한다"고 적으면
+   다음 사이클이 그것을 커버리지로 읽는다(§6-1: "놓칠 수 있다"고 적는 것은 커버리지가 아니다).
+   *리뷰어가 함께 제안한 대안(주석이 언급하는 심볼·경로가 실재하는지 보는 grep)은 채택하지 않는다.*
+   이번 거짓 문장이 언급한 심볼·경로(`services/api/errors.py`, `revocation_reason_required`)는
+   **전부 실재한다** — 그 검사는 이번 major 를 잡지 못했다. 관측된 적 없는 종류(끊어진 참조)를 막느라
+   관측된 종류를 놓치는 검사를 CI 에 넣지 않는다.
+2. **`apps/web/src/components/ErrorBox.test.tsx:48`(qa/frontend).** 그 테스트가 픽스처로 들고 있는
+   `detail` 문자열이 서버의 옛 문구(`… by cm not allowed. leaving CONFIRMED requires evidence.note …`)다.
+   단언은 그 값을 **입력**으로만 쓰므로 이번 변경으로 깨지지 않지만(vitest 확인), 지금은 서버가 내지
+   않는 문자열이다. 새 원문은 `CONFIRMED -> MISMATCH by cm requires evidence.note (revocation reason)`.
+3. **`docs/api.md`(api 소유, 자동 생성) — 확인했고 조치 없음.** `RevocationReasonRequiredError` 를
+   언급하는 자리(`:221`·`:230`·`:234`)는 응답 **모양**과 code 규약만 적고 `detail` **문구**를 인용하지
+   않는다(`grep -n "detail\|not allowed" docs/api.md`). 재생성 불필요.
 
 ---
 

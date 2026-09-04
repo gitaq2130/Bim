@@ -113,9 +113,13 @@ def _check(self) -> StateTransition:
     if self.actor == A.SYSTEM and self.confidence is None:
         raise ValueError("system transitions require confidence")     # ← 기존 선례
     if self.from_state == S.CONFIRMED and not (self.evidence.note or "").strip():
-        raise ValueError("leaving CONFIRMED requires evidence.note (revocation reason)")   # ← 추가
+        raise RevocationReasonRequiredError(self.from_state, self.to_state, self.actor)    # ← 추가
     return self
 ```
+
+**초판은 이 자리에 `raise ValueError(…)` 라고 적었다.** 구현에서 전용 예외 타입으로 바뀌었고
+(규칙 1-a·1-b), 이 블록은 그 사실에 맞춘 것이다 — `ValueError` 면 pydantic 이 `ValidationError` 로
+감싸는데 `services/api/errors.py` 에 그 핸들러가 없어 **500 + `code` 없음**이 된다(실측).
 
 `validate_transition(from, to, actor)` 의 시그니처는 **바꾸지 않는다.** 그 함수는 `evidence` 를 받지
 않고, `allowed_targets`(→ `next_actions` 생성)와 `tests/invariants` 가 3인자로 부른다. 근거 요건은
@@ -135,6 +139,53 @@ def _check(self) -> StateTransition:
 `Evidence` 모델(`packages/core/models/evidence.py:25`)의 `note: str | None` 은 그대로다.
 CLAUDE.md §3 규칙 7("전이는 반드시 actor 와 evidence 를 기록")도 강화 방향이다.
 
+### 규칙 1-a — 이 거부는 자기 `code`(`revocation_reason_required`)로 나간다. 그 예외를 **받는 자리 전수**
+
+예외 타입은 `RevocationReasonRequiredError`(`InvalidTransitionError` 하위 타입)이고, 핸들러는
+`services/api/errors.py::_revocation_reason_required` 다. 갈라 놓은 이유는 `invalid_transition` 의 화면
+문구("…수행할 수 없습니다. 화면을 새로고침해…")가 이 경우엔 거짓이기 때문이다(§6-4).
+
+**§6-3 "조건을 바꾸면 그 결과를 소비하는 게이트·문구도 같은 PR 에서 확인한다".** 초판은 이 확인을
+`errors.py` 의 **핸들러만** 열거하고 끝냈다. 저장소 루트에서 다시 세니(`grep -rn
+"InvalidTransitionError\|RevocationReasonRequiredError" .` — 소유·계층으로 좁히지 않았다, §6-1)
+`except` 로 같은 타입을 받는 자리가 **둘 더** 있다.
+
+| # | 자리 | 이 예외가 오면 | 오늘 도달하는가(실측 2026-09-04) |
+|---|---|---|---|
+| 1 | `services/api/errors.py::_revocation_reason_required` | 409 + `code="revocation_reason_required"` + `from_state`/`to_state`/`actor` | **예.** `detail: CONFIRMED -> MISMATCH by cm requires evidence.note (revocation reason)` / `code: revocation_reason_required` |
+| 2 | `services/api/usecases.py:217`(`transition_object`) | 롤백 후 **그대로 re-raise** — 하위 타입이 그대로 올라가 1번 핸들러가 받는다 | 예. **안전** |
+| 3 | `services/api/usecases.py:442`(`resolve_review`, `kind=="inspection"`) | `decision=="approved"` → `Conflict(inspection_confirm_failed)`. `decision=="rejected"` → **`log.info` 로 조용히 삼킨다** | **아니오, 도달 불가.** 이 경로의 전이는 `<현재 상태> -> IN_PROGRESS` 라 `from_state == CONFIRMED` 이려면 **CONFIRMED + 미결 inspection 요청**이 공존해야 하는데, 실측: 검측 요청 시점 미결 inspection = **1**, cm 확정 직후 같은 객체 `state=CONFIRMED` / 미결 inspection = **0** |
+
+3번의 도달 불가는 **구조**에서 온다: CONFIRMED 진입은 표에서 `(INSPECTION_REQUESTED, CONFIRMED)`
+하나뿐이고, 그 전이가 `close_inspection_reviews`(`services/progress/state_machine.py:132`)로 미결
+inspection 을 전부 닫으며, 생성은 `ensure_inspection_review`(`:111`)가 `INSPECTION_REQUESTED`
+**진입에서만** 한다. **이 칸이 거짓이 되는 조건**: ① CONFIRMED 로 가는 전이가 표에 하나라도 더 생기거나
+② `INSPECTION_REQUESTED` 진입 밖에서 inspection 요청을 만드는 경로가 생길 때. 둘 중 하나를 하는 사이클은
+이 `log.info` 를 함께 본다 — 그때부터 그것은 침묵 경로다.
+
+### 규칙 1-b — 이 거부의 `detail` 은 부모(`InvalidTransitionError`)의 포맷을 쓰지 않는다
+
+부모 포맷은 `"{from} -> {to} by {actor} not allowed. {reason}"` 이다. 이 예외에서는 그 앞머리가
+**거짓**이다 — 전이는 허용 표에 있고(`(CONFIRMED, MISMATCH)`·`(CONFIRMED, IN_PROGRESS)` = `{cm}`)
+actor 도 cm 이다. 그런데 code 를 가른 **유일한 근거**가 바로 "'수행할 수 없습니다'는 거짓이다"이므로,
+부모 포맷을 그대로 쓰면 **응답이 싣는 `detail` 자신이 그 근거를 반박한다.** glossary "오류 응답 code
+어휘" 서문이 "모르는 `code` 는 `detail` 을 그대로 보여준다"고 약속하는 이상 이것은 내부 문자열이 아니라
+**계약면**이다(§6-4 규칙 1·3).
+
+그래서 `RevocationReasonRequiredError` 는 자기 메시지를 만든다:
+`"{from} -> {to} by {actor} requires evidence.note (revocation reason)"`.
+
+*역방향 확인 — 부모 포맷은 왜 그대로 두는가.* 다른 거부는 **실제로 허용되지 않은 것**이라 "not allowed"
+가 참이다. 양쪽을 다 태웠다(2026-09-04, `git archive` 별도 트리, TestClient).
+
+| 요청 | `code` | `detail`(원문) |
+|---|---|---|
+| `CONFIRMED -> MISMATCH`, note 없음, cm | `revocation_reason_required` | `CONFIRMED -> MISMATCH by cm requires evidence.note (revocation reason)` |
+| `CONFIRMED -> IN_PROGRESS`, `note="  "`, cm | `revocation_reason_required` | `CONFIRMED -> IN_PROGRESS by cm requires evidence.note (revocation reason)` |
+| `CONFIRMED -> ESTIMATED_DONE`, 사유 있음, cm(표에 없는 목적지) | `invalid_transition` | `CONFIRMED -> ESTIMATED_DONE by cm not allowed.` |
+| `PLANNED -> CONFIRMED`, 사유 있음, cm | `invalid_transition` | `PLANNED -> CONFIRMED by cm not allowed.` |
+| `CONFIRMED -> IN_PROGRESS`, 사유 있음, **contractor** | `invalid_transition` | `CONFIRMED -> IN_PROGRESS by contractor not allowed. leaving CONFIRMED requires actor=cm` |
+
 ### 규칙 2 — 화면은 두 되돌리기 행동에 `requireNote` 를 넘긴다
 
 `ObjectDetailPanel` 의 `ConfirmDialog` 에 `requireNote={pending?.kind === "revoke_confirmation" ||
@@ -145,7 +196,10 @@ pending?.kind === "order_rework"}` 를 넘긴다. **`kind` 로 가른다** — `
 *역방향 확인.* `kind` 로 가르면 **빠지는 것**: 서버가 `next_actions` 를 주지 않는 경로로 이 전이를
 일으키는 화면. 저장소 루트 전수(`git grep -n "useTransition" -- apps/web/src ':!*test*'`)로 확인했다 —
 `ObjectDetailPanel.tsx:9,301` 뿐이다. 화면에서 전이를 거는 곳은 이 패널 하나다. 그래도 규칙 1(모델)이
-최종 방어이므로, 화면이 빠뜨려도 사용자는 **422 를 보게 되지 조용히 통과하지 않는다.**
+최종 방어이므로, 화면이 빠뜨려도 사용자는 **409 `revocation_reason_required` 를 보게 되지
+조용히 통과하지 않는다**(실측 — 규칙 1-b 표). 초판은 이 자리에 "422"라고 적었다. 거짓이다 — 이 예외는
+요청 스키마 위반이 아니라 **대상의 현재 상태에 대한 요건**이라 409 이고, 그것이 규칙 1-a 가 상태코드를
+409 로 유지한 이유이기도 하다.
 
 ### 규칙 3 — 문구를 고친다. 이 사이클 안에서, 두 번 고친다
 
@@ -173,7 +227,8 @@ CLAUDE.md §6-4 규칙 1: 사실과 다른 문구는 그것을 만든 사이클�
   `order_rework`(재시공 지시)는 현장에서 금액·공기와 직결되는 지시이고, 지금은 그 지시의 근거가
   **어디에도 없다**(§2-(가) 이력 실측).
 - **치러야 하는 값.** ① CM 이 되돌릴 때 한 칸을 더 채워야 한다. ② `evidence.note` 를 채우지 않고
-  이 전이를 거는 **서버 내부 호출**이 앞으로 생기면 422 가 난다 — 의도한 값이다.
+  이 전이를 거는 **서버 내부 호출**이 앞으로 생기면 `RevocationReasonRequiredError` 가 난다
+  (API 를 통해 오면 409 `revocation_reason_required` — 실측). 초판은 "422"라고 적었다. 의도한 값이다.
   현재 그런 호출은 없다(§3 실측: 폭발 반경 0).
 - **잡지 못하는 것.** note 의 **내용**은 검사하지 않는다("."도 통과한다). 내용 품질은 규칙이 아니라
   운영의 문제이고, 최소 길이 같은 임의의 문턱을 두면 CM 이 "aaa"를 치게 만들 뿐이다.
