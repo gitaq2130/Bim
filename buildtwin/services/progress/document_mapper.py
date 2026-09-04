@@ -20,6 +20,12 @@ api 가 호출) / 문서가 고아가 되면 자동 종료. api 는 이 함수�
 재계산이 같은 (activity_id, doc_id) 후보를 다시 만들지 않도록 걸러내고, `confirmed_required_documents`가
 반려된 매핑을 readiness/검증 증거에서 제외한다. api 는 대응 검토요청을 `status="rejected"`로 닫는 것까지만
 하고, 매핑 행은 건드리지 않은 채 `reject_document_mapping`을 호출한다.
+
+**식별 드리프트**(ADR 0009 §5-2·§5-3)도 매핑 생명주기에 걸리므로 여기서 소유한다:
+`open_identity_drift_review`가 "우리 식별 규칙이 움직여 CM 이 확정·반려한 매핑이 고아 문서를 가리키게
+됐다"는 사건을 CM 큐에 올린다. 판정 자체(고아 ↔ 신규 쌍 대조)는 재업로드 규칙을 소유한
+`services/ingest/persistence`가 하고, 이 모듈은 그 결과(`IdentityDriftReport`)를 받아 검토요청으로만
+바꾼다. 이 kind 는 **확인 전용**이라 해소에 부수 효과가 없다 — 매핑을 되살리지 않는다.
 """
 from __future__ import annotations
 
@@ -30,6 +36,7 @@ from datetime import UTC, date, datetime
 from difflib import SequenceMatcher
 from typing import Any
 
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from packages.core.models.document import ActivityDocumentMapping, Document
@@ -47,6 +54,12 @@ _UNMAPPED_WARNING_CODE = "DOCUMENT_UNMAPPED"   # config/document_register.yaml i
 # 더하지 않고 기존 evidence(JSON) 안에 `extra.mapping_review_decision` 로 표시한다 — 없으면(None) 시스템이
 # 제안했거나 확정된 매핑, 이 값이면 CM 이 반려한 매핑이라는 뜻이다.
 _MAPPING_REVIEW_DECISION_REJECTED = "rejected"
+
+# ADR 0009 §5-2 탐지 경고 code. config/document_register.yaml `import_warnings` 의 카탈로그 키와 같은 문자열이며,
+# 실제로 발화하는 곳은 `services/ingest/persistence.persist_document_register_import`(재업로드 판정 소유)다.
+# 여기서 상수로 두는 이유는 이 모듈이 만드는 검토요청 evidence 에 "무엇을 보고 만든 요청인가"를 남기기 위해서다.
+_IDENTITY_DRIFT_WARNING_CODE = "DOCUMENT_IDENTITY_DRIFT"
+_IDENTITY_DRIFT_METHOD = "identity_drift_detection"
 
 
 def _load_document_register_config() -> dict[str, Any]:
@@ -513,6 +526,112 @@ def reject_document_mapping(session: Session, project_id: str, activity_id: str,
     session.flush()
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 식별 드리프트 검토요청 (ADR 0009 §5-2·§5-3)
+#
+# 동결할 수 없는 식별 표면(`sender_aliases`·`sheet_doc_types`·`column_aliases`)이 바뀌면 대장 원문이
+# 그대로여도 `doc_id` 가 이동하고, CM 이 확정·반려한 매핑은 **고아 문서를 가리키게 되어 증거로서
+# 사라진다**(readiness 의 `confirmed_required_documents` 가 고아를 제외하므로). 막을 수는 없으니
+# 알아채게 한다 — 그리고 알아채는 자리는 job 경고가 아니라 **사람의 큐**여야 한다(8차 리뷰: 아무도
+# 만들지 않는 검토요청 때문에 CM 큐가 영원히 비어 있었고 어떤 테스트도 실패하지 않았다).
+# ─────────────────────────────────────────────────────────────────────────────
+class IdentityDriftReport(BaseModel):
+    """한 번의 대장 적재에서 관찰된 식별 드리프트(ADR 0009 §5-2). **판정은 적재 쪽이 소유한다** —
+    `services/ingest/persistence.persist_document_register_import` 가 재업로드 규칙(ADR 0007 §2-2)을
+    이미 소유하므로 고아 ↔ 신규 쌍을 아는 것도 그쪽이다. 이 모듈은 그 관찰을 받아 검토요청으로만 바꾼다.
+
+    **이 타입이 `services/progress` 에 있는 이유**(계획 0003 §3-e 는 `services/ingest/persistence.py` 에
+    두라고 적었다): 의존 방향이다. `services/ingest/persistence.py` 는 이미
+    `services.progress.importers.document_register` 를 import 하고 있고, 반대 방향을 추가하면 두 서비스가
+    서로를 import 하게 된다(게다가 `services.ingest.__init__` 가 IFC/DXF 파서를 끌고 오므로 매핑 모듈이
+    파서 의존성을 지게 된다). 소비자(이 함수)가 타입을 소유하고 생산자가 import 하는 쪽이 기존 방향과
+    같다 — `is_rejected_mapping` 을 ingest 가 import 해 쓰는 것과 같은 구조다.
+    """
+
+    previous_fingerprint: str | None = None   # 이번 적재에 없던 기존 행들의 최빈 지문(첫 적재면 None)
+    current_fingerprint: str = ""             # 이번 적재의 `identity_surface_fingerprint`
+    file_id: str = ""                         # 드리프트를 드러낸 대장 업로드(evidence.source_id)
+    moved: list[dict[str, str]] = Field(default_factory=list)        # {"previous_doc_id","new_doc_id","title"} — title 원문이 같은 쌍
+    merged: list[dict[str, Any]] = Field(default_factory=list)       # {"doc_id","titles":[...]} — 한 doc_id 로 수렴한 서로 다른 행
+    lost_decisions: list[dict[str, str]] = Field(default_factory=list)  # {"activity_id","doc_id","decision"} — 고아 쪽에 걸린 사람의 판단
+
+
+def _identity_drift_review_title(drift: IdentityDriftReport) -> str:
+    confirmed = sum(1 for d in drift.lost_decisions if d.get("decision") != _MAPPING_REVIEW_DECISION_REJECTED)
+    rejected = len(drift.lost_decisions) - confirmed
+    return (f"문서 식별 드리프트: 대장은 그대로인데 doc_id 가 {len(drift.moved)}건 이동했고, CM 판단 "
+            f"{len(drift.lost_decisions)}건(확정 {confirmed} · 반려 {rejected})이 고아 문서에 남았습니다 — "
+            "확인용 요청입니다(매핑은 복구되지 않습니다). 식별 규칙 config 를 되돌리고 대장을 다시 올리거나, "
+            "의도한 변경이면 그대로 두고 새 doc_id 위에서 다시 확정하십시오")
+
+
+def open_identity_drift_review(session: Session, project_id: str,
+                               drift: IdentityDriftReport) -> str | None:
+    """ADR 0009 §5-2·§5-3. 식별 드리프트를 CM 검토 큐에 올린다. **적재당 최대 1건.**
+
+    **사람이 잃어버린 판단이 실제로 있을 때만 만든다.** `drift.lost_decisions` 가 비어 있으면 `None` 을
+    돌려주고 아무것도 만들지 않는다 — 새 협력사 별칭을 추가한 주마다 CM 큐가 오염되면 운영자는 config 를
+    되돌리는 대신 **탐지를 끄는 방향**으로 움직인다. 잃을 것이 없을 때는 job 경고(`DOCUMENT_IDENTITY_DRIFT`)
+    까지가 적절한 크기다.
+
+    **해소에 부수 효과가 없다(§5-3).** `services/api/usecases.resolve_review` 의 공통 폴백이
+    `status`/`resolution_note`/`resolved_by` 만 기록하고, 이 kind 에 매핑을 되살리는 분기를 붙이는 설계는
+    반려한다 — 시스템이 사람의 확정을 복원하는 것이라 ADR 0001 불변식과 충돌한다. 제목이 "복구되지
+    않습니다"라고 먼저 말하는 이유가 이것이다.
+
+    **중복 생성 금지**(`_sync_pending_document_mapping_reviews` 와 같은 관례): 같은 `current_fingerprint`
+    로 열려 있는 요청이 이미 있으면 새로 만들지 않고 최신 관찰로 갱신한 뒤 그 id 를 돌려준다. config 를
+    되돌렸다 다시 바꾸는 왕복은 지문이 달라지므로 두 번 뜬다 — 두 번 다 진짜 사건이라 의도한 동작이다
+    (계획 0003 §10-3).
+
+    `confidence=1.0`: 이것은 **판정이 아니라 관측**이다. 지문이 달라졌고 제목 원문이 같은 고아 ↔ 신규
+    쌍이 실제로 있다는 사실에 불확실성이 없다(CLAUDE.md §3 규칙 3 의 confidence 는 "얼마나 확신하는가"이지
+    "얼마나 심각한가"가 아니다).
+
+    반환값은 만들었거나 갱신한 `review_request_id`, 만들지 않았으면 `None`.
+    """
+    if not drift.lost_decisions:
+        return None
+
+    sources: dict[str, Any] = {
+        "previous_fingerprint": drift.previous_fingerprint,
+        "current_fingerprint": drift.current_fingerprint,
+        "moved": drift.moved,
+        "merged": drift.merged,
+        "lost_decisions": drift.lost_decisions,
+    }
+    evidence = Evidence(
+        source_type="document",
+        # Evidence.source_id 는 공란을 허용하지 않는다(ADR 0001 §5). 드리프트를 드러낸 것은 이번 대장
+        # 업로드이므로 그 file_id 가 1순위이고, 호출자가 넘기지 못했을 때만 프로젝트로 떨어진다 —
+        # 근거 없는 요청을 만드느니 덜 정밀한 근거라도 남긴다.
+        source_id=drift.file_id or project_id,
+        method=_IDENTITY_DRIFT_METHOD,
+        note=_IDENTITY_DRIFT_WARNING_CODE,
+        extra={"moved_count": len(drift.moved), "merged_count": len(drift.merged),
+               "lost_decision_count": len(drift.lost_decisions),
+               "previous_fingerprint": drift.previous_fingerprint,
+               "current_fingerprint": drift.current_fingerprint},
+    )
+    title = _identity_drift_review_title(drift)
+
+    for row in db.open_reviews(session, project_id, kind="document_identity_drift"):
+        if (row.conflicting_sources or {}).get("current_fingerprint") != drift.current_fingerprint:
+            continue
+        row.title = title
+        row.conflicting_sources = sources
+        row.evidence = evidence.model_dump(mode="json")
+        session.flush()
+        return row.review_request_id
+
+    review = ReviewRequest(
+        project_id=project_id, kind="document_identity_drift", activity_id=None, global_id=None,
+        title=title, conflicting_sources=sources, confidence=1.0, evidence=evidence, assignee_role="cm",
+    )
+    db.save_review_request(session, review)
+    return str(review.review_request_id)
+
+
 def _unmapped_document_warnings(session: Session, project_id: str, documents: Sequence[Document],
                                 cfg: dict[str, Any]) -> list[dict[str, Any]]:
     """과제 2 선택지 2, 과제 3(9차 리뷰 후속) — 어떤 Activity 에도 매핑 후보가 없는 상태를 경고로 노출한다.
@@ -616,7 +735,7 @@ def confirmed_required_documents(session: Session, project_id: str, activity_ids
 
 
 __all__ = [
-    "DocumentEvidence", "DocumentMappingSyncResult", "close_document_mapping_review",
-    "confirmed_required_documents", "map_documents_to_activities", "map_project_documents",
-    "reject_document_mapping",
+    "DocumentEvidence", "DocumentMappingSyncResult", "IdentityDriftReport", "close_document_mapping_review",
+    "confirmed_required_documents", "is_rejected_mapping", "map_documents_to_activities",
+    "map_project_documents", "open_identity_drift_review", "reject_document_mapping",
 ]

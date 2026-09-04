@@ -13,10 +13,16 @@
 `doc_number`(대장에서 수식으로 파생되는 컬럼)는 절대 되파싱하지 않는다(§2-4). 구조화된 값
 (`sender`/`discipline_raw`/`seq_raw`)은 언제나 대장의 해당 컬럼에서 읽고, `doc_number`가 그 값들과
 어긋나 보이면 경고만 남기고 컬럼 값을 신뢰한다.
+
+**식별과 대조는 다른 함수다(ADR 0009).** 이 모듈은 `doc_id` 를 직접 만들지 않는다 —
+`packages.core.models.document.compute_doc_id()` 가 유일한 경로이고, 그 안에서만 식별용 제목 정규화
+(`identity_title`, 동결·config 를 읽지 않음)가 일어난다. 이 모듈이 계산하는 `title_normalized` 는
+**대조(제목 ↔ Activity 유사도) 전용**이며 `config` `title_matching.normalize` 가 소유한다 — 그 블록을
+어떻게 튜닝해도 `doc_id` 는 한 건도 움직이지 않는다. 그 계약을 되살아나지 못하게 하려고 이 모듈에는
+`doc_id` 해시 계산을 두지 않는다(§5 규칙 1).
 """
 from __future__ import annotations
 
-import hashlib
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -26,10 +32,11 @@ from typing import Any
 import openpyxl
 from openpyxl.worksheet.worksheet import Worksheet
 
-from packages.core.models.document import Document, DocumentApprovalStatus, DocumentType
+from packages.core.models.document import Document, DocumentApprovalStatus, DocumentType, compute_doc_id
 from packages.core.models.evidence import Evidence
 
 from ..config_loader import load_document_register_config
+from ..identity_surface import identity_surface_fingerprint
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -59,6 +66,9 @@ class DocumentRegisterImportResult:
     documents: list[Document] = field(default_factory=list)
     warnings: list[RegisterWarning] = field(default_factory=list)
     sheet_counts: dict[str, int] = field(default_factory=dict)   # sheet_name -> 적재한 문서 수
+    # 이 적재가 사용한 **식별 표면 지문**(ADR 0009 §5-2, `identity_surface_fingerprint`). 적재 단위 값이라
+    # `Document` 모델(행 단위)에는 넣지 않는다 — persistence 가 행마다 복제해 저장한다(`imported_at` 과 같은 형태).
+    identity_fingerprint: str = ""
 
     @property
     def warning_messages(self) -> list[str]:
@@ -270,14 +280,6 @@ def _normalize_status(
             "register_status_unmatched", None)
 
 
-def _compute_doc_id(doc_type: str, sender_normalized: str, seq_normalized: str | None, title_normalized: str) -> str:
-    """ADR 0007 §2-1. `discipline` 은 재료에 들어가지 않는다 — 신뢰 불가 필드가 문서 정체성에
-    관여하면 협력사가 공종을 고쳐 적을 때 같은 문서가 다른 문서가 된다."""
-    material = f"{doc_type}|{sender_normalized}|{seq_normalized or ''}|{title_normalized}"
-    digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
-    return f"doc-{digest}"
-
-
 def _doc_type_enum(doc_type: str) -> DocumentType:
     try:
         return DocumentType(doc_type)
@@ -344,7 +346,11 @@ def _build_document(
         extra={"sheet": sheet_name, "row": row_idx, "doc_number": doc_number},
     )
 
-    doc_id = _compute_doc_id(doc_type, sender_normalized, seq_normalized, title_normalized)
+    # ADR 0009 §5 규칙 1: `doc_id` 를 만드는 유일한 경로는 모델의 `compute_doc_id()` 다. 마지막 인자는
+    # **원문 제목**이다 — 식별용 정규화(`identity_title`)는 그 함수 안에서만 일어나고, 호출자가 자기
+    # 나름대로 정규화한 문자열(위 `title_normalized` — 대조용이고 config 로 자유롭게 튜닝된다)을 재료로
+    # 끼워 넣을 수 없다. 이 한 줄이 이번 사고("매칭 튜닝 한 줄이 모든 문서의 정체성을 바꾼다")의 수리다.
+    doc_id = compute_doc_id(doc_type, sender_normalized, seq_normalized, title_val)
 
     return Document(
         project_id=project_id,
@@ -434,7 +440,7 @@ def import_document_register(
     discipline_aliases = normalization.get("discipline_aliases", {})
     date_formats = list(normalization.get("date_formats", []))
 
-    result = DocumentRegisterImportResult()
+    result = DocumentRegisterImportResult(identity_fingerprint=identity_surface_fingerprint(cfg))
     seen_doc_numbers: dict[str, list[tuple[str, int]]] = {}
 
     wb = openpyxl.load_workbook(Path(path), data_only=True)
@@ -478,4 +484,5 @@ def import_document_register(
     return result
 
 
-__all__ = ["DocumentRegisterImportResult", "RegisterWarning", "import_document_register"]
+__all__ = ["DocumentRegisterImportResult", "RegisterWarning", "identity_surface_fingerprint",
+           "import_document_register"]

@@ -142,7 +142,25 @@ title_matching:
   # true 로 바꾸는 변경은 reviewer 가 반려한다(ADR 0007 §4 규칙 5, ADR 0001 불변식 1과 같은 구조).
   auto_confirm: false
 
+  # ─────────────────────────────────────────────────────────────────────────
+  # 이 블록은 **제목 ↔ Activity 대조 전용**이다 (ADR 0009 §1·§2).
+  # doc_id 는 여기 값을 읽지 않는다 — 식별용 정규화는
+  # packages/core/models/document.identity_title() 에 **동결**돼 있고 config 를 읽지 않는다.
+  # 그래서 min_similarity 를 실데이터로 다시 재면서 이 블록을 함께 튜닝해도 문서 정체성(doc_id)은
+  # 한 건도 움직이지 않는다. 실측으로 고정돼 있다(계획 0003 §7 V1 — 8가지 매칭 뮤테이션 전부 0/10).
+  #
+  # 예전에는 그렇지 않았다: 여기 strip_patterns 에 한 줄을 더하면 픽스처 10건 중 6건의 doc_id 가
+  # 바뀌었고, CM 이 확정·반려한 매핑이 고아 문서를 가리키게 되면서 이력이 조용히 무효화됐다
+  # (예외 없음·테스트 통과·화면 정상). ADR 0009 가 그 결합을 끊었다.
+  #
+  # 식별 정규화를 이 파일에서 조정하려는 키(title_matching.identity_normalization,
+  # normalization.title_identity)는 **존재하기만 해도** 로딩이 UnsafeConfigOverrideError 로 실패한다
+  # (services/progress/config_loader._assert_absent). 식별 규칙을 실제로 바꿔야 한다면 유일한 경로는
+  # DOC_ID_SCHEME 상향 + 마이그레이션이다(ADR 0009 §5 규칙 4).
+  # ─────────────────────────────────────────────────────────────────────────
   normalize:
+    # 코드가 읽지 않는 문서화 키. 다른 값이면 로딩 실패(auto_confirm·seq_digits_only 와 같은 패턴).
+    affects_doc_id: false
     lowercase: true
     collapse_whitespace: true
     # 제거할 잡음 토큰(괄호 안 첨부 표기·확장자·머리말 등). 정규식.
@@ -197,7 +215,11 @@ mapping:
 import_warnings:
   duplicate_doc_number: "같은 프로젝트에 같은 문서번호가 둘 이상 존재"
   doc_number_mismatch: "문서번호가 발신/공종/번호 컬럼과 어긋남 — 컬럼 값을 신뢰함"
-  document_possibly_renamed: "제목만 다르고 (종류·발신·번호)가 같은 기존 문서가 있음 — 자동 병합하지 않음"
+  # ADR 0009 §Deferred 2 / 계획 0003 §10-4: 문구 정정. 예전 문구("제목만 다르고 …")는 식별 드리프트
+  # 상황에서 **사실과 달랐다** — 제목이 한 글자도 바뀌지 않았는데도 이 경고가 "제목이 다르다"고 적었다
+  # (원인은 우리 config 였다). ADR 0009 §5-2 가 두 경우를 분리하면서 이 경고는 **대장 제목 원문이 실제로
+  # 다를 때만** 붙고, 원문이 같은데 doc_id 만 이동한 경우는 DOCUMENT_IDENTITY_DRIFT 가 받는다.
+  document_possibly_renamed: "대장에서 제목이 바뀐 것으로 보임 — (종류·발신·번호)가 같고 제목 원문만 다른 기존 문서가 있음. 자동 병합하지 않고 새 문서로 적재하며 기존 문서는 고아 표시된다(제목 원문까지 같은데 doc_id 가 움직였다면 rename 이 아니라 식별 드리프트다 — DOCUMENT_IDENTITY_DRIFT 참고)"
   header_row_not_found: "헤더 행을 찾지 못해 시트를 건너뜀"
   required_column_missing: "필수 컬럼(제목)이 없어 시트를 건너뜀"
   document_status_unmatched: "처리결과 텍스트를 어떤 규칙으로도 해석하지 못함 — UNKNOWN 으로 적재(evidence.method=register_status_unmatched)"
@@ -214,4 +236,18 @@ import_warnings:
   # 계열(매핑 동기화 단계 발화)이라 스타일을 맞춘 것이다. 발화 조건(ADR 0007 §4-3): 공정표 적재는
   # 성공했는데 뒤이은 문서 매핑 재동기화가 실패했을 때 — job 을 실패시키지 않고 경고로 강등한다.
   # 문서 매핑은 공정표 적재의 부수 효과일 뿐이라, 대장 설정이 잘못됐다고 공정표를 인질로 잡지 않는다.
+  # ADR 0009 §5-2 의 식별 드리프트 탐지가 만드는 경고 2종. 대문자인 이유는 위 DOCUMENT_UNMAPPED 와
+  # 같은 계열(파서가 아니라 적재 판정 단계에서 발화)이라 스타일을 맞춘 것이다. 발화 주체는
+  # services/ingest/persistence.persist_document_register_import (재업로드 판정을 소유한다).
+  #
+  # 드리프트는 대장 탓이 아니라 **우리 config 탓**이다 — 그래서 job 을 실패시키지 않는다(ADR 0007 §1
+  # 규칙 1 과는 다른 이유다): 새 협력사 별칭을 추가한 주에 주간 대장 업로드가 통째로 막히면 운영자는
+  # config 를 되돌리는 대신 탐지를 끄는 방향으로 움직인다. 대신 사람의 판단(확정·반려)이 실제로
+  # 걸려 있을 때만 document_identity_drift 검토요청을 CM 큐에 올린다(ADR 0009 §5-2·§5-3).
+  # 지문(identity_fingerprint)이 **같은데도** 이 경고가 뜨는 경우가 있다 — 실측: 워크북 시트명을
+  # 'TFA' → '자료제출' 로 바꾸면 config 는 한 글자도 안 바뀌었는데 doc_id 가 8/10 움직인다(doc_type 이
+  # 시트명에서 오기 때문). 그래서 메시지가 두 경우를 모두 안내한다: 지문이 바뀌었으면 config 를,
+  # 같으면 대장 파일 쪽(시트명 등)을 본다. 계획 0003 §1-a 블라인드 스팟 1 이 이 경로다.
+  DOCUMENT_IDENTITY_DRIFT: "대장 원문은 그대로인데 doc_id 가 이동했다 — 우리 쪽 식별 규칙이 바뀐 것이다. 지문(identity_fingerprint)이 함께 바뀌었으면 config(sender_aliases·sheet_doc_types·column_aliases)를, 지문이 그대로면 대장 파일 쪽(워크북 시트명 등 config 밖 입력)을 본다. 확정·반려한 매핑이 고아 문서를 가리키게 되므로, 걸린 판단이 있으면 document_identity_drift 검토요청이 함께 생성된다. 되돌리려면 바꾼 쪽을 원래대로 두고 대장을 다시 올린다"
+  DOCUMENT_IDENTITY_COLLISION: "서로 다른 대장 행이 같은 doc_id 로 병합됐다 — 뒤 행이 앞 행을 덮어써 한 행만 남고(document_count 와 실제 행 수가 어긋난다) 살아남은 행의 승인 상태가 도면 승인 판단의 입력이 된다. 식별 규칙이 지나치게 공격적이다"
   DOCUMENT_MAPPING_RESYNC_FAILED: "공정표는 정상 적재됐으나 뒤이은 문서↔Activity 매핑 재동기화가 실패함 — 공정표 자체는 사용 가능하고, 문서 매핑은 대장을 재업로드하거나 매핑 재생성을 호출하면 다시 시도됨"

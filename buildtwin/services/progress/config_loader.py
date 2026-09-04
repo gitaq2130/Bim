@@ -39,13 +39,18 @@ def _load_config_with_path(filename: str, required: bool = True) -> tuple[dict[s
 
 
 class UnsafeConfigOverrideError(ValueError):
-    """안전 불변식으로 **문서화된** config 키를 코드가 허용하지 않는 값으로 바꾸려는 시도.
+    """안전 불변식을 config 로 뒤집으려는 시도. 두 가지 형태를 같은 예외로 막는다.
 
-    ADR 0007 §4 규칙 5(문서 매핑은 confidence 와 무관하게 항상 needs_review=True)와
-    §5-1(도면 승인은 비율이 아니라 논리곱)은 코드에 하드코딩된 불변식이고, 아래 네 config 키는 그
-    불변식을 "문서화"하는 값일 뿐 코드가 읽어서 분기하지 않는다. 값을 바꿔도 아무 일도 일어나지
-    않는 것이 가장 위험하다 — 운영자가 "설정했으니 됐다"고 믿게 된다. 그래서 로딩 시점에 값을
-    검사해, 안전하지 않은 값으로 바뀌면 조용히 무시하는 대신 요란하게 실패한다."""
+    **① 값 고정**(`_assert_invariant`). ADR 0007 §4 규칙 5(문서 매핑은 confidence 와 무관하게 항상
+    needs_review=True)·§5-1(도면 승인은 비율이 아니라 논리곱), ADR 0009 §1(`title_matching.normalize` 는
+    대조 전용)은 코드에 하드코딩된 불변식이고, 해당 config 키들은 그 불변식을 "문서화"하는 값일 뿐
+    코드가 읽어서 분기하지 않는다. 값을 바꿔도 아무 일도 일어나지 않는 것이 가장 위험하다 — 운영자가
+    "설정했으니 됐다"고 믿게 된다. 그래서 로딩 시점에 값을 검사해, 안전하지 않은 값으로 바뀌면 조용히
+    무시하는 대신 요란하게 실패한다.
+
+    **② 키 부재**(`_assert_absent`, ADR 0009 §2). 식별용 제목 정규화처럼 **코드에 동결된** 규칙을
+    config 로 되돌리려는 키는 값이 무엇이든 존재해서는 안 된다. ①과 달리 "요구값"이 없다 — 손잡이
+    자체를 없애는 것이 목적이기 때문이다."""
 
 
 def _assert_invariant(cfg: dict[str, Any], source: Path, key_path: tuple[str, ...], expected: Any, why: str) -> None:
@@ -66,6 +71,34 @@ def _assert_invariant(cfg: dict[str, Any], source: Path, key_path: tuple[str, ..
         raise UnsafeConfigOverrideError(
             f"{source}: {dotted} = {actual!r} 는 허용되지 않는다(요구값 {expected!r}). {why}"
         )
+
+
+def _assert_absent(cfg: dict[str, Any], source: Path, key_path: tuple[str, ...], why: str) -> None:
+    """`_assert_invariant` 의 짝. **키의 존재 자체**를 막는다(ADR 0009 §2, 세 번째 강제 지점).
+
+    둘은 다른 것을 지킨다. `_assert_invariant` 는 "코드가 읽지 않는 문서화 키가 다른 값으로 바뀌는 것"을
+    막는다 — 키가 있는 것 자체는 정상이고 값만 고정이다. 여기서 막을 것은 반대다: **동결된 규칙을 config
+    로 되돌리려는 시도** 자체이므로 값이 무엇이든(빈 dict·null 포함) 존재하면 안 된다.
+
+    왜 값 검사로는 부족한가(ADR 0009 §2): 식별 정규화는 정규식 목록·문자 집합·불리언의 중첩 구조라
+    "요구값과 같은가"를 검사하려면 그 구조 전체를 코드에 또 한 벌 적어야 하고, 그러면 진실 원천이 둘이
+    된다. 그리고 config 에 키가 **보이면** 사람은 만진다 — 안전 장치의 최선은 "만졌을 때 막는 것"이
+    아니라 "만질 손잡이가 없는 것"이다.
+
+    `_assert_invariant` 와 같은 이유로 `source`(실제로 읽은 파일 경로)를 예외 메시지에 싣는다 —
+    `settings.config_dir` 오버라이드가 있으면 저장소 기본 `config/` 가 아닐 수 있다.
+    """
+    node: Any = cfg
+    for key in key_path[:-1]:
+        if not isinstance(node, dict) or key not in node:
+            return   # 상위 섹션이 없으면 하위 키도 없다
+        node = node[key]
+    if not isinstance(node, dict) or key_path[-1] not in node:
+        return       # 없어야 정상 — 통과
+    dotted = ".".join(key_path)
+    raise UnsafeConfigOverrideError(
+        f"{source}: {dotted} 키는 존재해서는 안 된다(값과 무관). {why}"
+    )
 
 
 def load_readiness_config() -> dict[str, Any]:
@@ -100,7 +133,11 @@ def load_wbs_mapping_config() -> dict[str, Any]:
 
 
 def load_document_register_config() -> dict[str, Any]:
-    """`document_mapper.py`·`importers/document_register.py` 공용 로더. 세 안전 불변식 키를 검사한다."""
+    """`document_mapper.py`·`importers/document_register.py` 공용 로더.
+
+    안전 불변식 검사 여섯 가지: 값 고정 넷(`_assert_invariant`) + **키 부재** 둘(`_assert_absent`,
+    ADR 0009 §2). 뒤의 둘은 "식별 정규화를 config 로 되돌리려는 시도"를 값이 아니라 키의 존재로 막는다.
+    """
     cfg, source = _load_config_with_path("document_register.yaml")
     _assert_invariant(
         cfg, source, ("title_matching", "auto_confirm"), False,
@@ -124,5 +161,28 @@ def load_document_register_config() -> dict[str, Any]:
         "seq_normalized 는 doc_id 재료다(§2-1) — auto_confirm 보다 이해관계가 크다: false 로 바꿔도 "
         "정규화 동작은 그대로인데, 바뀐다고 믿고 설정한 사람은 문서 정체성(doc_id)이 달라질 거라 "
         "기대하지만 실제로는 아무 일도 일어나지 않는다.",
+    )
+    _assert_invariant(
+        cfg, source, ("title_matching", "normalize", "affects_doc_id"), False,
+        "이 값은 ADR 0009 §1(title_matching.normalize 는 제목 ↔ Activity **대조 전용**이고 doc_id 를 "
+        "움직이지 않는다)을 문서화하는 안전 불변식이며 코드가 읽지 않는다 — doc_id 는 언제나 "
+        "packages/core/models/document.compute_doc_id() 가 원문 제목에서 identity_title() 로 만든다. "
+        "true 로 바꿔도 이 블록은 여전히 doc_id 를 움직이지 않는다: 이 블록을 튜닝하면 정체성이 따라 "
+        "움직인다고 믿는 것이야말로 ADR 0009 가 고친 사고(매칭 튜닝 한 줄에 CM 확정·반려 이력이 조용히 "
+        "무효화됨)의 원인이므로, 그 오해를 조용히 지나가게 두지 않고 로딩을 실패시킨다.",
+    )
+    _assert_absent(
+        cfg, source, ("title_matching", "identity_normalization"),
+        "식별용 제목 정규화는 packages/core/models/document.identity_title() 에 **동결**돼 있고 config 를 "
+        "읽지 않는다(ADR 0009 §2). 이 키를 두면 '정체성 규칙을 여기서 조정할 수 있다'는 손잡이가 생기고, "
+        "코드는 그 값을 읽지 않으므로 조정한 사람은 아무 일도 일어나지 않는 것을 모른 채 넘어간다. "
+        "식별 규칙을 실제로 바꿔야 한다면 DOC_ID_SCHEME 를 올리고 마이그레이션과 함께 가는 것이 유일한 "
+        "경로다(ADR 0009 §5 규칙 4). 이 키는 지우면 된다.",
+    )
+    _assert_absent(
+        cfg, source, ("normalization", "title_identity"),
+        "위 title_matching.identity_normalization 과 같은 이유다(ADR 0009 §2) — 식별용 제목 정규화를 "
+        "config 로 되돌리는 경로는 이름을 바꿔서도 존재하지 않는다. 대조용 정규화가 필요하면 "
+        "title_matching.normalize 를 쓰면 되고, 그 블록은 doc_id 를 움직이지 않으므로 자유롭게 튜닝해도 된다.",
     )
     return cfg
