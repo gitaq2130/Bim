@@ -22,7 +22,7 @@ from .evidence import Evidence
 #   `row_moved`      — 대장 행은 그대로인데 우리 식별 규칙이 그 행을 **다른 doc_id 로 옮겼다**.
 #                      `new_doc_id` 위에서 같은 판단을 다시 내린다. **고아라고 적지 않는다**: 옛 행이
 #                      고아가 되는지는 이 경위가 답하지 않는다(시트명 변경 경로는 안 된다 — 실측
-#                      `moved=9` 인데 `is_orphaned=False`).
+#                      `moved=8` 인데 `is_orphaned=False`).
 #   `row_replaced`   — **행도 reviewed_by 도 살아 있고 고아 표시조차 없는데** 그 doc_id 가 담고 있던
 #                      **대장 행**이 바뀌었다. 승인 상태가 뒤집힐 수 있고 다시 판단할 새 doc_id 가
 #                      **없다**(`new_doc_id=null` — "모른다"가 아니라 그 사실이다). 가장 위험한 경위.

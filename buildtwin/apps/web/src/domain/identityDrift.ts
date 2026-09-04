@@ -8,7 +8,7 @@
  * 하지 않는다(`domain/documentBlocker` 머리말과 같은 이유).
  *
  * **개정 2 — 경위 이름 셋이 전부 바뀌었다**(ADR 0009 §5-2 (마)). 옛 이름은 관측과 어긋나 있었다:
- * `orphaned` 가 붙던 경로에서 그 행들은 **고아가 아니었고**(실측 P3 `moved=9`, `is_orphaned=False`),
+ * `orphaned` 가 붙던 경로에서 그 행들은 **고아가 아니었고**(실측 P3 `moved=8`, `is_orphaned=False`),
  * `merge_overwritten`/`merge_absorbed` 가 잡는 주 경로에는 **병합이 없다**(실측 R1 `merged=0`).
  * 이름이 거짓이면 그 이름으로 갈린 라벨·안내도 함께 거짓이 된다 — 그래서 이 모듈은 **경위 이름이 아니라
  * 관측한 값**으로 문장을 만든다(CLAUDE.md §6-4, 서버 `_identity_drift_clause` 와 같은 규칙).
@@ -17,7 +17,7 @@
  *
  * | cause | 데이터 | CM 이 해야 할 일 |
  * |---|---|---|
- * | `row_replaced` | 이 `doc_id` 가 담고 있던 **대장 행 자체**가 바뀌었다. 행도 `reviewed_by` 도 살아 있고 고아 표시조차 없다 | 화면의 승인 상태를 믿지 말 것. **다시 판단할 새 `doc_id` 가 없다**(`new_doc_id=null`) |
+ * | `row_replaced` | 이 `doc_id` 가 담고 있던 **대장 행의 내용**이 달라졌다. 행도 `reviewed_by` 도 살아 있고 고아 표시조차 없다 | 승인 상태가 지금 어떤지는 `approval_flipped` **값**이 답한다(뒤집혔다 / 같다 / 모른다 — 경위 이름은 답하지 못한다). **다시 판단할 새 `doc_id` 가 없다**(`new_doc_id=null`) |
  * | `row_absorbed` | 판단이 가리키던 대장 행이 지금은 다른 `doc_id` 아래에 있고, 이 `doc_id` 에는 대장 행이 남지 않았다 | 그 `new_doc_id` 위에서 다시 판단 |
  * | `row_moved` | 대장 행은 그대로인데 우리 식별 규칙이 그 행을 다른 `doc_id` 로 옮겼다 | `new_doc_id` 위에서 같은 판단을 다시 |
  *
@@ -78,15 +78,27 @@ export const IDENTITY_DRIFT_CAUSE_LABELS: Record<IdentityDriftCauseKind, string>
  * 여기 있는 것은 그 경위의 **모든 항목에서 참인 문장**뿐이다. 항목마다 갈리는 사실(승인 상태가 뒤집혔는가,
  * 무엇이 달라졌는가, 다시 판단할 곳이 있는가)은 값에서 유도한다 — `identityDriftGroupFacts`.
  *
- * `row_replaced` 문구가 이 화면의 핵심이다: 행이 살아 있어 화면에는 아무 이상이 없어 보이지만,
- * 지금 보이는 승인 상태는 CM 이 보고 판단한 그 대장 행의 것이 아니다. 이것을 말하지 않으면 CM 은 문서
- * 상세를 열기 전까지 승인 상태가 뒤집힌 것을 알 수 없다.
+ * **`row_replaced` 상수에서 승인 상태 단정을 걷어냈다**(한정어 역방향 확인 — 서버가 `132d116` 에서
+ * 같은 문장을 값 기준 세 갈래로 가른 것과 같은 정정, ADR 0009 §5-3-b). 이 상수는 개정 2 까지 경위
+ * 이름만 보고 **한정어 없이** "지금 보이는 승인 상태는 CM 이 보고 판단한 그 대장 행의 것이 아닙니다 —
+ * 대장 원본과 대조해 승인 상태부터 확인하십시오"라고 적었고, 그 두 문장은 둘 다 잘못이었다:
+ *
+ * 1. **거짓인 적재가 있다.** 대장이 **같은 행의** 표기를 스스로 고친 경로(V8a·V8b·P8b·FP1)와 행-정체가
+ *    같은 두 행의 처리결과가 `반려`/`부적합` 이라 둘 다 `REJECTED` 인 경로(P13b)에서는
+ *    `approval_flipped=False`·`drawing_approval` 0.0 → 0.0 — 승인 상태 **값**이 CM 이 판단할 때와
+ *    한 글자도 다르지 않다.
+ * 2. **비용 전제를 깬다.** ADR 0009 §5-2 (바)가 P6·P7·P8b·FP1 오탐을 남기기로 한 근거가 "대가는
+ *    부수효과 없는 확인 요청 1건"인데, 화면이 "승인 상태부터 확인하십시오"라고 지시하면 대가가
+ *    **CM 의 도면 재확인 1회**가 되어 그 결정의 전제가 무너진다.
+ *
+ * 그래서 상수에는 **모든 `row_replaced` 항목에서 참인 것**(담긴 내용이 달라졌다 / 행도 판단도 살아 있어
+ * 화면에는 이상이 보이지 않는다)만 남기고, 승인 상태가 지금 어떤지는 `identityDriftGroupFacts` 가
+ * `approval_flipped` **값**에서 세 갈래로 적는다.
  */
 export const IDENTITY_DRIFT_CAUSE_NOTES: Record<IdentityDriftCauseKind, string> = {
   row_replaced:
-    "이 doc_id 가 담고 있던 대장 행이 바뀌었습니다. 문서 행도 CM 의 판단도 그대로 살아 있어 화면에는 " +
-    "이상이 보이지 않지만, 지금 보이는 승인 상태는 CM 이 보고 판단한 그 대장 행의 것이 아닙니다 — " +
-    "대장 원본과 대조해 승인 상태부터 확인하십시오.",
+    "이 doc_id 가 담고 있던 대장 행의 내용이 CM 이 판단한 뒤 달라졌습니다. 문서 행도 CM 의 판단도 " +
+    "그대로 살아 있어 화면에는 이상이 보이지 않습니다.",
   row_absorbed:
     "이 판단이 가리키던 대장 행이 지금은 다른 doc_id 아래에 있고, 이 doc_id 에는 대장 행이 남지 않았습니다.",
   row_moved:
@@ -122,6 +134,20 @@ export interface LostDecisionGroup {
   documents: number;
   /** `approval_flipped === true` 인 문서 수. 서버가 값을 싣지 않았으면 0(= 모르므로 말하지 않는다). */
   approvalFlippedDocuments: number;
+  /**
+   * **어느 항목도 `approval_flipped` 를 boolean 으로 싣지 않았다** = 승인 상태가 이번 적재에 움직였는지
+   * **모른다**.
+   *
+   * 한정어 역방향 확인 — 이 값을 "`approvalFlippedDocuments === 0`"으로 갈음하면 안 된다. 0 은
+   * "뒤집히지 않았다"(사실)와 "필드가 없어 모른다"(미상)를 같은 값으로 뭉갠다. 뭉개면 화면이 구버전
+   * 응답에 대고 "승인 상태 값은 CM 이 판단할 때와 같습니다"라고 **관측하지 못한 사실**을 단정하게 된다.
+   * `noNewDocId` 가 부재와 `null` 을 가르는 것과 같은 이유다(ADR 0009 §5-2 (마)).
+   *
+   * 서버(`_identity_drift_clause`)에는 이 갈래가 없다 — `LostDecision` TypedDict 가 `approval_flipped`
+   * 를 **필수**로 요구하므로 생산 시점에는 부재가 존재할 수 없다. 화면은 DB 에 남은 개정 2 이전 요청을
+   * 그대로 받아 그리므로 여기서만 필요하다(웹 `LostDecision.approval_flipped?: boolean | null`).
+   */
+  approvalFlippedUnknown: boolean;
   /** 이 묶음에서 실제로 달라진 행-정체 필드(서버가 실은 순서 그대로, 중복 제거). */
   changedFields: string[];
   /** 다시 판단할 수 있는 `doc_id` 들(중복 제거). 비어 있다고 "없다"는 뜻은 아니다 — `noNewDocId` 참고. */
@@ -175,6 +201,8 @@ export function groupLostDecisionsByCause(lost: readonly LostDecision[]): LostDe
       approvalFlippedDocuments: new Set(
         items.filter((d) => d.approval_flipped === true).map((d) => d.doc_id ?? ""),
       ).size,
+      approvalFlippedUnknown:
+        items.length > 0 && items.every((d) => typeof d.approval_flipped !== "boolean"),
       changedFields,
       newDocIds,
       noNewDocId: items.length > 0 && items.every((d) => d.new_doc_id === null),
@@ -199,13 +227,25 @@ export function groupLostDecisionsByCause(lost: readonly LostDecision[]): LostDe
  *    경우(ADR 0009 §5-2 (바) P6·P7)가 화면 밖으로 나간다. 그래서 **맨 앞에 세우기만** 한다.
  * 2. 달라진 필드 — `changed_fields` 가 있을 때만 나열한다. 비어 있으면 대장 원문 네 필드는 그대로이므로
  *    (ADR 0009 §5-2 (나-ii)) "다른 대장 행으로 바뀌었다"고 적을 수 없다. 그 경우 `row_replaced` 는
- *    관측한 것(내용이 달라졌다)만 적는다.
- * 3. 다시 판단할 곳 — `new_doc_id` **값**에서 읽는다. 값이 있으면 그 doc_id 를 가리키고, 모든 항목이
+ *    관측한 것(내용이 달라졌다)만 적되, **무엇이 달라졌는지도 값에서 읽는다** — (나-ii)는 행-내용
+ *    `(result_raw, approval_status)` 중 **어느 한쪽만** 달라져도 발화하므로, 늘 "처리결과·승인 상태"라고
+ *    적으면 승인 상태가 그대로인 적재(실측 P13b: 행-정체가 같은 두 행의 처리결과가 `반려`/`부적합` —
+ *    둘 다 `REJECTED` 라 `approval_flipped=False`)에서 CM 은 자기 승인 근거가 움직였다고 읽는다.
+ *    서버 `_identity_drift_clause` 가 `132d116` 에서 같은 정정을 했다("담은 처리결과 표기가" /
+ *    "담은 승인 상태가"). `approval_flipped` 를 아예 모르면(구버전 응답) 목록 자체를 적지 않는다.
+ * 3. 지금 승인 상태는 어떤가 — `approval_flipped` **값**으로 세 갈래(아래 `row_replaced` 블록,
+ *    서버 §5-3-b 결정표와 같은 규칙). 이 문장은 개정 2 까지 `IDENTITY_DRIFT_CAUSE_NOTES` 안에서
+ *    **경위 이름만 보고 한정어 없이** "지금 보이는 승인 상태는 CM 이 보고 판단한 그 대장 행의 것이
+ *    아닙니다"라고 붙었고, `approval_flipped=False` 인 다섯 경로(V8a·V8b·P8b·FP1·P13b)에서 거짓이었다.
+ *    `row_replaced` 에만 붙인다 — 서버도 다른 두 경위의 절에서는 승인 상태를 말하지 않고, 생산자 계약상
+ *    `row_moved`/`row_absorbed` 는 `approval_flipped` 가 언제나 `false` 라 말할 것이 없다.
+ * 4. 다시 판단할 곳 — `new_doc_id` **값**에서 읽는다. 값이 있으면 그 doc_id 를 가리키고, 모든 항목이
  *    명시적 `null` 이면 "없다"고 적고, 필드 자체가 없으면(구버전 응답) **아무 말도 하지 않는다.**
  */
 export function identityDriftGroupFacts(group: LostDecisionGroup): string[] {
   const facts: string[] = [];
-  if (group.approvalFlippedDocuments > 0) {
+  const flipped = group.approvalFlippedDocuments > 0;
+  if (flipped) {
     facts.push(
       `도면 승인 근거가 뒤집혔습니다 — 문서 ${group.approvalFlippedDocuments}건의 승인 상태가 이번 적재에 달라졌습니다.`,
     );
@@ -214,9 +254,37 @@ export function identityDriftGroupFacts(group: LostDecisionGroup): string[] {
     const labels = group.changedFields.map((name) => IDENTITY_DRIFT_FIELD_LABELS[name] ?? name);
     facts.push(`달라진 대장 원문: ${labels.join("·")}.`);
   } else if (group.cause === "row_replaced") {
-    facts.push(
-      "대장 원문(발신·문서번호·번호·제목)은 그대로인데, 그 doc_id 가 담은 내용(처리결과·승인 상태)이 달라졌습니다.",
-    );
+    // 값에서 유도한 목록은 **꼬리에 붙인다**(`달라진 대장 원문: …` 과 같은 형태). 문장 가운데 넣으면
+    // 뒤에 조사가 붙는데, 라벨의 받침이 런타임에 갈려 절반이 틀린다(서버가 `_particle` 을 태우는 이유).
+    const head = "대장 원문(발신·문서번호·번호·제목)은 그대로인데, 그 doc_id 가 담은 내용이 달라졌습니다";
+    if (group.approvalFlippedUnknown) {
+      // 무엇이 달라졌는지는 `approval_flipped` 없이는 가릴 수 없다 — 아는 것(내용이 달라졌다)만 적는다.
+      facts.push(`${head}.`);
+    } else {
+      const contents: string[] = [];
+      if (group.items.some((d) => d.approval_flipped !== true)) contents.push("처리결과 표기");
+      if (flipped) contents.push("승인 상태");
+      facts.push(`${head} — ${contents.join("·")}.`);
+    }
+  }
+  if (group.cause === "row_replaced" && !group.approvalFlippedUnknown) {
+    if (flipped) {
+      facts.push("그 판단은 지금 화면에 떠 있는 승인 상태와 다른 값 위에서 내려졌습니다.");
+    } else if (group.changedFields.length > 0) {
+      // 역방향 확인 — 여기서 "그 대장 행의 것이 아닙니다"라고 단정하면 대장이 **같은 행**의 표기를
+      // 고쳐 적은 경우(V8a·V8b·P8b·FP1)에서 거짓이다. 시스템은 둘을 가를 수 없으므로 가를 수 없다고
+      // 적고 판단은 CM 에게 넘긴다(ADR 0009 §5-2 (바)가 오탐을 남기기로 한 근거와 같은 자리).
+      facts.push(
+        "승인 상태 값 자체는 CM 이 판단할 때와 같습니다 — 달라진 것은 이 doc_id 가 담고 있는 대장 " +
+          "원문이고, 대장이 같은 행을 고쳐 적은 것인지 다른 행으로 바뀐 것인지는 이번 적재의 값으로 " +
+          "가릴 수 없습니다.",
+      );
+    } else {
+      // 역방향 확인 — 이 갈래에서 "달라진 것은 대장 원문"이라고 적으면 `changed_fields === []` 가 말하는
+      // 바로 그 사실(원문 네 필드는 그대로)을 뒤집는 거짓이 된다. 무엇이 달라졌는지는 위 문장이 이미
+      // 적었으므로 여기서는 승인 상태만 말한다(서버 §5-3-b 결정표 셋째 줄).
+      facts.push("승인 상태 값은 CM 이 판단할 때와 같습니다.");
+    }
   }
   if (group.newDocIds.length > 0) {
     facts.push(`다시 판단할 곳: ${group.newDocIds.join(", ")}.`);

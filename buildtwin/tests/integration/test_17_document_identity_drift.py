@@ -756,7 +756,7 @@ def test_v5_row_moved_title_names_the_move_without_calling_it_orphaning(client, 
     **이 테스트는 개정 1 에서 "'고아'가 제목에 있어야 한다"고 단언했고, 그것이 거짓 계약이었다.**
     ADR 0009 §5-3 개정 2 정정 ①이 그 문장을 지목한다: 판정은 §5-2 (가)에서 이미 고아를 보지 않기로
     고쳤는데(좌변은 "이번 적재에 나타나지 않은 기존 행 전부") 문구만 고아라고 말하고 있었다. 실측이
-    그것을 증명한다 — 워크북 시트명 변경 경로는 `moved=9` 인데 옛 행이 `is_orphaned=False` 다(P3).
+    그것을 증명한다 — 워크북 시트명 변경 경로는 `moved=8` 인데 옛 행이 `is_orphaned=False` 다(P3).
     계획 0003 §12-d 도 `row_moved` 문구에 **"고아"라고 쓰지 않는다**고 명시한다. 이 저장소에는 웹 테스트
     169건이 거짓 문구를 계약으로 고정한 채 전원 통과한 전례가 있고(CLAUDE.md §6-4), 그 형태를 여기서
     되풀이하지 않는다. 그래서 이 테스트는 **판정이 실제로 관측한 값**(옮겨간 새 doc_id 가 있다 / 그
@@ -1056,6 +1056,11 @@ def test_v7a_title_reports_the_flip_and_the_changed_fields_without_claiming_a_me
     않은 충돌 묶음을 찾는다(ADR 0009 §5-3 개정 2 정정 ②). "고아"·"이동"도 이 적재에서는 참이 아니고,
     다시 확정할 새 `doc_id` 도 없다. 대신 **관측한 값**은 반드시 말해야 한다: 승인 근거가 뒤집혔다는
     사실과, 달라진 행-정체 필드가 무엇인지(`changed_fields`).
+
+    **갈래 1 의 대조군이다**(ADR 0009 §5-3-b). `_assert_title_says_nothing_untrue_here` 가 갈래 2
+    (V8a·V8b·V9a·V9b)에서 `"다른 값 위에서 내려졌습니다"` 가 **없다**를 걸고, 여기서 같은 표지가
+    **있다**를 건다. 한쪽만 두면 그 문장을 아예 안 쓰는 구현(또는 늘 쓰는 구현)이 공허하게 통과한다
+    (CLAUDE.md §6-2 규칙 3).
     """
     title = _drift_reviews(client, auth, company_rename_survivor["project_id"])[0]["title"]
     for forbidden in ("고아", "병합", "이동", "다시 확정"):
@@ -1063,6 +1068,11 @@ def test_v7a_title_reports_the_flip_and_the_changed_fields_without_claiming_a_me
     assert "뒤집혔습니다" in title, title            # approval_flipped=True 를 문구가 실제로 쓴다
     assert "발신" in title and "문서번호" in title, title   # changed_fields 를 값으로 나열한다
     assert "복구되지 않습니다" in title, title
+    # 갈래 1 — CM 의 판단은 지금 화면과 **다른 값** 위에서 내려졌다. 갈래 2·3 의 반대말이 여기 있어야
+    # 한다(둘 중 하나만 있으면 표지 자체가 무의미해진다).
+    assert "다른 값 위에서 내려졌습니다" in title, title
+    assert "CM 이 판단할 때와 같습니다" not in title, title
+    assert "가릴 수 없습니다" not in title, title    # 갈래 2 전용 문장이 여기 새면 거짓이 된다
 
 
 def test_v7a_title_tail_points_at_the_config_because_the_fingerprint_moved(
@@ -1214,6 +1224,10 @@ def test_v7g_title_says_the_raw_register_fields_are_unchanged(client, auth, user
     것을 단정**하는 것이다(대장 원문 네 필드는 그대로다). 이 적재는 `merged == 1` 이지만 그렇다고
     "병합"을 문구의 계약으로 고정하지는 않는다 — 같은 경위의 주 경로(V7a)는 `merged == 0` 이고, 그때
     같은 문장이 거짓이 된다(ADR 0009 §5-3).
+
+    **`changed_fields == []` 인 갈래 1 이다**(§5-3-b — 뒤집혔고 원문은 그대로). 앞 절이 "그 doc_id 가
+    담은 **승인 상태**가 달라졌습니다"라고 적어야 하고, 뒤 절은 갈래 1 의 문장을 쓴다. 같은 앞 절의
+    반대쪽(`담은 처리결과 표기가` — 뒤집히지 않은 P13b)은 `test_v9d_*` 가 고정한다.
     """
     project_id = _new_project(client, auth, user_ids, "V7g 문구")
     upload(client, auth("contractor"), project_id, SCHEDULE)
@@ -1234,6 +1248,12 @@ def test_v7g_title_says_the_raw_register_fields_are_unchanged(client, auth, user
         assert forbidden not in title, title
     assert "그대로인데" in title, title              # 대장 원문 네 필드가 안 바뀌었다는 사실을 적는다
     assert "뒤집혔습니다" in title, title            # approval_flipped=True
+    # 앞 절 — 달라진 행-내용을 **값에서** 읽는다. 뒤집힌 적재이므로 `승인 상태`다(P13b 는 `처리결과 표기`).
+    assert "담은 승인 상태가" in title, title
+    assert "담은 처리결과 표기가" not in title, title
+    # 뒤 절 — 갈래 1(§5-3-b 결정표 첫째 줄).
+    assert "다른 값 위에서 내려졌습니다" in title, title
+    assert "CM 이 판단할 때와 같습니다" not in title, title
 
 
 # ── V7i — 블라인드 스팟 실측(§6-1): `column_aliases.sender` 로 **열 자체**를 옮긴다 ──
@@ -1440,12 +1460,16 @@ _CORRECTION_ROW = {"sender": "동부", "discipline": "기계", "seq": _MERGE_SEQ
 
 
 def _register_side_correction(client, auth, user_ids, tmp_path: Path, name: str, *,
-                              corrected: dict[str, Any]) -> dict[str, Any]:
+                              corrected: dict[str, Any], with_cm_decision: bool = True) -> dict[str, Any]:
     """대장측 표기 정정 재현. `corrected` 는 2주차에 달라지는 대장 **원문** 필드 하나다.
 
     config 는 한 글자도 바꾸지 않고(지문 동일), 처리결과도 그대로 둔다 — 그래서 이 적재에는
     **이동도 병합도 흡수도 없고 승인 상태도 뒤집히지 않는다.** 남는 사실은 하나뿐이다:
     이 `doc_id` 가 담고 있는 대장 행의 원문이 달라졌다((나-i)).
+
+    `with_cm_decision=False` 면 **CM 확정만** 빼고 나머지를 그대로 태운다 — (나)·(다) 축의 판단-없음
+    대조군(ADR 0009 §5-2 "놓치는 것" 5)이 그 판이다. 이 한 줄이 발화/침묵을 가르는 유일한 차이여야
+    하므로 대장 파일도 config 도 손대지 않는다.
     """
     project_id = _new_project(client, auth, user_ids, name)
     upload(client, auth("contractor"), project_id, SCHEDULE)
@@ -1453,8 +1477,9 @@ def _register_side_correction(client, auth, user_ids, tmp_path: Path, name: str,
                       _register_with_rows(tmp_path / "correction_week1.xlsx", tfa_rows=[_CORRECTION_ROW]))
     assert first["status"] == "done" and first["result"]["identity_drift"] is None
     doc_id = _duct_doc_ids(client, auth, project_id)["동부건설"]
-    _resolve_mapping_review_for_doc(client, auth, project_id, ACTIVITY_MERGE, doc_id,
-                                    "approved", "반려된 도면임을 확인 — 이 작업의 도면 근거로 삼는다")
+    if with_cm_decision:
+        _resolve_mapping_review_for_doc(client, auth, project_id, ACTIVITY_MERGE, doc_id,
+                                        "approved", "반려된 도면임을 확인 — 이 작업의 도면 근거로 삼는다")
     before_readiness = _readiness(client, auth, project_id, ACTIVITY_MERGE)
     _, job = upload(client, auth("cm"), project_id, _register_with_rows(
         tmp_path / "correction_week2.xlsx", tfa_rows=[{**_CORRECTION_ROW, **corrected}]))
@@ -1526,28 +1551,46 @@ def _assert_title_says_nothing_untrue_here(title: str, *, labels: list[str]) -> 
     `labels` 는 그 적재에서 **실제로 달라진** 필드의 CM 라벨이고, 제목이 나열한 것과 **정확히 같아야**
     한다 — 바뀌지 않은 필드를 끌어들이면 CM 이 대장에서 일어난 적 없는 변경을 찾는다.
 
-    ── 미결: 이 자리에 아직 채우지 못한 단언 하나 (architect major 3 와 조율 중) ──────────────
-    `services/progress/document_mapper.py` 의 `row_replaced` 절은 **무조건**
-    "…화면의 승인 상태는 CM 이 보고 판단한 그 대장 행의 것이 아닙니다"를 붙인다. 그런데 이 시나리오
-    (대장이 **같은 행의** 표기를 스스로 고침, `approval_flipped=False`, `drawing_approval` 0.0→0.0,
-    `is_orphaned=False`)에서 그 문장은 **거짓**이다 — 화면의 승인 상태는 CM 이 판단한 바로 그 행의
-    것이다. 그 문장을 어떤 조건에서만 붙일지는 architect 가 결정 중이므로 **문면을 지금 계약으로
-    고정하지 않는다**(문면을 베끼면 거짓 문구가 계약이 된다 — CLAUDE.md §6-4 규칙 3. 이 저장소는 존재한
-    적 없는 되돌리기 엔드포인트를 약속한 다이얼로그 문구를 웹 테스트 169건으로 계약화한 적이 있다).
+    ── 채워진 자리: ADR 0009 §5-3-b 의 세 갈래 (progress-engine, 132d116) ────────────────────
+    개정 2 까지 `row_replaced` 절은 **무조건** "…화면의 승인 상태는 CM 이 보고 판단한 그 대장 행의
+    것이 아닙니다"를 붙였고, 이 시나리오(대장이 **같은 행의** 표기를 스스로 고침,
+    `approval_flipped=False`, `drawing_approval` 0.0→0.0, `is_orphaned=False`)에서 그 문장은
+    **거짓**이었다 — 화면의 승인 상태는 CM 이 판단한 바로 그 행의 것이다. §5-3-b 가 그 자리를
+    `approval_flipped` **값**으로 세 갈래로 갈랐고, 이 헬퍼의 호출부 넷은 전부 **갈래 2**다
+    (뒤집히지 않았고 `changed_fields` 는 비지 않았다).
 
-    결정이 오면 **이 자리에** 한 줄을 넣는다:
+    거는 것은 문장 전체가 아니라 **갈래를 유일하게 가리키는 최소 표지**다(§6-4 규칙 3). 표지를 짧게
+    자르면 다른 갈래의 문장에 **부분열로** 걸린다 — 실제로 `"없습니다"` 로 걸었던 단위 테스트가 갈래 2
+    의 "…가릴 수 **없습니다**"에 걸려 깨졌다(132d116). 표지는 우연히 다른 문장에 포함되지 않는
+    최소 단위여야 한다.
 
-        assert <그 문장의 조건부 표지> not in title, title      # approval_flipped=False 인 적재
+    | 표지 | 여기(갈래 2, `flipped=False`) | 대조군(갈래 1, `flipped=True`) |
+    |---|---|---|
+    | `"다른 값 위에서 내려졌습니다"` | 없다 | 있다 — `test_v7a_title_*` · `test_v7g_title_*` |
+    | `"CM 이 판단할 때와 같습니다"` | 있다 | 없다 — 〃 |
+    | `"가릴 수 없습니다"` | 있다(갈래 2 전용) | 갈래 3 에도 없다 — `test_v9d_*`(P13b) |
 
-    그리고 그 조건이 참인 짝(V7a 사명 변경 주 — `approval_flipped=True`)에 같은 표지가 **있다**를 함께
-    건다(§6-2 규칙 3 — 대조군을 한 축에만 몰지 않는다). 그때까지 이 함수가 거는 것은 문면과 무관하게
-    참인 것들뿐이다.
+    **음성만 걸지 않는다**(§6-2 규칙 3). 첫 줄만 두면 그 문장을 **아예 안 적는** 구현이 공허하게
+    통과하므로, 갈래 2 가 실제로 무엇을 적는지를 적극 단언으로 함께 건다.
+
+    옛 거짓 문장의 부분열(`"그 대장 행의 것이 아닙니다"`)은 **표지로 쓰지 않는다** — 이제 서버 어느
+    갈래에도 없어서 대조군에서 반대로 걸 수 없고(어디서나 공허하게 참), 그런 단언은 §6-2 규칙 3 이
+    말하는 "결함 코드가 그대로 만족하는 기대값"이다.
     """
     for forbidden in ("고아", "병합", "이동", "다시 확정"):
         assert forbidden not in title, title
     assert "뒤집혔습니다" not in title, title      # approval_flipped=False — 뒤집힌 적이 없다
     assert _changed_field_labels_in_title(title) == labels, title
     assert "복구되지 않습니다" in title, title
+
+    # ADR 0009 §5-3-b — `approval_flipped=False` 이므로 승인 상태 **값**은 CM 이 판단할 때와 같다.
+    # 두 줄을 함께 건다: 첫 줄만 두면 그 문장을 아예 쓰지 않는 구현도 통과한다.
+    assert "다른 값 위에서 내려졌습니다" not in title, title
+    assert "CM 이 판단할 때와 같습니다" in title, title
+    # 갈래 2 ↔ 갈래 3 — 이 헬퍼는 `changed_fields` 가 비지 않는 적재 전용이다. 그 경우에만 "대장이 같은
+    # 행을 고쳐 적은 것인지 다른 행으로 바뀐 것인지 가릴 수 없다"고 적는다(§5-3-b 결정표 둘째 줄).
+    assert labels, "이 헬퍼는 갈래 2 전용이다 — changed_fields 가 빈 적재는 test_v9d 가 고정한다"
+    assert "가릴 수 없습니다" in title, title
 
 
 def test_v8a_register_side_sender_correction_fires_without_any_absorption(
@@ -1847,3 +1890,127 @@ def test_v9c_a_row_already_paired_as_moved_is_not_also_taken_by_absorption(
     assert "옮겼습니다" in title and "이동 1건" in title, title
     assert "다른 문서" not in title, title            # row_absorbed 절이 붙지 않았다
     assert _changed_field_labels_in_title(title) == [], title
+
+
+# ── V9d — P13b: 행-내용만 달라지고 승인 상태는 **뒤집히지 않은** `row_replaced` (§5-3-b 갈래 3) ──
+def test_v9d_p13b_unflipped_row_content_change_says_only_that_the_approval_value_is_unchanged(
+    client, auth, user_ids, tmp_path,
+) -> None:
+    """P13b — `changed_fields` 도 비고 `approval_flipped` 도 거짓인 `row_replaced` 가 **실제로 있다**
+    (ADR 0009 §5-3-b 실측). 문서번호 열이 없는 대장에서 행-정체 네 필드가 같은 두 행을 시트 둘에 두고
+    처리결과만 `반려`(TFA) / `부적합`(TFR)로 적으면, 둘 다 `DOCST-001` 로 `REJECTED` 다.
+
+    V7g 와 **한 글자만** 다른 시나리오다(TFR 처리결과 `승인` → `부적합`). V7g 는 뒤집히므로 갈래 1 로
+    가고, 여기는 뒤집히지 않으므로 갈래 3 으로 간다 — 그 한 글자가 제목의 두 문장을 모두 바꾼다.
+
+    **이 테스트가 고정하는 것은 §5-3-b 결정표의 셋째 줄이다.** 이 갈래에서 "달라진 것은 대장 원문"이라고
+    적으면 `changed_fields == []` 가 말하는 바로 그 사실(원문 네 필드는 그대로)을 뒤집는 거짓이 되고,
+    "승인 상태가 달라졌습니다"라고 적으면 한 글자도 다르지 않은 값을 달라졌다고 말하는 거짓이 된다.
+    그래서 앞 절은 **`처리결과 표기`** 만, 뒤 절은 **승인 상태 값이 같다**만 적어야 한다.
+
+    §6-2 규칙 3 — 갈래별 표지를 **양방향으로** 건다. 갈래 2(`가릴 수 없습니다`)와 갈래 1
+    (`다른 값 위에서 내려졌습니다`)이 여기 새면 거짓이므로 둘 다 없음을 함께 단언한다. 그리고 발화
+    자체(`lost_decisions` 1건 · 검토요청 1건)를 같은 테스트에서 고정한다 — 문구만 걸면 **탐지가 통째로
+    죽어도 초록**이다.
+    """
+    project_id = _new_project(client, auth, user_ids, "V9d P13b 뒤집히지 않는 행-내용 변경")
+    upload(client, auth("contractor"), project_id, SCHEDULE)
+    same_row = {"sender": "동부", "discipline": "기계", "seq": _MERGE_SEQ, "title": _MERGE_TITLE}
+    #: 두 행의 처리결과 **원문**은 다르고(`반려` / `부적합`) 매핑되는 상태는 같다(`DOCST-001` REJECTED).
+    #: 그래서 `result_raw` 만 달라지고 `approval_status` 는 움직이지 않는다.
+    register = _register_with_rows(tmp_path / "p13b_rows.xlsx",
+                                   tfa_rows=[{**same_row, "result": "반려"}],
+                                   tfr_rows=[{**same_row, "result": "부적합"}], drop_doc_number=True)
+    _, first = upload(client, auth("cm"), project_id, register)
+    assert first["result"]["identity_drift"] is None
+    duct = {d["doc_type"]: d for d in _documents(client, auth, project_id) if d["title"] == _MERGE_TITLE}
+    assert set(duct) == {"TFA", "TFR"}, duct
+    assert {d["approval_status"] for d in duct.values()} == {"REJECTED"}, duct   # 둘 다 반려다
+    tfa_doc_id = duct["TFA"]["doc_id"]
+    _resolve_mapping_review_for_doc(client, auth, project_id, ACTIVITY_MERGE, tfa_doc_id,
+                                    "approved", "반려된 도면임을 확인 — 이 작업의 도면 근거로 삼는다")
+    before = _readiness(client, auth, project_id, ACTIVITY_MERGE)
+    assert before["components"]["drawing_approval"] == 0.0
+
+    config_dir = _write_mutated_config(
+        tmp_path / "cfg", lambda cfg: cfg["register_layout"]["sheet_doc_types"]["TFA"].append("TFR"))
+    _, job = _upload_with_config(client, auth("cm"), project_id, register, config_dir)
+
+    # 양성 — 발화한다. `changed_fields` 도 `approval_flipped` 도 비어 있는 채로.
+    result = job["result"]
+    assert result["identity_drift"]["lost_decisions"] == [
+        {"activity_id": ACTIVITY_MERGE, "doc_id": tfa_doc_id, "decision": "confirmed",
+         "cause": "row_replaced", "new_doc_id": None, "changed_fields": [], "approval_flipped": False}]
+    assert result["identity_drift_merged"] == 1
+    assert result["identity_drift_review_id"] is not None
+    # 승인 상태는 한 글자도 움직이지 않았다 — 그것이 갈래 3 의 전제다.
+    after = _readiness(client, auth, project_id, ACTIVITY_MERGE)
+    assert after["components"]["drawing_approval"] == 0.0
+    assert [b["kind"] for b in _drawing_blockers(after)] == ["document_unapproved"]
+
+    title = _drift_reviews(client, auth, project_id)[0]["title"]
+    for forbidden in ("고아", "병합", "이동", "다시 확정"):
+        assert forbidden not in title, title
+    assert "뒤집혔습니다" not in title, title
+    assert _changed_field_labels_in_title(title) == [], title   # 원문 네 필드는 그대로다
+    assert "그대로인데" in title, title
+    # 앞 절 — 달라진 행-내용을 값에서 읽는다. 뒤집히지 않았으므로 `처리결과 표기` 뿐이다(V7g 의 반대쪽).
+    assert "담은 처리결과 표기가" in title, title
+    assert "담은 승인 상태가" not in title, title
+    # 뒤 절 — 갈래 3. 갈래 1·2 의 표지가 여기 새면 거짓이다.
+    assert "CM 이 판단할 때와 같습니다" in title, title
+    assert "다른 값 위에서 내려졌습니다" not in title, title
+    assert "가릴 수 없습니다" not in title, title
+
+
+# ── V8 N3 — (나)·(다) 축의 **판단-없음 대조군**: 의도된 침묵을 계약으로 고정한다 ──────────
+def test_v8_n3_row_replaced_without_human_decisions_is_silent_by_design(
+    client, auth, user_ids, tmp_path,
+) -> None:
+    """N3((나)·(다) 축) — V8a 에서 **CM 확정만** 뺐다. 적재 전체가 침묵한다: `identity_drift is None`,
+    DRIFT·COLLISION 경고 0건, 검토요청 0건.
+
+    **이것은 결함을 고정하는 테스트가 아니라 "의도된 침묵"을 고정하는 테스트다.** 다음 사람이 이것을
+    버그로 읽고 "고치면" 안 된다 — architect 가 ADR 0009 §5-2 "놓치는 것" 5 에서 이 비대칭을
+    **의도로 유지**하기로 결정했다(major 1). 근거 둘만 옮겨 적는다:
+
+      · 게이트를 넓히면 §5-2 (바) 표의 오탐 넷(P6·P7·P8b·FP1)이 **매주 경고가 된다.** 대장이 문서번호
+        오타 하나를 고칠 때마다 DRIFT 경고가 뜨고, 그 끝은 이 ADR 이 두 번 적은 실패다 — 운영자가
+        탐지를 끈다. 그 넷의 비용 계산은 "사람의 판단이 걸려 있을 때만"이라는 조건 **위에** 서 있다.
+      · 넓혀도 RP3b(같은 적재에서 살아남는 쪽 `doc_number` 가 함께 고쳐지는 흡수)는 닫히지 않는다.
+        거기서 잃는 판단은 흡수로 **관측되지 못해** 애초에 `lost_decisions` 에 들어가지 못한다.
+        게이트 확장과 RP3b 는 같은 게이트를 공유하지만 같은 문제가 아니다.
+
+    `moved` 축(`test_v4_n3_*`)과 `merged` 축(`test_v5_n3_*`)에는 이 대조군이 이미 있고 (나)·(다) 축에만
+    없었다 — CLAUDE.md §6-2 규칙 3("음성 대조군을 한 축에만 몰지 않는다")이 지목한 실패다.
+
+    **§6-2 를 이 테스트 자신에게도 적용한다.** 침묵만 단언하면 **탐지가 통째로 죽어도 초록**이다
+    (판정을 통째로 지워도 판단 없는 적재는 지금과 똑같이 침묵한다 — §5-2 "유지의 대가"가 그렇게 적는다).
+    그래서 **발화하는 짝**을 같은 테스트 안에서 함께 태운다: 같은 대장·같은 config·같은 정정, **CM 확정
+    한 줄만** 더한 판(= V8a 자체)은 검토요청 1건을 연다. 두 판의 유일한 차이가 그 한 줄이므로, 이
+    테스트는 "침묵"이 아니라 **"사람 판단이 침묵과 발화를 가른다"** 를 고정한다(V8d 에서 2주차 발화와
+    3주차 침묵을 함께 단언한 것과 같은 방법).
+    """
+    silent_dir = tmp_path / "silent"
+    silent_dir.mkdir()
+    firing_dir = tmp_path / "firing"
+    firing_dir.mkdir()
+
+    silent = _register_side_correction(client, auth, user_ids, silent_dir, "V8 N3 판단 없는 대장측 정정",
+                                       corrected={"sender": "동부건설(주)"}, with_cm_decision=False)
+    assert not _reviews(client, auth, silent["project_id"], kind="document_mapping", status="approved")
+
+    # 침묵 — 다섯 값을 모두 건다(하나라도 비우면 "일부만 침묵"하는 구현이 통과한다).
+    silent_result = silent["job"]["result"]
+    assert silent_result["identity_drift"] is None, silent_result
+    assert not _has_warning(silent["job"], "DOCUMENT_IDENTITY_DRIFT"), _warning_messages(silent["job"])
+    assert not _has_warning(silent["job"], "DOCUMENT_IDENTITY_COLLISION"), _warning_messages(silent["job"])
+    assert silent_result["identity_drift_review_id"] is None, silent_result
+    assert _drift_reviews(client, auth, silent["project_id"]) == []
+
+    # …그리고 (나-i) 자체는 살아 있다. 같은 시나리오에 CM 확정 한 줄을 더하면 발화한다(= V8a).
+    # 이 짝이 없으면 판정을 통째로 지워도 위 다섯 줄이 전부 초록이다.
+    firing = _register_side_correction(client, auth, user_ids, firing_dir, "V8 N3 발화하는 짝",
+                                       corrected={"sender": "동부건설(주)"})
+    _assert_lone_row_replaced_review(client, auth, firing, ["sender"])
+    assert _has_warning(firing["job"], "DOCUMENT_IDENTITY_DRIFT"), _warning_messages(firing["job"])

@@ -597,6 +597,66 @@ const SHEET_RENAME_DRIFT_REVIEW: ReviewRequest = {
 };
 
 /**
+ * ADR 0009 §5-2 (바) P6·P7·FP1·P8b — 대장이 **같은 행**의 표기를 스스로 고친 적재(발신 정정 등).
+ * `approval_flipped=False`, `drawing_approval` 0.0 → 0.0, `is_orphaned=False`. `row_replaced` 판정은
+ * 그대로 서지만(§5-2 (바)가 오탐을 남기기로 한 그 자리다), **승인 상태 값은 CM 이 판단할 때와 같다** —
+ * 여기서 화면이 "네가 본 승인 상태는 그 대장 행의 것이 아니다"라고 적으면 거짓이고, "승인 상태부터
+ * 확인하십시오"라고 적으면 오탐의 대가가 "부수효과 없는 확인 요청 1건"에서 "CM 의 도면 재확인 1회"로
+ * 커져 그 결정의 전제가 무너진다. `title` 은 서버가 이 입력에 실제로 만든 문장이다(`132d116`).
+ */
+const SELF_CORRECTED_DRIFT_REVIEW: ReviewRequest = {
+  ...DRIFT_REVIEW,
+  review_request_id: "rr-drift-6",
+  title:
+    "문서 식별 드리프트: CM 이 판단한 문서 1건이 담고 있던 대장 행이 바뀌었습니다(발신이 달라졌습니다). " +
+    "CM 판단 1건(확정 1 · 반려 0)이 그 문서에 걸려 있고, 승인 상태 값 자체는 CM 이 판단할 때와 같습니다 — " +
+    "달라진 것은 이 doc_id 가 담고 있는 대장 원문이고, 대장이 같은 행을 고쳐 적은 것인지 다른 행으로 " +
+    "바뀐 것인지는 이번 적재의 값으로 가릴 수 없습니다. 다시 판단할 새 doc_id 는 없습니다 — 확인용 " +
+    "요청입니다(매핑은 복구되지 않습니다). 식별 표면 config 가 바뀌었습니다 — 되돌리고 대장을 다시 올리십시오",
+  conflicting_sources: {
+    previous_fingerprint: "7777777777777777",
+    current_fingerprint: "8888888888888888",
+    moved: [],
+    merged: [],
+    lost_decisions: [
+      {
+        activity_id: "A310", doc_id: "doc-v1-live2", decision: "confirmed", cause: "row_replaced",
+        new_doc_id: null, changed_fields: ["sender"], approval_flipped: false,
+      },
+    ],
+  },
+};
+
+/**
+ * ADR 0009 §5-2 (바) P13b — 행-정체가 같은 두 행의 처리결과가 `반려`/`부적합` 이라 **둘 다 `REJECTED`**.
+ * (나-ii)로만 걸려 `changed_fields=[]` 이고 `approval_flipped=False` 다. 즉 달라진 것은 **처리결과 표기
+ * 하나뿐**이고 승인 상태는 한 글자도 움직이지 않았다 — 여기서 "처리결과·승인 상태가 달라졌습니다"라고
+ * 적으면 CM 은 자기 승인 근거가 움직였다고 읽는다. `title` 은 서버 실제 출력(`132d116`).
+ */
+const RESULT_ONLY_DRIFT_REVIEW: ReviewRequest = {
+  ...DRIFT_REVIEW,
+  review_request_id: "rr-drift-7",
+  title:
+    "문서 식별 드리프트: CM 이 판단한 문서 1건은 대장 원문(발신·문서번호·번호·제목)이 그대로인데, 그 " +
+    "doc_id 가 담은 처리결과 표기가 달라졌습니다. CM 판단 1건(확정 0 · 반려 1)이 그 문서에 걸려 있고, " +
+    "승인 상태 값은 CM 이 판단할 때와 같습니다. 다시 판단할 새 doc_id 는 없습니다 — 확인용 요청입니다" +
+    "(매핑은 복구되지 않습니다). 식별 표면 config 는 그대로입니다(지문 동일) — 대장 파일 쪽 입력" +
+    "(워크북 시트명 등)이 바뀌지 않았는지 확인하십시오",
+  conflicting_sources: {
+    previous_fingerprint: "9999999999999999",
+    current_fingerprint: "9999999999999999",
+    moved: [],
+    merged: [],
+    lost_decisions: [
+      {
+        activity_id: "A320", doc_id: "doc-v1-live3", decision: "rejected", cause: "row_replaced",
+        new_doc_id: null, changed_fields: [], approval_flipped: false,
+      },
+    ],
+  },
+};
+
+/**
  * 이 화면이 **모르는** 경위. 서버가 새 경위를 추가했는데 화면이 따라오지 못한 경우다. 서버도 이 경우를
  * 아는 경위로 떨어뜨리지 않고 "이 문구가 설명할 수 없는 경위"라고 적는다(`_CAUSE_UNSPECIFIED`) —
  * 화면도 같아야 한다.
@@ -725,7 +785,7 @@ describe("ReviewsPage — document_identity_drift (ADR 0009 §5-3)", () => {
   });
 
   it("지문이 같은 적재(워크북 시트명 변경)에서는 config 를 되돌리라고 하지 않는다", async () => {
-    // 실측 P3: 시트명 변경은 config 를 한 글자도 바꾸지 않는다(`fingerprint_changed=False`, moved=9).
+    // 실측 P3: 시트명 변경은 config 를 한 글자도 바꾸지 않는다(`fingerprint_changed=False`, moved=8).
     // 그때 "config 를 되돌리십시오"라고 적으면 CM 은 바뀐 적 없는 config 를 뒤지고, 진짜 입력(대장 파일
     // 쪽)은 아무도 보지 않는다. 서버 제목도 이 적재에서는 대장 파일 쪽을 가리킨다.
     setupDrift(SHEET_RENAME_DRIFT_REVIEW);
@@ -897,5 +957,99 @@ describe("ReviewsPage — document_identity_drift (ADR 0009 §5-3)", () => {
     const mixed = await openDecisionDialog("승인");
     // 행이 옮겨간 적재에서는 "그 새 doc_id 위에서 다시 판단"이 실제로 할 수 있는 일이다.
     expect(mixed).toMatch(/다시 판단할 곳: doc-v1-new1, doc-v1-new2/);
+  });
+
+  // ── 방어 7: 승인 상태 문장은 **경위 이름이 아니라 값**이 가른다 ────────────
+  //
+  // 서버는 `132d116` 에서 같은 문장을 `approval_flipped` 값 기준 세 갈래로 갈랐다(ADR 0009 §5-3-b).
+  // 화면에는 그 거짓이 그대로 남아 있었다 — `IDENTITY_DRIFT_CAUSE_NOTES.row_replaced` 가 **경위 이름만
+  // 보고** "지금 보이는 승인 상태는 CM 이 보고 판단한 그 대장 행의 것이 아닙니다 — 대장 원본과 대조해
+  // 승인 상태부터 확인하십시오"라고 적었다. ADR 0007 이 여덟 번 겪은 계열 (A)(서버는 불변식을 지키는데
+  // 화면이 차례로 어긴다)가 정확히 이것이다.
+  //
+  // 세 갈래를 **양쪽으로** 건다: 그 갈래에 그 표지가 있다 + 다른 갈래의 표지가 없다. 한쪽만 걸면
+  // "그 문장을 아예 안 적는" 구현도 통과한다(CLAUDE.md §6-2).
+  const FLIPPED_MARK = /다른 값 위에서 내려졌습니다/;
+  const CANNOT_TELL_MARK = /이번 적재의 값으로 가릴 수 없습니다/;
+  const ONLY_SAME_MARK = /승인 상태 값은 CM 이 판단할 때와 같습니다/;   // "값 자체는" 갈래에는 안 걸린다
+
+  /** row_replaced 묶음이 CM 에게 실제로 보여주는 글자. 카드 전체를 읽으면 꼬리말·다른 묶음이 섞여
+   *  "이 묶음이 그 말을 하지 않는다"는 단언이 무뎌진다. */
+  async function replacedGroupText(): Promise<string> {
+    await screen.findByTestId("identity-drift-card");
+    const group = screen.getAllByTestId("drift-cause-group").find((g) => g.dataset.cause === "row_replaced");
+    expect(group).toBeDefined();
+    return group?.textContent ?? "";
+  }
+
+  it("뒤집힌 적재에서만 '다른 값 위에서 내려졌다'고 적는다", async () => {
+    setupDrift();   // DRIFT_REVIEW: row_replaced 1건이 approval_flipped=true
+
+    const text = await replacedGroupText();
+    expect(text).toMatch(FLIPPED_MARK);
+    // 뒤집힌 적재에 "값은 같습니다"가 붙으면 그것이 곧 거짓이다.
+    expect(text).not.toMatch(/CM 이 판단할 때와 같습니다/);
+  });
+
+  it("대장이 **같은 행**의 표기를 고친 적재(P6·FP1)에서는 승인 상태를 뒤집혔다고 하지 않는다", async () => {
+    // approval_flipped=False · changed_fields=['sender'] · drawing_approval 0.0 → 0.0.
+    setupDrift(SELF_CORRECTED_DRIFT_REVIEW);
+
+    const text = await replacedGroupText();
+    // 값에서 참인 것: 승인 상태 값은 같다 + 같은 행을 고친 것인지 다른 행인지는 가릴 수 없다.
+    expect(text).toMatch(/승인 상태 값 자체는 CM 이 판단할 때와 같습니다/);
+    expect(text).toMatch(CANNOT_TELL_MARK);
+    expect(text).not.toMatch(FLIPPED_MARK);
+    // 이 적재에서 **참일 수 없는 말**이 하나도 없어야 한다(CLAUDE.md §6-4 규칙 3).
+    expect(text).not.toMatch(/그 대장 행의 것이 아닙니다/);
+    expect(text).not.toMatch(/뒤집/);
+    // 그리고 ADR 0009 §5-2 (바)의 비용 전제 — 오탐의 대가는 "부수효과 없는 확인 요청 1건"이다.
+    // 화면이 도면을 다시 열라고 시키면 대가가 CM 의 도면 재확인 1회가 되어 그 결정이 무너진다.
+    expect(text).not.toMatch(/승인 상태부터 확인|대장 원본과 대조/);
+
+    // 다이얼로그도 같은 값을 쓴다 — 둘이 갈리면 CM 이 서로 다른 두 안내를 본다.
+    const dialog = await openDecisionDialog("승인");
+    expect(dialog).toMatch(CANNOT_TELL_MARK);
+    expect(dialog).not.toMatch(/그 대장 행의 것이 아닙니다/);
+    expect(dialog).not.toMatch(/승인 상태부터 확인|대장 원본과 대조/);
+  });
+
+  it("처리결과 표기만 달라진 적재(P13b)에서는 승인 상태가 달라졌다고 적지 않는다", async () => {
+    // 행-정체가 같은 두 행의 처리결과가 `반려`/`부적합` — 둘 다 REJECTED 라 승인 상태는 그대로다.
+    setupDrift(RESULT_ONLY_DRIFT_REVIEW);
+
+    const text = await replacedGroupText();
+    expect(text).toMatch(ONLY_SAME_MARK);
+    expect(text).not.toMatch(FLIPPED_MARK);
+    // (나-ii) 문장이 무엇이 달라졌는지도 값에서 읽는다 — 처리결과 표기 하나뿐이다.
+    expect(text).toMatch(/그 doc_id 가 담은 내용이 달라졌습니다 — 처리결과 표기\./);
+    expect(text).not.toMatch(/처리결과 표기·승인 상태/);
+    expect(text).not.toMatch(/승인 상태가 이번 적재에 달라졌습니다/);
+    // 원문 네 필드는 그대로다 — "달라진 대장 원문"을 적으면 changed_fields===[] 를 뒤집는 거짓이 된다.
+    expect(text).not.toMatch(/달라진 대장 원문/);
+  });
+
+  it("경위 이름이 같아도 값이 다르면 화면 문장이 다르다 — 이름으로 단정하지 않는다", async () => {
+    // 세 적재 모두 cause 는 `row_replaced` 하나다. 문장이 값에서 갈리지 않으면 셋이 같은 글자를 낸다.
+    setupDrift(SELF_CORRECTED_DRIFT_REVIEW);
+    const selfCorrected = await replacedGroupText();
+    vi.unstubAllGlobals();
+    cleanup();
+
+    setupDrift(RESULT_ONLY_DRIFT_REVIEW);
+    const resultOnly = await replacedGroupText();
+    vi.unstubAllGlobals();
+    cleanup();
+
+    setupDrift();
+    const flipped = await replacedGroupText();
+
+    for (const [a, b] of [
+      [selfCorrected, resultOnly],
+      [resultOnly, flipped],
+      [flipped, selfCorrected],
+    ]) {
+      expect(a).not.toBe(b);
+    }
   });
 });

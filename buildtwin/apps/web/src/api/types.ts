@@ -375,7 +375,7 @@ export interface ReviewRequest {
  * `services/progress/document_mapper._identity_drift_review_title` 이 CM 에게 보일 문구를 이 값으로 가른다.
  *
  * **개정 2에서 셋 다 이름이 바뀌었다**(ADR 0009 §5-2 (마)). 옛 이름은 전부 관측과 어긋나 있었다 —
- * `orphaned` 는 시트명 변경 경로에서 `moved=9` 인데 그 행들이 고아가 아니었고(실측 P3 `is_orphaned=False`),
+ * `orphaned` 는 시트명 변경 경로에서 `moved=8` 인데 그 행들이 고아가 아니었고(실측 P3 `is_orphaned=False`),
  * `merge_*` 둘은 새 조건이 잡는 주 경로에 **병합이 없다**(실측 R1 `merged=0`). 이름이 거짓이면 그 이름으로
  * 갈린 화면 문구도 함께 거짓이 된다(CLAUDE.md §6-4).
  *
