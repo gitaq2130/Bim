@@ -78,6 +78,7 @@ buildtwin/
 ├── config/                        # 파일별 담당은 config/README.md 참조(readiness/resources/wbs=progress-engine, scan=reality-capture, sync=sync-2d3d, ingest=bim-ingest)
 ├── docs/
 │   ├── adr/                       # (architect) Architecture Decision Records
+│   ├── plans/                     # (architect) 작업 분배 계획 `NNNN-*.md` (형식은 .claude/agents/architect.md 출력 계약)
 │   ├── glossary.md                # (모두 등록 / architect 승인) 도메인 용어집
 │   └── api.md                     # (api) OpenAPI에서 자동 생성
 └── tests/                         # (qa) 단위·통합·E2E, fixtures/, metrics.json
