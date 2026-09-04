@@ -1271,7 +1271,6 @@ blocker 와 데이터 모양·결과가 같다 — 행도 `reviewed_by` 도 살�
 | 0 | `architect` (완료) | `packages/core/models/review.py:25` | (바-4) | `moved=9` → `moved=8` | 재심 목록이 빠뜨렸던 다섯 번째 자리. 두 사이클 연속 누락이라 (바-4)에 원인을 적었다 |
 | 3 | `qa` | `tests/integration/test_17_document_identity_drift.py` | §5-2 "놓치는 것" 5 | **(나)·(다) 축의 판단-없음 음성 대조군 1건** — V8a 에서 CM 확정만 제거하면 `identity_drift is None`·DRIFT/COLLISION 경고 0건·요청 0건 | CLAUDE.md §6-2 규칙 3(음성 대조군을 한 축에만 몰지 않는다) 충족. 이 침묵이 **계약**이 되어, 넓히는 변경은 이 테스트를 빨갛게 만들고 지나간다 |
 | 4 | `qa` | 같은 파일 | §5-3-b | V8a·V8b 문구 단언을 "참일 수 없는 말이 없다" 쪽으로 보강 | 지금은 `"뒤집혔습니다" not in title` 만 걸려 있어 §5-3-b 가 고칠 거짓 문장을 통과시킨다 |
-
 | 5 | `frontend` | `apps/web/src/domain/identityDrift.ts` | §5-3-b minor 1 결정("같은 규칙을 `changed_fields` 에도 적용한다") | `changedFieldsUnknown`(모든 항목이 `changed_fields` 를 배열로 싣지 않았다)을 `LostDecisionGroup` 에 더하고, 참이면 `row_replaced` 꼬리 문장("대장 원문 …은 그대로인데")을 적지 않는다. `item.changed_fields ?? []` 는 그대로 두되 **부재와 `[]` 를 가르는 값은 따로 계산**한다 | `identityDrift.test.ts` 단위 입력(`cause: "row_replaced"` + `changed_fields` 부재)에서 그 꼬리 문장이 없고, `changed_fields: []` 인 입력에서는 그대로 있다. **통합 회귀는 세우지 않는다** — 지금 생산자 계약으로 만들 수 없는 저장 기록이다(§5-3-b) |
 
 1·2 는 같은 파일이므로 한 번에 간다. 3·4 는 1 이 머지된 뒤에 붙인다(4 는 1 의 결과를 고정한다).
