@@ -42,6 +42,8 @@ import openpyxl
 import pytest
 import yaml
 
+from packages.core.db import session_scope
+from packages.core.models.orm import DocumentRow
 from packages.core.settings import settings
 from services.progress.config_loader import load_config
 
@@ -1402,3 +1404,256 @@ def test_v7_sheet_rename_title_tail_does_not_tell_the_cm_to_revert_a_config(
     assert "config 가 바뀌었습니다" not in title, title
     assert "되돌리" not in title, title              # 되돌릴 config 가 없다
     assert "대장 파일" in title, title               # 어디를 봐야 하는지는 말한다
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# V8 — 개정 2 최종 재심에서 **살아남은 뮤테이션**을 죽인다 (CLAUDE.md §6-2)
+#
+# 리뷰어가 개정 2 코드에 뮤테이션 8건을 넣어 돌렸고 넷은 그물이 잡았지만 **넷은 초록으로 살아남았다.**
+# 코드는 옳았고 구멍은 그물에 있었다 — 이 저장소가 반복해 온 실패가 정확히 그것이다("방어를 넣고 그
+# 방어를 고정하지 못하는 것도 같은 종류의 실패다", 12차·14차 리뷰).
+#
+# 아래 넷은 각각 살아남은 뮤테이션 하나를 빨갛게 만든다. **뮤테이션은 하나씩 개별로** 코드에 넣어
+# 확인했다(둘을 함께 넣고 빨간 것을 보는 것은 아무것도 증명하지 못한다 — 12차 리뷰).
+#
+#  · M3 `_replaced_doc_ids` 의 (나-i) 조건에 `doc_id in absorbers` 를 **더한다** → V8a·V8b 가 죽는다.
+#    개정 2 설계의 핵심 문장이 "**(나-i)은 흡수를 묻지 않는다**"인데, 그것이 단독으로 발화하는 경우
+#    (= ADR 0009 §5-2 (바) 표의 P6·P7, 대장측 표기 정정)를 **어떤 테스트도 태우지 않았다.** 다음
+#    사이클이 "오탐을 줄이자"며 이 한정어를 넣으면 조용히 통과하고, blocker 2 계열이 네 번째로 돌아온다.
+#  · M6 제목 꼬리에서 "이전 지문 없음" 분기를 **지운다** → V8c 가 죽는다(웹은 잡는데 서버가 비어 있었다).
+#  · M8 `_absorbed_doc_ids` 의 `was_orphaned` 가드를 **지운다** → V8d 가 죽는다.
+#  · M7(모르는 `cause` 를 `row_moved` 로 떨어뜨리는 폴백)은 대장 적재로는 만들 수 없는 입력이라
+#    서버 단위 테스트가 맡는다 — `tests/unit/progress/test_identity_drift_review_title.py`.
+# ═══════════════════════════════════════════════════════════════════════════
+#: 대장이 **자기 원문을 스스로 고치는** 주(ADR 0009 §5-2 (바) P6·P7)의 1주차 행. `doc_id` 재료는
+#: 하나도 건드리지 않는다 — `동부`·`동부건설(주)` 는 같은 별칭 표준명(`동부건설`)으로 정규화되고,
+#: `doc_number` 는 애초에 `doc_id` 재료가 아니다(ADR 0007 §2-1).
+_CORRECTION_ROW = {"sender": "동부", "discipline": "기계", "seq": _MERGE_SEQ, "result": "반려",
+                   "doc_number": "동부-HG-TFA-기계-26-080", "title": _MERGE_TITLE}
+
+
+def _register_side_correction(client, auth, user_ids, tmp_path: Path, name: str, *,
+                              corrected: dict[str, Any]) -> dict[str, Any]:
+    """대장측 표기 정정 재현. `corrected` 는 2주차에 달라지는 대장 **원문** 필드 하나다.
+
+    config 는 한 글자도 바꾸지 않고(지문 동일), 처리결과도 그대로 둔다 — 그래서 이 적재에는
+    **이동도 병합도 흡수도 없고 승인 상태도 뒤집히지 않는다.** 남는 사실은 하나뿐이다:
+    이 `doc_id` 가 담고 있는 대장 행의 원문이 달라졌다((나-i)).
+    """
+    project_id = _new_project(client, auth, user_ids, name)
+    upload(client, auth("contractor"), project_id, SCHEDULE)
+    _, first = upload(client, auth("cm"), project_id,
+                      _register_with_rows(tmp_path / "correction_week1.xlsx", tfa_rows=[_CORRECTION_ROW]))
+    assert first["status"] == "done" and first["result"]["identity_drift"] is None
+    doc_id = _duct_doc_ids(client, auth, project_id)["동부건설"]
+    _resolve_mapping_review_for_doc(client, auth, project_id, ACTIVITY_MERGE, doc_id,
+                                    "approved", "반려된 도면임을 확인 — 이 작업의 도면 근거로 삼는다")
+    before_readiness = _readiness(client, auth, project_id, ACTIVITY_MERGE)
+    _, job = upload(client, auth("cm"), project_id, _register_with_rows(
+        tmp_path / "correction_week2.xlsx", tfa_rows=[{**_CORRECTION_ROW, **corrected}]))
+    return {"project_id": project_id, "job": job, "doc_id": doc_id, "before_readiness": before_readiness}
+
+
+def _assert_lone_row_replaced_review(client, auth, fixture: dict[str, Any], changed_fields: list[str]) -> dict:
+    """(나-i)이 **단독으로** 발화했다는 사실을 값으로 고정하고, 그 적재가 만든 검토요청을 돌려준다.
+
+    핵심은 `absorbers` 가 **빈 집합**인 적재라는 것이다: 이번 적재에 사라진 `doc_id` 가 하나도 없으므로
+    (`created == orphaned == 0`) 흡수 관측이 성립할 수 없다. 그래서 (나-i)에 `doc_id in absorbers` 를
+    더하는 순간 이 사건 전체가 침묵한다 — 그것이 M3 뮤테이션이 살아남았던 자리다.
+    """
+    result = fixture["job"]["result"]
+    assert (result["created"], result["orphaned"], result["orphaned_doc_ids"]) == (0, 0, [])
+    assert (result["identity_drift_moved"], result["identity_drift_merged"]) == (0, 0)
+    assert result["identity_drift"]["lost_decisions"] == [
+        {"activity_id": ACTIVITY_MERGE, "doc_id": fixture["doc_id"], "decision": "confirmed",
+         "cause": "row_replaced", "new_doc_id": None, "changed_fields": changed_fields,
+         "approval_flipped": False}]
+    assert result["identity_drift_lost_decisions"] == 1
+    assert result["identity_drift_review_id"] is not None
+
+    reviews = _drift_reviews(client, auth, fixture["project_id"])
+    assert len(reviews) == 1, reviews
+    assert reviews[0]["review_request_id"] == result["identity_drift_review_id"]
+    assert reviews[0]["status"] == "open" and reviews[0]["assignee_role"] == "cm"
+    # 행도 판단도 살아 있다 — 고아가 아니고, 다시 판단할 새 doc_id 도 없다.
+    detail = _document_detail(client, auth, fixture["project_id"], fixture["doc_id"])
+    assert detail["document"]["is_orphaned"] is False
+    assert [m["needs_review"] for m in detail["mappings"] if m["activity_id"] == ACTIVITY_MERGE] == [False]
+    return reviews[0]
+
+
+def _assert_the_flip_is_not_what_fired(client, auth, fixture: dict[str, Any]) -> None:
+    """**발화가 승인 뒤집힘에 기대지 않는다**(ADR 0009 §5-2 (바) P6·P7 판단 2). 이 적재는 처리결과를
+    한 글자도 바꾸지 않았으므로 `drawing_approval` 이 그대로다 — 그런데도 발화한다.
+
+    이것을 고정하지 않으면 "행-내용도 함께 바뀌었을 때만 발화"라는 한정어가 조용히 들어올 수 있고,
+    그러면 **승인 상태가 우연히 같은** 다른 대장 행으로 바뀐 경우가 표 밖으로 나간다. 그때도 CM 의
+    확정은 자기가 보지 않은 도면에 붙어 있다. 한정어 하나가 변종을 밀어내는 것이 이 ADR 이 세 번
+    반복한 실패다(CLAUDE.md §6-3).
+    """
+    after = _readiness(client, auth, fixture["project_id"], ACTIVITY_MERGE)
+    assert fixture["before_readiness"]["components"]["drawing_approval"] == 0.0
+    assert after["components"]["drawing_approval"] == 0.0
+    assert [b["kind"] for b in _drawing_blockers(after)] == ["document_unapproved"]
+
+
+def test_v8a_register_side_sender_correction_fires_without_any_absorption(
+    client, auth, user_ids, tmp_path,
+) -> None:
+    """P7 — 대장이 **발신 표기**를 스스로 고쳤다(`동부` → `동부건설(주)`, 같은 별칭 → `doc_id` 불변).
+
+    **뮤테이션 M3 을 죽이는 테스트다.** (나-i)에 `doc_id in absorbers` 를 더하면 이 적재는
+    `lost_decisions=[]` → `identity_drift=None` → 검토요청 0건으로 **완전히 침묵한다**(실측). 개정 2 가
+    "(나-i)은 흡수를 묻지 않는다"를 설계의 핵심으로 적고도 그것을 태운 시나리오가 하나도 없었다.
+
+    ADR 0009 §5-2 (바)는 P6·P7 을 **오탐인 채로 두기로** 결정했다(구별할 관측값이 없고, 오탐의 대가는
+    확인 전용 요청 1건인데 누락의 대가는 미승인 도면 위의 착수 가능이다). 그 결정을 여기서 계약으로
+    고정한다 — 다음 사이클이 "오탐을 줄이자"며 흡수 한정어를 넣으면 이 테스트가 빨개진다.
+    """
+    fixture = _register_side_correction(client, auth, user_ids, tmp_path, "V8a 대장측 발신 표기 정정",
+                                        corrected={"sender": "동부건설(주)"})
+    review = _assert_lone_row_replaced_review(client, auth, fixture, ["sender"])
+    _assert_the_flip_is_not_what_fired(client, auth, fixture)
+
+    # 문구 — 아는 것만 말한다(문장을 베끼지 않고 "그 상황에서 참일 수 없는 말이 없다"를 건다).
+    title = review["title"]
+    for forbidden in ("고아", "병합", "이동", "다시 확정"):
+        assert forbidden not in title, title
+    assert "뒤집혔습니다" not in title, title      # approval_flipped=False — 뒤집힌 적이 없다
+    assert "발신" in title, title                  # 관측한 changed_fields 는 값 그대로 적는다
+    assert "문서번호" not in title, title           # 바뀌지 않은 필드를 끌어들이지 않는다
+    assert "복구되지 않습니다" in title, title
+
+
+def test_v8b_register_side_doc_number_correction_fires_without_any_absorption(
+    client, auth, user_ids, tmp_path,
+) -> None:
+    """P6 — 대장이 **문서번호 오타**를 스스로 고쳤다(`…-08O` → `…-080`). V8a 와 같은 뮤테이션(M3)에
+    죽는 짝이며, `changed_fields` 가 필드마다 **다른 값**을 실어야 한다는 것을 함께 고정한다.
+
+    두 축을 함께 두는 이유는 §6-2 규칙 3 이다 — 한 축(발신)만 두면 "발신이 바뀔 때만 발화"하는 구현이
+    그대로 통과한다. `doc_number` 는 `doc_id` 재료가 아니므로(ADR 0007 §2-1) 여기서도 `doc_id` 는
+    한 글자도 움직이지 않는다.
+    """
+    fixture = _register_side_correction(client, auth, user_ids, tmp_path, "V8b 대장측 문서번호 정정",
+                                        corrected={"doc_number": "동부-HG-TFA-기계-26-081"})
+    review = _assert_lone_row_replaced_review(client, auth, fixture, ["doc_number"])
+    _assert_the_flip_is_not_what_fired(client, auth, fixture)
+
+    title = review["title"]
+    for forbidden in ("고아", "병합", "이동", "다시 확정"):
+        assert forbidden not in title, title
+    assert "뒤집혔습니다" not in title, title
+    assert "문서번호" in title, title
+    assert "발신" not in title, title
+    assert "복구되지 않습니다" in title, title
+
+
+# ── V8c — ADR 0009 **이전에 저장된 행**(지문 NULL)이 화면에 닿는 경로(§5-3-a) ──────
+def test_v8c_rows_written_before_adr_0009_leave_the_title_tail_undecided(
+    client, auth, user_ids, tmp_path,
+) -> None:
+    """제목 **꼬리**는 지문에서 유도된다. 지문이 아예 없으면(= ADR 0009 이전에 쓰인 행) 어느 쪽도
+    단정할 수 없다 — config 를 되돌리라고도, 대장 파일을 보라고도 적으면 안 된다.
+
+    **뮤테이션 M6 을 죽이는 테스트다.** "이전 지문 없음" 분기를 지우면 `None != current` 가 참이 되어
+    꼬리가 "식별 표면 config 가 바뀌었습니다 — 되돌리고 대장을 다시 올리십시오"로 바뀐다(실측).
+    그것은 **관측한 적 없는 사실**이다: 옛 행에는 비교할 지문 자체가 없으므로 config 가 움직였는지
+    대장 파일 쪽 입력이 움직였는지 아무도 모른다. CM 은 바뀐 적 없을지도 모르는 config 를 뒤지게 된다
+    (CLAUDE.md §6-4 — 부정확한 문구는 작동하지 않는 안전 장치다). 웹은 이 갈래를 이미 고정하고 있었고
+    (`apps/web/src/pages/ReviewsPage.test.tsx`) **서버 쪽만 비어 있었다.**
+
+    옛 행을 재현하는 방법: 적재 뒤 `documents.identity_fingerprint` 를 전부 `NULL` 로 되돌린다 —
+    ORM 이 그 컬럼을 nullable 로 둔 이유가 정확히 "ADR 0009 이전에 쓰인 행"이다
+    (`packages/core/models/orm.DocumentRow.identity_fingerprint`).
+
+    드리프트 자체는 **문서 10건 전부가 옮겨 가는** 경로로 만든다(`column_aliases.sender`, V7i 와 같다).
+    일부만 옮기면 남은 행이 새 지문으로 갱신돼 `_previous_fingerprint` 의 최빈값 폴백이 그 값을 잡아
+    `None` 이 되지 않는다(실측 — 7/10 이동 시나리오에서는 이 경로를 만들 수 없다).
+    """
+    project_id = _prepared_project(client, auth, user_ids, "V8c 개정 이전 행(지문 NULL)")
+    review = _resolve_mapping_review(client, auth, project_id, ACTIVITY_CONFIRM, "approved", "확정")
+    confirmed_doc_id = review["conflicting_sources"]["doc_id"]
+    confirmed_before = _document_detail(client, auth, project_id, confirmed_doc_id)["document"]
+
+    with session_scope() as session:
+        rows = session.query(DocumentRow).filter(DocumentRow.project_id == project_id).all()
+        assert len(rows) == FIXTURE_DOCUMENT_COUNT and all(r.identity_fingerprint for r in rows)
+        for row in rows:
+            row.identity_fingerprint = None          # ADR 0009 이전에 쓰인 행의 모습
+
+    config_dir = _write_mutated_config(
+        tmp_path / "cfg",
+        lambda cfg: cfg["register_layout"]["column_aliases"].__setitem__("sender", ["공종"]))
+    _, job = _upload_with_config(client, auth("cm"), project_id, REGISTER, config_dir)
+
+    moved_to = [d["doc_id"] for d in _documents(client, auth, project_id)
+                if d["doc_number"] == confirmed_before["doc_number"] and d["title"] == confirmed_before["title"]
+                and d["doc_id"] != confirmed_doc_id]
+    assert len(moved_to) == 1, moved_to
+    drift = job["result"]["identity_drift"]
+    assert drift["previous_fingerprint"] is None, "옛 행에는 비교할 지문이 없다"
+    assert drift["current_fingerprint"], "이번 적재의 지문은 있다"
+    assert drift["lost_decisions"] == [
+        {"activity_id": ACTIVITY_CONFIRM, "doc_id": confirmed_doc_id, "decision": "confirmed",
+         "cause": "row_moved", "new_doc_id": moved_to[0], "changed_fields": [], "approval_flipped": False}]
+
+    title = _drift_reviews(client, auth, project_id)[0]["title"]
+    assert "알 수 없습니다" in title, title           # 모르는 것을 모른다고 적는다
+    assert "config 가 바뀌었습니다" not in title, title
+    assert "config 는 그대로입니다" not in title, title
+    assert "되돌리" not in title, title               # 되돌릴 곳을 짚을 근거가 없다
+
+
+# ── V8d — 이미 고아였던 행은 **다시** 흡수로 보고되지 않는다 ─────────────────────
+def test_v8d_an_already_orphaned_row_is_not_reported_as_absorbed_again(
+    client, auth, user_ids, tmp_path,
+) -> None:
+    """한 행은 한 경위에만 속하고, **사건이 일어난 적재에서 한 번만** 발화한다(ADR 0009 §5-2 (다)).
+
+    **뮤테이션 M8 을 죽이는 테스트다.** `_absorbed_doc_ids` 의 `was_orphaned` 가드를 지우면, 이미
+    고아가 된 행의 행-정체가 다른 `doc_id` 아래에 **계속 살아 있는 한** 매주 같은 흡수가 다시 보고된다
+    — 현장의 주간 대장 업로드가 매 적재마다 같은 사건을 CM 큐로 다시 밀어 올리고, 그 끝은 운영자가
+    탐지를 끄는 것이다(§5-2 큐 오염 방지가 막으려는 바로 그 결말).
+
+    재현: 문서번호 열이 없는 대장에서 **행-정체 네 필드가 모두 같은** 두 행이 시트 둘(TFA·TFR)에 나뉘어
+    있다(V7g 와 같은 모양 — 시트가 갈라 두는 동안에는 서로 다른 문서다). CM 이 TFA 쪽을 확정한 뒤
+    2주차에 그 행이 TFA 시트에서 빠지면 TFR 쪽이 그 행-정체를 그대로 갖고 있으므로 흡수가 성립한다.
+    3주차는 **2주차와 완전히 같은 파일**이다 — 대장에도 config 에도 새 사건이 없다.
+
+    두 적재를 함께 단언한다(§6-2 규칙 1): 2주차가 발화하지 않으면 3주차의 침묵은 아무것도 증명하지
+    못하고("탐지가 통째로 죽어도 초록"), 3주차를 빼면 가드가 사라져도 초록이다.
+    """
+    project_id = _new_project(client, auth, user_ids, "V8d 이미 고아인 행의 재적재")
+    upload(client, auth("contractor"), project_id, SCHEDULE)
+    same_row = {"sender": "동부", "discipline": "기계", "seq": _MERGE_SEQ, "title": _MERGE_TITLE}
+    week1 = _register_with_rows(tmp_path / "v8d_week1.xlsx", tfa_rows=[{**same_row, "result": "반려"}],
+                                tfr_rows=[{**same_row, "result": "승인"}], drop_doc_number=True)
+    #: 2주차 = TFA 시트에서 그 행이 빠진다. TFR 쪽 쌍둥이는 그대로 남아 행-정체를 계속 담고 있다.
+    week2 = _register_with_rows(tmp_path / "v8d_week2.xlsx", tfr_rows=[{**same_row, "result": "승인"}],
+                                drop_doc_number=True)
+    _, first = upload(client, auth("cm"), project_id, week1)
+    assert first["result"]["identity_drift"] is None
+    duct = {d["doc_type"]: d["doc_id"] for d in _documents(client, auth, project_id)
+            if d["title"] == _MERGE_TITLE}
+    assert set(duct) == {"TFA", "TFR"}, duct
+    _resolve_mapping_review_for_doc(client, auth, project_id, ACTIVITY_MERGE, duct["TFA"],
+                                    "approved", "반려된 도면임을 확인 — 이 작업의 도면 근거로 삼는다")
+
+    # 2주차 — 사건이 실제로 일어난 적재. 여기서 한 번 발화한다.
+    _, second = upload(client, auth("cm"), project_id, week2)
+    assert second["result"]["orphaned_doc_ids"] == [duct["TFA"]]
+    assert second["result"]["identity_drift"]["lost_decisions"] == [
+        {"activity_id": ACTIVITY_MERGE, "doc_id": duct["TFA"], "decision": "confirmed",
+         "cause": "row_absorbed", "new_doc_id": duct["TFR"], "changed_fields": [], "approval_flipped": False}]
+    assert second["result"]["identity_drift_review_id"] is not None
+    opened = _drift_reviews(client, auth, project_id)
+    assert len(opened) == 1, opened
+
+    # 3주차 — 같은 파일을 그대로 다시 올린다. 대장에도 config 에도 새 사건이 없다.
+    _, third = upload(client, auth("cm"), project_id, week2)
+    assert (third["result"]["created"], third["result"]["orphaned"]) == (0, 0)
+    assert third["result"]["identity_drift"] is None, "이미 고아인 행을 다시 흡수로 세지 않는다"
+    assert third["result"]["identity_drift_lost_decisions"] == 0
+    assert third["result"]["identity_drift_review_id"] is None
+    assert _drift_reviews(client, auth, project_id) == opened          # 큐가 자라지도, 갱신되지도 않는다
