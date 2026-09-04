@@ -352,7 +352,16 @@ class DocumentRow(Base):
     # BuildTwin 이 거부하게 되어 "대장이 정본"(§1 규칙 1)을 정면으로 위반한다. 중복은 경고로만 보고.
     doc_number: Mapped[str | None] = mapped_column(String, index=True, nullable=True)
     title: Mapped[str] = mapped_column(Text)
+    # 대조용(config `title_matching.normalize`). ADR 0009 §2 이후로 **doc_id 재료가 아니다** — 튜닝 자유.
     title_normalized: Mapped[str] = mapped_column(Text)
+    # 식별용(코드 동결 `packages/core/models/document.identity_title`). doc_id 재료(ADR 0009 §3).
+    # nullable 인 이유: ADR 0009 이전에 쓰인 행에는 이 값이 없다 — `NULL` 이 곧 "옛 스킴으로 쓰인 행"이라는
+    # 신호이고, 마이그레이션·드리프트 탐지가 그 신호를 읽는다(§5). 파서 경로는 언제나 채운다.
+    title_identity: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 이 행을 만든 적재가 사용한 **식별 표면 지문**(ADR 0009 §5-2). 프로젝트 안에서 서로 다른 지문이
+    # 섞이면 그 사이에 identity 재료 config(sender_aliases·sheet_doc_types·column_aliases)가 바뀐 것이다.
+    # `imported_at` 과 같이 "적재 단위 값을 행마다 복제"하는 형태 — 별도 테이블을 만들지 않기 위한 선택.
+    identity_fingerprint: Mapped[str | None] = mapped_column(String, nullable=True)
     issued_on: Mapped[str | None] = mapped_column(String, nullable=True)
     result_raw: Mapped[str | None] = mapped_column(Text, nullable=True)
     approval_status: Mapped[str] = mapped_column(String, index=True, default="UNKNOWN")

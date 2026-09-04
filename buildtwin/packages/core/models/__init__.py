@@ -1,10 +1,13 @@
 """BuildTwin 공용 데이터 모델 (담당: architect, 기준: docs/adr/0001)."""
 from .coordinate import BBox2D, BBox3D, CoordinateSystem, CoordinateTransform
 from .document import (
+                       DOC_ID_SCHEME,
                        ActivityDocumentMapping,
                        Document,
                        DocumentApprovalStatus,
                        DocumentType,
+                       compute_doc_id,
+                       identity_title,
 )
 from .evidence import Evidence
 from .identity import IFC_TYPE_GROUP, TARGET_IFC_TYPES, BimObject, BimObjectDraft, DrawingEntity, DrawingEntityDraft

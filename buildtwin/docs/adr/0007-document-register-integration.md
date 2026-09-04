@@ -1,6 +1,8 @@
 # ADR 0007 — 문서관리대장(Document Register) 연동과 `drawing_approval` 근거화
 
-- 상태: Accepted (개정 3: 2026-09-03 — 10차 리뷰: `document_mapping` 검토요청 생애주기에 ⑥ 반려 단계 반영
+- 상태: Accepted (개정 4: 2026-09-04 — §2-1 의 미해결 위험(`title_normalized` 가 식별과 대조를 겸함)을
+  **ADR 0009 가 닫았다**. `doc_id` 산출식·`title_normalized` 정의는 이제 ADR 0009 §1·§2 가 정본이다.
+  개정 3: 2026-09-03 — 10차 리뷰: `document_mapping` 검토요청 생애주기에 ⑥ 반려 단계 반영
   [§4-2 규칙 6], `reviewed_by` 재사용 설계와 그로 인한 두 누수·방어[§4-2 규칙 6 신설 항목], 반려의 영구성과
   확정과의 비대칭[§4-2 규칙 6 신설 항목], `_drop_already_confirmed`가 확정·반려 공통 필터임을 명시[§4-2 규칙 6],
   §5-2·§6-1의 "확정 매핑" 표현이 반려를 제외함을 정정. 개정 2: 2026-09-03 — 9차 리뷰: 코드가 앞서고 문서가
@@ -89,9 +91,15 @@ doc_id = "doc-" + sha256("{doc_type}|{sender_normalized}|{seq_normalized}|{title
    `activity_document_mappings` 가 통째로 끊겨 **CM 이 확정한 매핑이 조용히 사라진다.** 이는 규칙 1 이 공종을
    해시에서 배제한 것과 정확히 같은 종류의 문제이며, 그때는 "신뢰할 수 없는 필드"가, 여기서는 "튜닝 대상 설정"이
    정체성에 관여한다.
-   해결 방향(Deferred, 실데이터 적재 전에 처리할 것): 정규화를 두 갈래로 나눈다. **정체성용**은 공백 정리와
-   소문자화만 하는 보수적·동결 규칙으로 두고 절대 튜닝하지 않으며, **대조용**은 지금처럼 자유롭게 조정한다.
-   그때까지는 `title_matching.normalize` 변경을 스키마 마이그레이션과 같은 무게로 다뤄야 한다.
+   **해결됨 — ADR 0009(개정 4에서 반영).** 정규화를 두 갈래로 나눴다: **식별용**(`title_identity`)은
+   `packages/core/models/document.identity_title()` 에 동결돼 `config/` 를 읽지 않고, **대조용**
+   (`title_normalized`)은 지금처럼 `title_matching.normalize` 가 소유해 자유롭게 조정한다.
+   `doc_id` 산출식은 ADR 0009 §2 대로 `compute_doc_id()` 하나로 모이고 스킴 버전이 문자열에 실린다
+   (`doc-v1-<16hex>`). **아래 산출식 표기와 §2-3 의 `title_normalized` 설명은 ADR 0009 §1 이 대체한다.**
+   이 ADR 이 "정규화 변경은 정체성을 흔든다"고만 적었던 부분은 ADR 0009 §2·§3 이 실측으로 확장했고,
+   `title` 말고도 `sender_aliases`·`sheet_doc_types`·`column_aliases` 가 같은 방식으로 `doc_id` 를
+   움직인다는 사실(각각 7/10·8/10·10/10)도 거기서 처음 측정됐다 — 그쪽은 운영상 동결할 수 없어
+   ADR 0009 §5-2 의 `document_identity_drift` 탐지가 맡는다.
 3. `doc_number`에는 **유니크 제약을 걸지 않고 인덱스만** 둔다. 같은 `(project_id, doc_number)`가 둘 이상이면 적재를
    막지 않고 import 경고 `duplicate_doc_number`로 보고한다.
 
@@ -122,7 +130,9 @@ doc_id = "doc-" + sha256("{doc_type}|{sender_normalized}|{seq_normalized}|{title
 | `seq_normalized` | String, nullable | 숫자 이외 문자를 모두 제거해 이어붙인 값. `26-049`→`26049`, `제26-07-09호`→`260709`. **자릿수를 재해석하지 않는다**(연도 확장·0 제거 금지) |
 | `doc_number` | String, index(비유니크), nullable | 대장 `문서번호` 원문. **표시·검색 전용**(§2-4) |
 | `title` | Text | 대장 `제목` 원문 |
-| `title_normalized` | Text | 대조용 정규화 텍스트(`config` `title_matching.normalize`). `doc_id` 재료 |
+| `title_normalized` | Text | 대조용 정규화 텍스트(`config` `title_matching.normalize`). ~~`doc_id` 재료~~ — **개정 4/ADR 0009 §1: `doc_id` 재료가 아니다.** 자유롭게 튜닝해도 정체성은 움직이지 않는다 |
+| `title_identity` | Text, nullable | **ADR 0009 §1 신설.** 식별용 정규화 텍스트(`packages/core/models/document.identity_title()` — 코드 동결, config 무관). `doc_id` 재료. `NULL` 은 ADR 0009 이전에 쓰인 행이라는 신호 |
+| `identity_fingerprint` | String, nullable | **ADR 0009 §5-2 신설.** 이 행을 만든 적재가 사용한 식별 표면 config 의 지문. 프로젝트 안에 서로 다른 지문이 섞이면 그 사이에 식별 규칙이 바뀐 것이다 |
 | `issued_on` | String(ISO date), nullable | `문서발생일` |
 | `result_raw` | Text, nullable | **`처리결과` 원문 그대로.** 공란이면 `NULL`. 절대 지우거나 해석해 덮어쓰지 않는다 |
 | `approval_status` | String, index | §3의 정규화 상태값. 기본 `UNKNOWN` |
@@ -365,6 +375,14 @@ class DocumentApprovalStatus(str, Enum):
      해시다(§2-1). 문서 제목이 바뀌면 `doc_id`가 바뀌어 **다른 문서**가 되고, 반려는 옛 `(activity_id, doc_id)`
      쌍에 매달려 있으므로 새 `doc_id`는 반려 표시가 전혀 없는 새 후보로 취급된다 — 키 설계가 이미 그렇게
      동작하므로 Activity 쪽처럼 별도 재확인 로직을 둘 필요가 없다.
+
+     **개정 4 정정(ADR 0009 §2 실측).** 이 문단은 "제목이 **바뀌면**"을 전제로 옳다. 그러나 `doc_id`가
+     바뀌는 원인은 제목 편집만이 아니었다 — 대장이 한 글자도 바뀌지 않아도 `title_matching.normalize`
+     한 줄이 `doc_id`를 움직였고, 그때 이 "공짜 대칭"은 **반려의 영구성을 깨는 방향으로** 작동했다.
+     실측에서 A400 에는 제목이 글자까지 동일한 문서가 "CM 이 반려한 것"과 "새로 검토해 달라는 것"으로
+     동시에 존재했다. ADR 0009 가 원인(식별 정규화)을 동결해 이 경로를 닫고, 동결할 수 없는 나머지 식별
+     표면은 §5-2 `document_identity_drift` 탐지가 맡는다. **"제목이 바뀌면 새 문서"는 여전히 옳고,
+     "대장이 그대로인데 새 문서"는 이제 사고로 분류된다.**
 
    **`_drop_already_confirmed`는 이제 확정·반려 공통 필터다.** 이 함수명은 "확정만 거른다"는 인상을 주지만,
    ⑥ 이후로는 `existing.reviewed_by is not None`(확정이든 반려든)이면 재계산 후보를 버린다 — 함수 이름이

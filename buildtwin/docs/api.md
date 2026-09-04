@@ -149,7 +149,7 @@
 | DocumentDetail | `document`*, `mappings` |
 | DocumentList | `items`*, `total`*, `page`*, `page_size`* |
 | DocumentType | enum: TFA, TFR, FI, SCAR, NCR, DN, VE, RFI, other |
-| DocumentView | `project_id`*, `doc_id`*, `doc_type`*, `sender`*, `sender_normalized`*, `discipline_raw`, `discipline_normalized`, `seq_raw`, `seq_normalized`, `doc_number`, `title`*, `title_normalized`*, `issued_on`, `result_raw`, `approval_status`, `approval_confidence`*, `approval_evidence`*, `completed_on`, `file_id`*, `sheet_name`*, `source_row`*, `needs_review`, `is_orphaned`, `imported_at` |
+| DocumentView | `project_id`*, `doc_id`*, `doc_type`*, `sender`*, `sender_normalized`*, `discipline_raw`, `discipline_normalized`, `seq_raw`, `seq_normalized`, `doc_number`, `title`*, `title_normalized`*, `title_identity`, `issued_on`, `result_raw`, `approval_status`, `approval_confidence`*, `approval_evidence`*, `completed_on`, `file_id`*, `sheet_name`*, `source_row`*, `needs_review`, `is_orphaned`, `imported_at` |
 | DrawingEntitiesResponse | `drawing_id`*, `project_id`*, `level`, `entities`*, `coordinate_system`*, `alignment`, `svg_uri` |
 | DrawingEntityView | `handle`*, `layer`*, `dxftype`*, `points`, `bbox`, `block_name`, `insert_point`, `rotation_deg`, `scale`, `text`, `radius`, `attrs` |
 | DrawingSummary | `drawing_id`*, `project_id`*, `name`, `level`, `coordinate_system`*, `alignment`, `svg_uri`, `file_id`, `stats` |
