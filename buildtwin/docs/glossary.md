@@ -158,6 +158,7 @@ reviewer 4차 지적 1: 동일 상태코드(특히 409)가 서로 무관한 여�
 |---|---|---|
 | `ambiguous_global_id` | 409 | `global_id`가 둘 이상의 프로젝트에 존재하는데 `?project_id=`를 주지 않고 `/api/objects/{global_id}`(조회·전이)를 호출함(ADR 0005 §3) |
 | `invalid_transition` | 409 | 상태기계가 허용하지 않는 전이 요청(예: PLANNED→CONFIRMED 직행, actor 불일치) |
+| `revocation_reason_required` | 409 | **확정을 되돌리는데 사유가 없다** — `from_state == CONFIRMED` 인 전이(`revoke_confirmation` = →MISMATCH, `order_rework` = →IN_PROGRESS, 둘 다 CM 전용)에 비어 있지 않은 `evidence.note` 가 없음(ADR 0011 불변식 3). **`invalid_transition` 과 갈라 놓은 이유**: 그 code 의 화면 안내는 "현재 상태에서는 이 작업을 수행할 수 없습니다. 화면을 새로고침해 최신 상태를 확인하세요"인데 이 경우엔 거짓이다 — 전이 자체는 허용 표에 있고, 새로고침해도 달라지지 않으며, CM 이 할 일은 사유를 적는 것이다. 서버 예외는 `RevocationReasonRequiredError`(`InvalidTransitionError` 하위 타입)이고, 하위 타입이 MRO 로 먼저 잡히므로 핸들러 등록 순서와 무관하게 이 code 가 나간다 |
 | `transition_blocked_by_review` | 409 | 미결 verification ReviewRequest 가 있어 system 전이가 막힘(ADR 0001 불변식 4) |
 | `review_already_resolved` | 409 | 이미 `open`이 아닌(approved/rejected/on_hold) ReviewRequest 를 다시 처리하려 함 |
 | `inspection_confirm_failed` | 409 | 검측(inspection) ReviewRequest 승인 시 CONFIRMED 전이가 상태기계에 의해 거부됨 |
@@ -231,6 +232,28 @@ reviewer 4차 지적 1: 동일 상태코드(특히 409)가 서로 무관한 여�
   `GET /activities/{id}/readiness`, 그리고 `drawings/{id}`·`scans/{id}`·`models/{id}`·`files/{id}`·`jobs/{id}` 등
   surrogate id 라우트 전부)는 대상 행을 먼저 읽어(없으면 그 자원의 기존 404 code, 예: `review_request_not_found`)
   그 행의 `project_id`로 멤버십을 검사한다.
+
+### 부칙 — ADR 0011 확정 취소 사유 (api, 2026-09-04)
+
+이 절도 append-only — 기존 문장·행은 그대로 둔다.
+
+- **`revocation_reason_required`(409, 위 표)와 "응답 모양 일관성"**: 위 부칙의 응답 모양 규칙은 이 code 에도
+  그대로 적용된다 — 이것도 **전이 거부**이므로 `from_state`/`to_state`/`actor` 를 똑같이 싣는다. 즉 새 code 가
+  그 문단과 어긋나지 않는다: 달라지는 것은 `code` 값 하나뿐이고, 부가 필드의 모양도 상태코드(409)도 같다.
+  기존 부칙 문장을 고치지 않은 이유가 이것이다 — 그 문장은 "같은 `code`는 어느 경로로 발생하든 같은 모양"을
+  말하고, 이 code 도 그렇다.
+- **왜 새 code 인가**: 같은 409 를 서로 무관한 원인들이 나눠 쓰면서 화면이 전부 같은 (그리고 이 경우 틀린)
+  안내를 하던 것이 이 표가 생긴 이유다(위 표 서문 = reviewer 4차 지적 1). `invalid_transition` 의 화면 문구는
+  "새로고침해 최신 상태를 확인하세요"인데, 확정 취소에 사유가 없는 경우엔 새로고침이 답이 아니다.
+  같은 실패를 다시 만들지 않으려고 원인을 기계 판독 값으로 갈랐다(CLAUDE.md §6-4 규칙 2).
+- **상태코드를 422 로 바꾸지 않은 이유**: 서문의 호환 약속("신규 code 추가는 이 표에 행만 더하면 되고 기존
+  프론트 분기를 깨지 않는다")을 지키기 위해서다. `code` 를 모르는 클라이언트에게 이 응답은 여전히
+  409 + `detail` 이고, 지금까지와 똑같이 동작한다.
+- **서버 예외 타입**: `packages/core/models/state.py::RevocationReasonRequiredError`
+  (`InvalidTransitionError` 하위 타입). Starlette 은 `type(exc).__mro__` 를 순회해 **가장 하위** 핸들러를
+  고르므로(`starlette/_exception_handler.py::_lookup_exception_handler`), `errors.py` 의 등록 순서는
+  이 선택에 영향을 주지 않는다. 실측(2026-09-04): 상위(`InvalidTransitionError`) 핸들러를 **먼저** 등록한
+  상태에서도 응답 code 는 `revocation_reason_required` 였다.
 
 ## ADR 0007 추가 항목 (architect, 2026-09-03) — 문서관리대장 연동
 

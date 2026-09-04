@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from packages.core.models.state import InvalidTransitionError
+from packages.core.models.state import InvalidTransitionError, RevocationReasonRequiredError
 from services.progress.state_machine import ObjectNotFoundError, TransitionBlockedByReviewError
 
 
@@ -77,6 +77,31 @@ def install_handlers(app: FastAPI) -> None:
     @app.exception_handler(InvalidTransitionError)
     async def _invalid_transition(_: Request, exc: InvalidTransitionError) -> JSONResponse:
         return JSONResponse(status_code=409, content={"detail": str(exc), "code": "invalid_transition",
+                                                      "from_state": exc.from_state.value,
+                                                      "to_state": exc.to_state.value, "actor": exc.actor.value})
+
+    @app.exception_handler(RevocationReasonRequiredError)
+    async def _revocation_reason_required(_: Request, exc: RevocationReasonRequiredError) -> JSONResponse:
+        """ADR 0011 불변식 3 — CONFIRMED 이탈에 `evidence.note` 가 없다.
+
+        **왜 `invalid_transition` 과 갈라야 하는가.** 이 예외는 `InvalidTransitionError` 하위 타입이라
+        위 핸들러(MRO)로도 409 는 나간다. 그러나 그 code 의 화면 문구는 "현재 상태에서는 이 작업을 수행할 수
+        없습니다. 화면을 새로고침해 최신 상태를 확인하세요."(`apps/web/src/components/ErrorBox.tsx`)이고,
+        이 경우엔 **거짓**이다 — 전이는 허용 표에 있고(`state.py` `(CONFIRMED, MISMATCH)`·
+        `(CONFIRMED, IN_PROGRESS)`), 새로고침해도 달라지지 않으며, CM 이 할 일은 **사유를 적는 것**이다.
+        같은 409 를 여러 원인이 나눠 쓰면서 화면이 전부 같은 (틀린) 안내를 하던 것이 이 저장소가
+        `code` 어휘를 만든 이유다(glossary "오류 응답 code" 서문 = reviewer 4차 지적 1). 같은 모양이
+        다시 생기지 않게 여기서 고유 code 를 붙인다(CLAUDE.md §6-4 2: 경위는 기계 판독 값으로 싣는다).
+
+        **상태코드는 409 를 유지한다.** 원인이 다르다고 상태코드를 바꾸면 `code` 를 모르는 기존
+        클라이언트의 분기가 깨진다(glossary 서문: "신규 code 추가는 표에 행만 더하면 되고 기존 프론트
+        분기를 깨지 않는다"). 그리고 이것은 요청 스키마 위반이 아니라 **대상의 현재 상태에 대한 요건**이다.
+
+        **부가 필드도 유지한다.** glossary 부칙 "응답 모양 일관성"은 전이 거부 응답이 어느 경로로
+        발생하든 `from_state`/`to_state`/`actor` 를 싣도록 요구한다. 이 응답은 그 요구를 계속 만족한다 —
+        달라지는 것은 `code` 하나뿐이다.
+        """
+        return JSONResponse(status_code=409, content={"detail": str(exc), "code": "revocation_reason_required",
                                                       "from_state": exc.from_state.value,
                                                       "to_state": exc.to_state.value, "actor": exc.actor.value})
 

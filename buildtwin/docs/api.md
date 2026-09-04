@@ -213,16 +213,20 @@
 
 이 계약은 OpenAPI 스키마가 아니라 `services/api/errors.py`의 예외 핸들러가 만든다(생성 시 고정 삽입).
 
-`ApiError` 계열 예외(및 상태기계의 `InvalidTransitionError` / `TransitionBlockedByReviewError` /
-`ObjectNotFoundError`)는 도메인에 맞는 HTTP 상태코드와 함께 다음 본문을 반환한다:
+`ApiError` 계열 예외(및 상태기계의 `InvalidTransitionError` / `RevocationReasonRequiredError` /
+`TransitionBlockedByReviewError` / `ObjectNotFoundError`)는 도메인에 맞는 HTTP 상태코드와 함께 다음
+본문을 반환한다:
 
 ```json
 {"detail": "사람이 읽는 문자열(문구·상태코드 불변)", "code": "안정적 식별자(snake_case)"}
 ```
 
-일부 `code`는 부가 필드를 더 싣는다(`invalid_transition` → `from_state`/`to_state`/`actor`,
-`transition_blocked_by_review` → `review_request_ids`) — 어떤 호출 경로로 발생했든 같은 `code`는 같은
-모양의 응답을 낸다. 인증 실패(401)도 `code: "unauthorized"`를 싣는다. FastAPI 자체 요청 검증 실패
+일부 `code`는 부가 필드를 더 싣는다(`invalid_transition`·`revocation_reason_required` →
+`from_state`/`to_state`/`actor`, `transition_blocked_by_review` → `review_request_ids`) — 어떤 호출
+경로로 발생했든 같은 `code`는 같은 모양의 응답을 낸다. `RevocationReasonRequiredError`는
+`InvalidTransitionError`의 하위 타입이지만 스타레트가 `type(exc).__mro__`를 순회해 가장 하위 핸들러를
+고르므로 `revocation_reason_required`로 나간다(등록 순서 무관, ADR 0011).
+인증 실패(401)도 `code: "unauthorized"`를 싣는다. FastAPI 자체 요청 검증 실패
 (422, `RequestValidationError`)는 이 계약 밖으로, `code` 없이 FastAPI 기본 형식(`{"detail": [...]}` )을
 그대로 반환한다.
 
