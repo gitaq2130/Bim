@@ -25,7 +25,11 @@ export function ConfirmDialog({
     <div className="modal-backdrop" role="presentation">
       <div className="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
         <h3 id="confirm-title">{title}</h3>
-        {message && <p>{message}</p>}
+        {message && (
+          /* 이 단락은 "이 결정이 실제로 무엇을 바꾸는가"를 말한다 — kind 마다 다르고, 화면이 지키지 못할
+             약속을 하면 안 되는 자리다. 테스트가 절 단위로 고정할 수 있게 testid 를 둔다. */
+          <p data-testid="confirm-message">{message}</p>
+        )}
         <label className="field">
           <span>사유 / 메모{requireNote ? " (필수)" : ""}</span>
           <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} />

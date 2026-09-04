@@ -415,3 +415,43 @@ describe("DocumentDetailPage", () => {
     spy.mockRestore();
   });
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// ADR 0009 — 식별(identity)과 대조(matching)의 제목 정규화는 다른 값이다.
+// `title_identity` 는 코드에 동결돼 `doc_id` 해시에 실제로 들어간 문자열이고, `title_normalized` 는
+// config 가 자유롭게 튜닝하는 대조용 텍스트다. 이 둘이 화면에서 나란히 보여야 CM 이 "왜 doc_id 가
+// 움직였는가"를 눈으로 확인할 수 있다(ADR 0009 Consequences). 사용자 언어가 아니므로 목록·카드가
+// 아니라 문서 상세의 접힌 영역에만 둔다(계획 0003 §3-g).
+// ════════════════════════════════════════════════════════════════════════════
+describe("DocumentDetailPage — 식별 정보 (ADR 0009)", () => {
+  beforeEach(() => {
+    resetStore();
+    loginAs("cm");
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("doc_id 해시에 들어간 title_identity 와 적재 지문을 대조용 정규화와 구분해 보여준다", async () => {
+    // 매칭 튜닝(strip_patterns 에 '승인요청' 추가)이 실제로 적용된 모습: 대조용은 짧아졌지만
+    // 식별용은 그대로다 — ADR 0009 §5 규칙 2 가 계약으로 고정한 바로 그 분리다.
+    const doc: Document = {
+      ...DOC,
+      title_normalized: "1f 기둥 배근도",
+      title_identity: "1f 기둥 배근도 승인요청",
+      identity_fingerprint: "bbbbbbbbbbbbbbbb",
+    };
+    mockFetch((url) => {
+      if (url.includes("/api/documents/doc-aaa")) return { body: detail([], doc) };
+      return mockProjectRole("cm")(url);
+    });
+    renderPage();
+
+    const box = await screen.findByTestId("identity-info");
+    expect(within(box).getByTestId("title-identity")).toHaveTextContent("1f 기둥 배근도 승인요청");
+    expect(within(box).getByTestId("identity-fingerprint")).toHaveTextContent("bbbbbbbbbbbbbbbb");
+    // 대조용 정규화가 doc_id 재료가 **아니라는** 사실이 같은 자리에 적혀 있어야 한다.
+    expect(within(box).getByText(/doc_id 재료가 아닙니다/)).toBeInTheDocument();
+    // 접힌 영역이다 — 목록·카드로 새어 나가지 않는다(계획 0003 §3-g).
+    expect(box.tagName).toBe("DETAILS");
+    expect((box as HTMLDetailsElement).open).toBe(false);
+  });
+});

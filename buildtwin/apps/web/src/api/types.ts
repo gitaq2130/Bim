@@ -200,7 +200,13 @@ export interface Document {
   /** 표시·검색 전용. 되파싱하지 않는다(§2-4) */
   doc_number?: string | null;
   title: string;
+  /** 대조(매칭)용 정규화 텍스트. `config/document_register.yaml` `title_matching.normalize` 가 소유하며
+   * 자유롭게 튜닝된다 — **`doc_id` 재료가 아니다**(ADR 0009 §1·§5 규칙 2) */
   title_normalized: string;
+  /** 식별용 정규화 텍스트 — `doc_id` 해시에 실제로 들어간 문자열(ADR 0009 §2, `packages/core/models/document.identity_title`).
+   * 코드에 동결돼 있고 config 를 읽지 않는다. "이 문서가 어떤 문자열로 해시됐는가"를 사람이 눈으로 확인
+   * 하라고 응답에 실린다(ADR 0009 Consequences). 서버는 항상 채우지만 옛 응답 대비 optional 로 둔다 */
+  title_identity?: string;
   issued_on?: string | null;
   /** 처리결과 원문 그대로(공백 포함). 화면은 이 값을 해석하지 않고 그대로 보여준다 */
   result_raw?: string | null;
@@ -216,6 +222,11 @@ export interface Document {
   /** 최근 대장 업로드에 없던 문서. 삭제하지 않고 표시만(§2-2). readiness 계산에서 제외 */
   is_orphaned: boolean;
   imported_at?: string;
+  /** 이 행을 쓴 적재가 사용한 **식별 표면 지문**(ADR 0009 §5-2). 한 프로젝트의 문서에 서로 다른 지문이
+   * 섞여 있으면 그 사이에 `doc_id` 재료 config 가 바뀐 것이다 — 드리프트 검토요청의
+   * `previous_fingerprint`/`current_fingerprint` 와 맞춰 볼 수 있다. ADR 0009 이전 행에는 없다(null).
+   * 적재 단위 값이라 코어 `Document` 가 아니라 API 의 `DocumentView` 가 얹는다. */
+  identity_fingerprint?: string | null;
 }
 
 /** GET /projects/{pid}/documents 쿼리(services/api/routers/documents.py). 기본은 고아 문서를 숨긴다 —
@@ -302,8 +313,17 @@ export interface ScanVerdict {
 }
 
 // ---- review.py ----
-/** `document_mapping`(ADR 0007 §4 규칙 6): 미확정 문서↔Activity 매핑의 CM 검토요청. 해소는 services/progress 소유 */
-export type ReviewKind = "mapping" | "verification" | "inspection" | "document_mapping";
+/**
+ * `document_mapping`(ADR 0007 §4 규칙 6): 미확정 문서↔Activity 매핑의 CM 검토요청. 해소는 services/progress 소유.
+ *
+ * `document_identity_drift`(ADR 0009 §5-2·§5-3): 대장 원문은 그대로인데 우리 쪽 식별 규칙
+ * (`sender_aliases`·`sheet_doc_types`·`column_aliases`)이 바뀌어 `doc_id` 가 이동했고, 그 결과 CM 이 이미
+ * 확정·반려한 매핑이 고아 문서를 가리키게 된 사건을 알리는 **확인(acknowledgement) 전용** 요청이다.
+ * 해소에 부수 효과가 **없다** — `services/api/usecases.resolve_review` 에 이 kind 의 분기가 없고(계획 0003
+ * §4 규칙 5가 추가를 금지한다) 공통 폴백이 검토요청 status/note/resolved_by 만 기록한다. 화면은 이 kind 에
+ * "해소하면 복구된다"는 취지의 문구를 붙여서는 안 된다.
+ */
+export type ReviewKind = "mapping" | "verification" | "inspection" | "document_mapping" | "document_identity_drift";
 export type ReviewStatus = "open" | "approved" | "rejected" | "on_hold";
 
 /** 3중 검증 축별 근거. 서버는 자유 dict 를 주지만 화면은 이 키들을 기대한다. */
@@ -324,11 +344,18 @@ export interface ReviewRequest {
   activity_id?: string | null;
   rule_id?: string | null;
   title: string;
+  /**
+   * 서버는 `dict[str, Any]` 를 준다. 3중 검증(verification) 요청만 축별 `ConflictingSource` 를 담고,
+   * 다른 kind 는 전혀 다른 모양을 담는다 — `document_mapping` 은 `{"doc_id": "..."}` 문자열,
+   * `document_identity_drift` 는 지문 문자열과 `moved`/`merged`/`lost_decisions` 배열이다(ADR 0009 §5-2).
+   * 그래서 인덱스 시그니처는 `unknown` 이다. 이름 붙은 세 축은 그대로 타입이 있으므로 `AXES` 로 읽는
+   * 자리(SourceCard)는 영향을 받지 않는다.
+   */
   conflicting_sources: {
     daily_report?: ConflictingSource | null;
     scan?: ConflictingSource | null;
     system_logic?: ConflictingSource | null;
-    [key: string]: ConflictingSource | null | undefined;
+    [key: string]: unknown;
   };
   confidence: number;
   evidence: Evidence;

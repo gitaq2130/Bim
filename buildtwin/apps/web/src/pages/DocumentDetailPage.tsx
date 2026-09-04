@@ -135,6 +135,52 @@ export function DocumentDetailPage() {
         </tbody>
       </table>
 
+      {/* ADR 0009 Consequences + 계획 0003 §3-g: "이 문서가 어떤 문자열로 해시됐는가"가 화면에 보여야
+          식별 드리프트를 사람이 눈으로 확인할 수 있다. 다만 사용자 언어가 아니므로 목록·카드에는 넣지
+          않고 여기 접힌 영역에만 둔다. */}
+      <details data-testid="identity-info">
+        <summary>식별 정보 (doc_id 계산 근거)</summary>
+        <table className="kv">
+          <tbody>
+            <tr>
+              <th>doc_id</th>
+              <td>
+                <code>{d.doc_id}</code>
+              </td>
+            </tr>
+            <tr>
+              <th>식별용 제목 (title_identity)</th>
+              <td>
+                <code data-testid="title-identity">{d.title_identity ?? "-"}</code>
+                <div className="muted small">
+                  doc_id 해시에 실제로 들어간 문자열입니다. 코드에 동결돼 있어(ADR 0009 §2) 매칭 설정
+                  (title_matching)을 어떻게 바꿔도 이 값과 doc_id 는 움직이지 않습니다.
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <th>대조용 제목 (title_normalized)</th>
+              <td>
+                <code>{d.title_normalized}</code>
+                <div className="muted small">
+                  제목 ↔ Activity 유사도 대조에만 쓰입니다 — doc_id 재료가 아닙니다(ADR 0009 §1).
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <th>식별 표면 지문</th>
+              <td>
+                <code data-testid="identity-fingerprint">{d.identity_fingerprint ?? "-"}</code>
+                <div className="muted small">
+                  이 행을 적재할 때 쓰인 식별 규칙(sender_aliases·sheet_doc_types·column_aliases)의 지문입니다.
+                  한 프로젝트의 문서에 서로 다른 지문이 섞여 있으면 그 사이에 식별 규칙이 바뀐 것입니다(ADR 0009 §5-2).
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </details>
+
       <MappingSection docId={docId} projectId={projectId} mappings={mappings} role={role} />
     </div>
   );

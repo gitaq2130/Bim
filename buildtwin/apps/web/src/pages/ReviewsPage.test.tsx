@@ -448,3 +448,148 @@ describe("ReviewsPage — document_mapping (ADR 0007)", () => {
     spy.mockRestore();
   });
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// ADR 0009 §5-2·§5-3 — `document_identity_drift`(확인 전용 kind).
+//
+// 이 kind 는 `services/api/usecases.resolve_review` 에 **분기가 없다**(계획 0003 §4 규칙 5가 추가를
+// 금지한다). 승인이든 반려든 공통 폴백이 검토요청 status/resolution_note/resolved_by 만 기록하고
+// activity_document_mappings 는 한 행도 바뀌지 않는다. 그러므로 화면이 "해소하면 복구된다"는 취지를
+// 적으면 그 순간 없는 기능을 약속하는 것이 된다 — 이 저장소가 세 번 겪은 결함이고, 그 중 하나는
+// 존재한 적 없는 "되돌리기" 엔드포인트를 약속한 승인 다이얼로그였다.
+//
+// 아래 테스트는 **문구 문자열을 통째로 고정하지 않는다**(그렇게 하면 거짓 문구도 계약이 된다 — 10차
+// 리뷰). 대신 약속의 **내용**을 하나씩 따로 고정한다: ① 복구되지 않는다 ② 매핑이 바뀌지 않는다
+// ③ 사람이 재확정해야 한다 ④ 어느 문서를 재확정해야 하는지 보인다. 각 절을 하나씩 지우면
+// 정확히 그 테스트 하나만 실패한다(뮤테이션으로 확인함).
+// ════════════════════════════════════════════════════════════════════════════
+const DRIFT_REVIEW: ReviewRequest = {
+  review_request_id: "rr-drift-1",
+  project_id: "p1",
+  kind: "document_identity_drift",
+  title:
+    "문서 식별 드리프트: 대장은 그대로인데 doc_id 가 6건 이동했고, CM 판단 2건(확정 1 · 반려 1)이 고아 문서에 남았습니다",
+  // ADR 0009 §5-2 의 실제 모양(services/progress/document_mapper.open_identity_drift_review).
+  // 3축(신고/스캔/논리)은 **아예 없다**.
+  conflicting_sources: {
+    previous_fingerprint: "aaaaaaaaaaaaaaaa",
+    current_fingerprint: "bbbbbbbbbbbbbbbb",
+    moved: [{ previous_doc_id: "doc-v1-old1", new_doc_id: "doc-v1-new1", title: "1F 기둥 배근도 승인요청" }],
+    merged: [],
+    lost_decisions: [
+      { activity_id: "A100", doc_id: "doc-v1-old1", decision: "confirmed" },
+      { activity_id: "A400", doc_id: "doc-v1-old2", decision: "rejected" },
+    ],
+  },
+  confidence: 1.0,
+  evidence: {
+    source_type: "document",
+    source_id: "file-register-2",
+    method: "identity_surface_drift",
+    note: "DOCUMENT_IDENTITY_DRIFT",
+    extra: { moved_count: 1, merged_count: 0, lost_decision_count: 2 },
+  },
+  assignee_role: "cm",
+  status: "open",
+  created_at: "2026-09-04T00:00:00Z",
+};
+
+function mockDriftQueue() {
+  return mockFetch((url) => {
+    if (url.includes("/api/projects/p1/review-requests")) return { body: [DRIFT_REVIEW] };
+    if (url.endsWith("/api/projects/p1")) return { body: { project_id: "p1", name: "P", my_role: "cm" } };
+    return undefined;
+  });
+}
+
+/** 다이얼로그 본문(`ConfirmDialog` 의 `message` 단락)을 통째로 읽는다. 특정 절에 걸어 찾으면
+ *  그 절을 지웠을 때 "요소를 못 찾음"으로 실패해 어느 절이 사라졌는지가 흐려진다. */
+async function openDecisionDialog(decision: "승인" | "반려"): Promise<string> {
+  const user = userEvent.setup();
+  // 근거 카드(IdentityDriftCard)가 아니라 **행**이 뜨기를 기다린다 — 카드를 지웠을 때 문구 테스트까지
+  // 함께 무너지면 두 방어가 한 덩어리가 되어, 어느 쪽이 죽었는지 뮤테이션으로 구분할 수 없다.
+  await screen.findByTestId("review-row");
+  await user.click(screen.getByRole("button", { name: decision }));
+  const dialog = screen.getByRole("dialog");
+  return within(dialog).getByTestId("confirm-message").textContent ?? "";
+}
+
+describe("ReviewsPage — document_identity_drift (ADR 0009 §5-3)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetStore();
+  });
+
+  it("새 kind 에 한국어 라벨이 있다 — 배지와 종류 필터가 undefined 로 뜨지 않는다", async () => {
+    resetStore();
+    loginAs("cm");
+    mockDriftQueue();
+    renderPage();
+
+    const row = await screen.findByTestId("review-row");
+    // REVIEW_KIND_LABELS 에서 값을 빼면 라벨이 undefined 가 되어 배지가 비고 이 단언이 깨진다.
+    expect(within(row).getByText("문서 식별 드리프트")).toBeInTheDocument();
+    // 필터 드롭다운도 같은 표를 돌기 때문에 새 kind 로 거를 수 있어야 한다.
+    expect(
+      within(screen.getByTestId("kind-filter")).getByRole("option", { name: "문서 식별 드리프트" }),
+    ).toBeInTheDocument();
+  });
+
+  it("해소해도 끊어진 확정·반려가 복구되지 않는다고 말한다 — 복구를 약속하지 않는다", async () => {
+    resetStore();
+    loginAs("cm");
+    mockDriftQueue();
+    renderPage();
+
+    const text = await openDecisionDialog("승인");
+    expect(text).toMatch(/복구되지 않으며|복구되지 않습니다/);
+    // 복구를 약속하는 어떤 표현도 있으면 안 된다(이 kind 에는 resolve_review 분기가 없다).
+    expect(text).not.toMatch(/복구됩니다|복구된다|복원됩니다|되살아납니다|자동으로 복구/);
+  });
+
+  it("승인·반려 어느 쪽을 눌러도 매핑 행이 바뀌지 않는다고 말한다", async () => {
+    resetStore();
+    loginAs("cm");
+    mockDriftQueue();
+    renderPage();
+
+    // 반려 쪽에서 확인한다 — 두 결정이 같은 폴백으로 떨어진다는 사실 자체가 계약이다.
+    const text = await openDecisionDialog("반려");
+    expect(text).toMatch(/매핑은 한 행도 바뀌지 않습니다/);
+    expect(text).toMatch(/상태만 기록됩니다/);
+  });
+
+  it("CM 이 실제로 해야 할 일(사람이 다시 확정 / config 되돌리기)을 안내한다", async () => {
+    resetStore();
+    loginAs("cm");
+    mockDriftQueue();
+    renderPage();
+
+    const text = await openDecisionDialog("승인");
+    expect(text).toMatch(/사람이 직접 되살려야 합니다/);
+    expect(text).toMatch(/재확정/);
+    expect(text).toMatch(/config.*되돌린 뒤 대장을 다시 올리십시오/);
+  });
+
+  it("끊어진 CM 판단이 어느 Activity·문서인지 보여준다 — 3축 '근거 없음' 카드를 그리지 않는다", async () => {
+    resetStore();
+    loginAs("cm");
+    mockDriftQueue();
+    renderPage();
+
+    const card = await screen.findByTestId("identity-drift-card");
+    const lost = within(card).getByTestId("lost-decisions");
+    // 재확정 대상이 무엇인지가 이 목록에만 있다. 없으면 "재확정하라"는 안내가 실행 불가능해진다.
+    expect(within(lost).getByRole("link", { name: "doc-v1-old1" })).toHaveAttribute(
+      "href",
+      "/projects/p1/documents/doc-v1-old1",
+    );
+    expect(within(lost).getByText(/A100/)).toBeInTheDocument();
+    expect(within(lost).getByText("확정")).toBeInTheDocument();
+    expect(within(lost).getByText("반려")).toBeInTheDocument();
+    // 이 kind 의 conflicting_sources 에는 3축이 없다 — 축 카드를 그리면 "근거 없음"만 세 장 뜬다.
+    expect(screen.queryByText("신고(작업일보)")).not.toBeInTheDocument();
+    // 카드 자체도 복구를 약속하지 않는다.
+    expect(within(card).getByText(/복구되지 않습니다/)).toBeInTheDocument();
+  });
+});

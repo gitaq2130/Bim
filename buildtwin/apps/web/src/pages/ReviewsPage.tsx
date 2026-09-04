@@ -24,7 +24,8 @@ const AXES = ["daily_report", "scan", "system_logic"] as const;
  */
 function reviewDecisionMessage(kind: ReviewKind, decision: ReviewDecision): string {
   if (decision === "on_hold") {
-    // 세 kind 모두 on_hold 는 검토요청 상태만 바꾼다(usecases.resolve_review 공통 폴백) — 객체 상태·매핑 어느 것도 건드리지 않는다.
+    // 어느 kind 에서도 on_hold 는 검토요청 상태만 바꾼다(usecases.resolve_review 의 어떤 분기도
+    // decision === "on_hold" 를 받지 않아 공통 폴백으로 떨어진다) — 객체 상태·매핑 어느 것도 건드리지 않는다.
     return "보류하면 검토요청 상태만 '보류'로 기록됩니다. 객체 상태·매핑은 바뀌지 않습니다.";
   }
   switch (kind) {
@@ -47,6 +48,21 @@ function reviewDecisionMessage(kind: ReviewKind, decision: ReviewDecision): stri
         // 문구가 그 사실을 정확히 말해야 한다 — 10차 리뷰가 잡은 결함은 이 자리가 정반대("아무것도 바뀌지
         // 않습니다")를 말하는데 실제로는 되돌릴 수 없는 반려가 실행되던 것이다.
         : "반려하면 이 문서 ↔ Activity 매핑에 반려 표시가 남고 검토 큐에서 내려갑니다 — 도면 승인 근거로 쓰이지 않으며, 대장을 재업로드해도 후보로 다시 제안되지 않습니다. 되돌릴 수 없으니 확인 후 진행하세요.";
+    case "document_identity_drift":
+      // ADR 0009 §5-3 + 계획 0003 §4 규칙 5: 이 kind 는 **확인 전용**이고 resolve_review 에 분기가 없다.
+      // 승인이든 반려든 공통 폴백이 status/resolution_note/resolved_by 만 기록하고
+      // activity_document_mappings 는 한 행도 건드리지 않는다(api 가 실행으로 확인 — 해소 전후 6행 동일).
+      // 그래서 여기서 "해소하면 복구된다"는 취지를 한 글자라도 적으면, 그 순간 화면이 서버에 없는 기능을
+      // 약속하게 된다 — 이 저장소가 이미 세 번 겪은 (C) 계열 결함이고 가장 최근 것은 존재한 적 없는
+      // "되돌리기" 엔드포인트를 약속한 승인 다이얼로그였다.
+      // 대신 CM 이 **실제로 해야 할 일**(config 되돌리기 / 새 doc_id 위에서 사람이 다시 확정)을 안내한다.
+      return (
+        "이 종류(문서 식별 드리프트)는 확인 전용입니다 — 승인·반려 어느 쪽을 눌러도 이 검토요청의 상태만 기록됩니다. " +
+        "고아 문서에 남은 CM 확정·반려는 복구되지 않으며, 문서 ↔ Activity 매핑은 한 행도 바뀌지 않습니다. " +
+        "끊어진 확정·반려는 사람이 직접 되살려야 합니다: 이 요청에 실린 '끊어진 CM 판단' 목록의 Activity·문서를 " +
+        "새 doc_id 쪽에서 다시 확인해 판단을 다시 내리거나(확정이었으면 새 후보를 재확정, 반려였으면 새 후보를 다시 반려), " +
+        "식별 규칙 config(sender_aliases·sheet_doc_types·column_aliases)를 되돌린 뒤 대장을 다시 올리십시오."
+      );
     case "verification":
     default:
       // verification 은 신고/스캔/논리 3축 불일치를 사람이 확인했다는 기록일 뿐, 어떤 상태 전이도 일으키지 않는다(ADR 0001 §6).
@@ -120,7 +136,12 @@ export function ReviewsPage() {
             </div>
             {/* ADR 0007 §4 규칙 6: document_mapping 은 신고/스캔/논리 3축 충돌이 아니라 문서↔Activity 매핑
                 제안 하나다 — 축 카드 대신 매핑 근거(제목유사도·일치 규칙)와 문서 링크를 보여준다. */}
-            {r.kind === "document_mapping" ? (
+            {r.kind === "document_identity_drift" ? (
+              /* ADR 0009 §5-2: 이 kind 의 conflicting_sources 에는 3축(신고/스캔/논리)이 아예 없다 —
+                 지문 문자열과 moved/merged/lost_decisions 배열이 들어 있다. 축 카드를 그리면 화면이
+                 "근거 없음" 세 장만 보여주고, CM 이 재확정해야 할 Activity·문서가 어디에도 안 보인다. */
+              <IdentityDriftCard review={r} projectId={projectId} />
+            ) : r.kind === "document_mapping" ? (
               <DocumentMappingCard review={r} projectId={projectId} />
             ) : (
               <div className="sources">
@@ -249,6 +270,76 @@ function DocumentMappingCard({ review, projectId }: { review: ReviewRequest; pro
       {extra.excluded_by && extra.excluded_by.length > 0 && (
         <div className="small">감점 요인(불일치): {extra.excluded_by.join(", ")}</div>
       )}
+    </div>
+  );
+}
+
+/** `_lost_decisions`(services/ingest/persistence.py)가 싣는 한 항목. `decision` 은 "confirmed" | "rejected". */
+interface LostDecision {
+  activity_id?: string;
+  doc_id?: string;
+  decision?: string;
+}
+
+const LOST_DECISION_LABELS: Record<string, string> = { confirmed: "확정", rejected: "반려" };
+
+function asArray(v: unknown): unknown[] {
+  return Array.isArray(v) ? v : [];
+}
+
+function asText(v: unknown): string | null {
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
+
+/**
+ * 식별 드리프트 검토요청(ADR 0009 §5-2·§5-3)의 근거 카드.
+ *
+ * **이 카드가 존재하는 이유**: 요청 title 은 건수만 말한다("CM 판단 2건이 고아 문서에 남았습니다").
+ * 어느 Activity 의 어느 문서가 끊어졌는지는 `conflicting_sources.lost_decisions` 에만 있고, 그것을
+ * 보여주지 않으면 CM 은 "재확정하라"는 안내를 받고도 **무엇을** 재확정할지 알 수 없다.
+ *
+ * 이 카드는 관측된 사실만 적는다. 해소가 무엇을 복구한다고 적지 않는다 — 해소에는 부수 효과가 없다
+ * (`resolve_review` 에 이 kind 의 분기가 없다).
+ */
+function IdentityDriftCard({ review, projectId }: { review: ReviewRequest; projectId: string }) {
+  const src = review.conflicting_sources ?? {};
+  const lost = asArray(src.lost_decisions) as LostDecision[];
+  const movedCount = asArray(src.moved).length;
+  const mergedCount = asArray(src.merged).length;
+  const previous = asText(src.previous_fingerprint);
+  const current = asText(src.current_fingerprint);
+  return (
+    <div className="source-card" data-testid="identity-drift-card">
+      <div className="source-title">식별 표면 지문</div>
+      <div className="small">
+        {previous ?? "(이전 적재 지문 없음)"} → {current ?? "-"}
+      </div>
+      <div className="small">
+        doc_id 이동 {movedCount}건{mergedCount > 0 ? ` · 서로 다른 행이 한 doc_id 로 병합 ${mergedCount}건` : ""}
+      </div>
+      <div className="source-title">끊어진 CM 판단 — 이 요청을 해소해도 복구되지 않습니다</div>
+      {lost.length === 0 ? (
+        <div className="muted small">없음</div>
+      ) : (
+        <ul className="list small" data-testid="lost-decisions">
+          {lost.map((d) => (
+            <li key={`${d.activity_id ?? ""}|${d.doc_id ?? ""}`}>
+              Activity {d.activity_id ?? "-"} ·{" "}
+              {d.doc_id ? (
+                <Link to={`/projects/${projectId}/documents/${encodeURIComponent(d.doc_id)}`}>{d.doc_id}</Link>
+              ) : (
+                <span className="muted">알 수 없음</span>
+              )}
+              {" · "}
+              <strong>{LOST_DECISION_LABELS[d.decision ?? ""] ?? d.decision ?? "-"}</strong>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="muted small">
+        위 문서는 고아가 됐고 시스템은 사람의 확정·반려를 되살리지 않습니다. 새 doc_id 쪽 후보에 같은 판단을 다시
+        내리거나, 식별 규칙 config 를 되돌린 뒤 대장을 다시 올려야 합니다.
+      </div>
     </div>
   );
 }

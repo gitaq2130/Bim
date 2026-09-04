@@ -84,6 +84,9 @@ export const REVIEW_KIND_LABELS: Record<ReviewKind, string> = {
   inspection: "검측",
   // ADR 0007 §4 규칙 6: 문서↔Activity 매핑 검토(해소는 services/progress 소유)
   document_mapping: "문서매핑",
+  // ADR 0009 §5-2·§5-3: 식별 규칙이 바뀌어 doc_id 가 이동하면서 CM 의 확정·반려가 고아 문서에 남은 사건.
+  // 확인 전용이라 해소에 부수 효과가 없다 — 라벨도 어떤 처리(확정/해소)를 뜻하지 않는 관측 이름으로 둔다.
+  document_identity_drift: "문서 식별 드리프트",
 };
 
 export const REVIEW_STATUS_LABELS: Record<ReviewStatus, string> = {
