@@ -21,7 +21,8 @@ model: sonnet
 - `.github/workflows/` — CI
 - `Makefile` — `make dev / test / lint / docs / fixtures`
 - `apps/web/src/**/*.test.ts(x)` — vitest(파일은 각 담당 디렉터리 안에 두되 qa가 작성 가능한 예외)
-- `apps/web/src/test/` — vitest 하네스(`setup.ts`·`fixtures.ts`·`utils.tsx`). 위 예외의 축이
+- `apps/web/src/test/` — vitest 하네스 **디렉터리 전체**(2026-09-04 기준 `setup.ts`·`fixtures.ts`·
+  `utils.tsx` — 범위는 디렉터리이고 이 목록은 그 시점의 내용이다). 위 예외의 축이
   **파일명 접미사**라 접미사가 없는 테스트 지원 파일이 밖으로 나갔다(2026-09-04 `91e132a` 가 qa 커밋으로
   `test/utils.tsx` 를 고쳐 reviewer 형식 체크 3 FAIL — 계획 0004 §계획과 사실이 어긋난 자리).
   **배타 소유가 아니라 공동 편집 자리**다: 계획이 배정하면 frontend 도 고친다(계획 0004 작업 5 가

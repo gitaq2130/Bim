@@ -253,9 +253,11 @@ V10 의 웹 테스트는 frontend 가 썼다(`2520619`). 테스트 자체의 품
 §6-5 는 "새로운 종류의 반복이 **두 사이클 이상**에서 관측되면" 항목을 추가하라고 하고 이것은 관측
 **1건**이다. 이 문단이 그 1건의 기록이고, 같은 모양이 다음 사이클에 또 나오면 그때 항목이 된다.
 
-**실해 0.** `apps/web/src/test/` 에는 `fixtures.ts`·`setup.ts`·`utils.tsx` 셋뿐이고 비-테스트 코드의
-import 는 **0건**이다(실측: `grep -rn "test/utils\|test/fixtures\|test/setup" apps/web/src` 에서
-`*.test.tsx` 를 뺀 히트 0, 유일한 참조는 `apps/web/vite.config.ts:20 setupFiles`).
+**실해 0.** `apps/web/src/test/`(2026-09-04 당시 `fixtures.ts`·`setup.ts`·`utils.tsx`)를 **비-테스트
+코드가 import 하는 자리는 0건**이다(실측: `grep -rn "test/utils\|test/fixtures\|test/setup" apps/web/src`
+에서 `*.test.tsx` 를 뺀 히트 0, 유일한 참조는 `apps/web/vite.config.ts:20 setupFiles`). 실해가 0 인 근거는
+이 **부재**이지 파일 수가 아니다 — 위 예외는 디렉터리 글롭이라 파일이 넷이 되어도 그대로 덮는다. 다시
+봐야 하는 것은 파일이 늘어나는 날이 아니라 이 import 0건이 깨지는 날이다(후속 5, 2026-09-04).
 
 **어느 쪽으로 닫았는가 — 에이전트 정의 쪽(`.claude/agents/qa.md`).** 근거 셋.
 ① **자리가 맞다.** `.claude/agents/` 는 architect 소유다(CLAUDE.md §2 디렉터리 표).
