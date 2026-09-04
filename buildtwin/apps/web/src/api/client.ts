@@ -16,6 +16,9 @@ export const API_BASE = "/api";
 export type KnownApiErrorCode =
   | "ambiguous_global_id"
   | "invalid_transition"
+  // ADR 0011: `invalid_transition` 에서 갈라 나온 409. 전이 자체는 허용 표에 있고 빠진 것은 사유뿐이라
+  // 안내가 달라야 한다(glossary "오류 응답 code 어휘" 정본 참조).
+  | "revocation_reason_required"
   | "transition_blocked_by_review"
   | "review_already_resolved"
   | "inspection_confirm_failed"

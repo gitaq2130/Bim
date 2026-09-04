@@ -29,6 +29,42 @@ describe("errorText", () => {
     expect(msg).not.toContain("여러 프로젝트");
   });
 
+  /**
+   * ADR 0011 — `revocation_reason_required`(409)는 `invalid_transition` 에서 **갈라 나온** code 다.
+   * 갈라 놓은 이유가 문구이므로, 이 자리에서 검증할 것은 "문구가 존재한다"가 아니라 **"그 상황에서
+   * 참일 수 없는 말이 없다"**(CLAUDE.md §6-4 3 — 문장을 통째로 베끼면 거짓 문구가 계약이 된다).
+   *
+   * 참일 수 없는 말 둘:
+   *  ① "새로고침" — 서버 상태는 최신이고 새로고침해도 달라지지 않는다.
+   *  ② "수행할 수 없습니다"류 불가 선언 — 전이는 허용 표에 있다. 지금 없는 것은 사유뿐이다.
+   *
+   * **왜 부재 단언만으로는 부족한가(§6-2 1).** `KnownApiErrorCode` 유니온에 이 code 를 넣지 않으면
+   * `errorText` 는 서버 `detail` 폴백(3번 분기)으로 조용히 떨어지는데, 그 영어 detail 에도 "새로고침"
+   * 은 없다 — 즉 ①②만 있으면 **유니온 누락이라는 정확히 그 결함이 통과한다**(이 파일이 아니라
+   * ErrorBox.tsx 주석이 `admin_cannot_be_member` 때 그 경로를 기록해 뒀다). 그래서 "다음 행동을
+   * 말한다(사유)"와 "detail 폴백이 아니다"를 함께 단언한다.
+   */
+  it("revocation_reason_required 는 다음 행동(사유 입력)을 말하고, 이 자리에서 참일 수 없는 말을 하지 않는다", () => {
+    const detail = "CONFIRMED -> MISMATCH by cm not allowed. leaving CONFIRMED requires evidence.note (revocation reason)";
+    const msg = errorText(apiError(409, detail, "revocation_reason_required"));
+
+    // 다음 행동이 문장 안에 있다 + detail 폴백이 아니다(유니온 누락이면 여기서 죽는다)
+    expect(msg).toContain("사유");
+    expect(msg).not.toContain(detail);
+    expect(msg).not.toContain("(409)");
+
+    // 이 상황에서 참일 수 없는 말
+    expect(msg).not.toContain("새로고침");
+    expect(msg).not.toContain("수행할 수 없습니다");
+
+    // invalid_transition 과 같은 문구로 뭉개지 않았다 — 갈라 놓은 code 의 존재 이유가 그것이다
+    expect(msg).not.toBe(errorText(apiError(409, detail, "invalid_transition")));
+  });
+
+  it("대조군: invalid_transition 은 여전히 새로고침을 안내한다(위 부재 단언이 문구 전반의 성질이 아님을 고정)", () => {
+    expect(errorText(apiError(409, "invalid transition", "invalid_transition"))).toContain("새로고침");
+  });
+
   it("transition_blocked_by_review 는 열린 검토요청 문구를 반환한다", () => {
     const msg = errorText(apiError(409, "blocked by open review", "transition_blocked_by_review"));
     expect(msg).toContain("검토요청");

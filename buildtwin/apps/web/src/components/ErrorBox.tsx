@@ -21,6 +21,14 @@ const CODE_MESSAGES: Record<KnownApiErrorCode, string> = {
   ambiguous_global_id: "이 객체(GlobalId)는 여러 프로젝트에 존재합니다. 프로젝트를 다시 선택한 뒤 시도하세요.",
   // 상태기계 상 허용되지 않는 전이를 시도했을 때.
   invalid_transition: "현재 상태에서는 이 작업을 수행할 수 없습니다. 화면을 새로고침해 최신 상태를 확인하세요.",
+  // ADR 0011: CONFIRMED 이탈(revoke_confirmation·order_rework)에 evidence.note 가 비어 있을 때.
+  // **위 invalid_transition 문구와 두 가지가 반드시 달라야 한다**(그래서 갈라 놓은 code 다):
+  //  ① "새로고침"을 말하면 안 된다 — 서버 상태는 최신이고 새로고침해도 달라지지 않는다.
+  //  ② "수행할 수 없습니다"류 불가 선언도 안 된다 — 전이는 허용 표에 있다(ADR 0001 §4).
+  // 지금 없는 것은 사유뿐이므로, 다음 행동("사유를 적는다")이 문장 안에 있어야 한다.
+  // 화면(ObjectDetailPanel 의 requireNote)이 보통 먼저 막으므로 이 문구는 API 직접 호출·화면 누락 시의
+  // 최종 방어다 — 그런 자리일수록 안내가 정확해야 한다.
+  revocation_reason_required: "확정을 되돌리려면 사유를 입력해야 합니다. 사유를 적은 뒤 다시 시도하세요.",
   // 열린 검토요청이 있어 다른 전이가 막혔을 때.
   transition_blocked_by_review: "이 객체에 처리되지 않은 검토요청이 있어 전이할 수 없습니다. 먼저 검토요청 페이지에서 처리하세요.",
   // 다른 CM 이 이미 같은 검토요청을 처리했을 때.
