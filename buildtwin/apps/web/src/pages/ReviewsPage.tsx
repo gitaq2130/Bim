@@ -13,6 +13,8 @@ import {
   IDENTITY_DRIFT_CAUSE_LABELS,
   IDENTITY_DRIFT_CAUSE_NOTES,
   groupLostDecisionsByCause,
+  identityDriftGroupFacts,
+  identityDriftRemedyNote,
   type LostDecisionGroup,
 } from "../domain/identityDrift";
 import { mappingRejection, mappingReviewState } from "../domain/mappingReview";
@@ -308,25 +310,32 @@ function groupCounts(g: LostDecisionGroup): string {
  * 해소 확인 다이얼로그 본문(`document_identity_drift`).
  *
  * **경위를 반영해야 하는 이유**: 옛 문구는 경위와 무관하게 "고아 문서에 남은 CM 확정·반려"라고 적고
- * "새 doc_id 쪽에서 다시 확인해 판단을 다시 내리"라고 지시했다. 병합 경로(`merge_overwritten`/
- * `merge_absorbed`)에서는 두 문장 모두 **거짓**이다 — 문서는 고아가 아니거나 아예 사라졌고, 다시 확정할
- * 새 doc_id 자체가 없다. 서버 검토요청 제목은 이미 경위별로 갈려 쓰이므로(`document_mapper.
- * _identity_drift_review_title`) 여기서 제목을 되풀이하지는 않되, **없는 행동을 시키지는 않는다.**
+ * "새 doc_id 쪽에서 다시 확인해 판단을 다시 내리"라고 지시했다. `row_replaced` 경로에서는 두 문장 모두
+ * **거짓**이다 — 문서는 고아가 아니고(행도 `reviewed_by` 도 살아 있다) 다시 판단할 새 doc_id 자체가 없다.
+ * 서버 검토요청 제목은 이미 경위별로 갈려 쓰이므로(`document_mapper._identity_drift_review_title`)
+ * 여기서 제목을 되풀이하지는 않되, **없는 행동을 시키지는 않는다.**
  *
- * 어느 경위에서도 참인 것(확인 전용 / 매핑 불변 / 복구 없음 / config 되돌리기)은 그대로 둔다.
+ * 어느 경위에서도 참인 것(확인 전용 / 매핑 불변 / 복구 없음)만 머리말에 둔다. **되돌릴 곳은 머리말에 두지
+ * 않는다**(개정 2): 옛 꼬리말은 언제나 "config 를 되돌린 뒤 대장을 다시 올리십시오"라고 적었는데,
+ * config 를 한 글자도 바꾸지 않는 경로(워크북 시트명 변경 — 지문이 그대로다)에서 그 말은 거짓이고 CM 은
+ * 바뀐 적 없는 config 를 뒤지게 된다. 지문에서 유도한다(`identityDriftRemedyNote`).
  */
 function identityDriftDecisionMessage(review: ReviewRequest): string {
-  const groups = groupLostDecisionsByCause(driftSources(review).lost);
+  const src = driftSources(review);
+  const groups = groupLostDecisionsByCause(src.lost);
   const head =
     "이 종류(문서 식별 드리프트)는 확인 전용입니다 — 승인·반려 어느 쪽을 눌러도 이 검토요청의 상태만 기록됩니다. " +
     "오염된 CM 확정·반려는 복구되지 않으며, 문서 ↔ Activity 매핑은 한 행도 바뀌지 않습니다.";
   // 경위마다 "지금 그 판단이 무엇을 가리키고 있는가"가 다르므로 절을 따로 세운다. 합치는 순간 하나는
-  // 반드시 거짓이 된다(서버 제목이 같은 이유로 절을 나눈다).
-  const clauses = groups.map(
-    (g) => `${IDENTITY_DRIFT_CAUSE_LABELS[g.cause]}(${g.items.length}건): ${IDENTITY_DRIFT_CAUSE_NOTES[g.cause]}`,
+  // 반드시 거짓이 된다(서버 제목이 같은 이유로 절을 나눈다). 절 안의 값 유래 문장(승인 뒤집힘·달라진
+  // 필드·다시 판단할 곳)도 함께 싣는다 — 그것이 CM 이 다음 행동을 고르는 값이다.
+  const clauses = groups.map((g) =>
+    [
+      `${IDENTITY_DRIFT_CAUSE_LABELS[g.cause]}(${g.items.length}건): ${IDENTITY_DRIFT_CAUSE_NOTES[g.cause]}`,
+      ...identityDriftGroupFacts(g),
+    ].join(" "),
   );
-  const tail =
-    "식별 규칙 config(sender_aliases·sheet_doc_types·column_aliases)를 되돌린 뒤 대장을 다시 올리십시오.";
+  const tail = identityDriftRemedyNote(src.previous_fingerprint, src.current_fingerprint);
   return [head, ...clauses, tail].join(" ");
 }
 
@@ -338,7 +347,7 @@ function identityDriftDecisionMessage(review: ReviewRequest): string {
  * 확인할지 알 수 없다.
  *
  * **경위(`cause`)로 갈라 보여주는 이유**: 셋의 "그 판단이 지금 무엇을 가리키고 있는가"가 다르다. 경위 없이
- * 한 목록으로 나열하면 CM 은 `merge_overwritten` 항목을 보고도 "고아가 됐구나, 새 doc_id 에서 다시
+ * 한 목록으로 나열하면 CM 은 `row_replaced` 항목을 보고도 "행이 옮겨갔구나, 새 doc_id 에서 다시
  * 확정하면 되겠네"로 읽고, **문서 상세를 열기 전까지 승인 상태가 뒤집힌 것을 알 수 없다.** 그 경위가
  * 되돌릴 수 없는 쪽이므로(ADR 0009 §3 (나)) 목록 맨 위에 세운다.
  *
@@ -356,8 +365,12 @@ function IdentityDriftCard({ review, projectId }: { review: ReviewRequest; proje
       <div className="small">
         {src.previous_fingerprint ?? "(이전 적재 지문 없음)"} → {src.current_fingerprint ?? "-"}
       </div>
+      {/* 이동·충돌 건수는 **관측된 그대로** 적는다. `merged`(충돌 묶음)는 0 일 수 있고(ADR 0009 §5-2 (라):
+          `row_replaced` 의 주 경로는 `merged=0` 이다) 그때 "병합"이라는 말을 꺼내면 CM 이 있지도 않은
+          충돌 묶음을 찾는다 — 그래서 값이 있을 때만 적는다. 이동도 같은 이유로 0 이면 적지 않는다. */}
       <div className="small">
-        doc_id 이동 {movedCount}건{mergedCount > 0 ? ` · 서로 다른 행이 한 doc_id 로 병합 ${mergedCount}건` : ""}
+        {movedCount > 0 ? `doc_id 이동 ${movedCount}건` : "doc_id 이동 없음"}
+        {mergedCount > 0 ? ` · 한 적재 안에서 서로 다른 행이 한 doc_id 로 수렴(충돌) ${mergedCount}건` : ""}
       </div>
       <div className="source-title">오염된 CM 판단 — 경위별. 이 요청을 해소해도 복구되지 않습니다</div>
       {groups.length === 0 ? (
@@ -369,16 +382,24 @@ function IdentityDriftCard({ review, projectId }: { review: ReviewRequest; proje
             /* 되돌릴 수 없는 경위(ADR 0009 §3 (나) — 미승인 도면 위에서 착수 가능이 뜨는 유일한 경로)를
                강조한다. **순서가 아니라 경위 자체로** 고른다 — 자리로 고르면 다른 경위만 있는 적재에서
                맨 위 칸이 위험한 것처럼 보인다. 배치 순서는 groupLostDecisionsByCause 가 위험 순으로 세운다. */
-            className={g.cause === "merge_overwritten" ? "notice strong" : "notice"}
+            className={g.cause === "row_replaced" ? "notice strong" : "notice"}
             data-testid="drift-cause-group"
             data-cause={g.cause}
           >
             <div>
               <strong>{IDENTITY_DRIFT_CAUSE_LABELS[g.cause]}</strong>
-              {g.cause === "merge_overwritten" && <span className="badge status-rejected small"> 가장 먼저 확인 </span>}
+              {g.cause === "row_replaced" && <span className="badge status-rejected small"> 가장 먼저 확인 </span>}
               {g.cause === "unspecified" && g.rawCause && <span className="muted small"> (cause={g.rawCause})</span>}
             </div>
             <div className="small">{IDENTITY_DRIFT_CAUSE_NOTES[g.cause]}</div>
+            {/* 값에서 유도한 사실(승인 뒤집힘 / 달라진 대장 원문 / 다시 판단할 곳). 경위 이름만으로는
+                말할 수 없는 것들이라 여기서만 나온다 — 서버가 이 세 값을 싣는 이유가 그것이다
+                (ADR 0009 §5-2 (마)). 값이 없으면 문장도 없다(아는 것만 말한다). */}
+            {identityDriftGroupFacts(g).map((fact) => (
+              <div className="small" key={fact} data-testid="drift-cause-fact">
+                {fact}
+              </div>
+            ))}
             <div className="small">{groupCounts(g)}</div>
             <ul className="list small" data-testid="lost-decisions">
               {g.items.map((d) => (
@@ -402,11 +423,14 @@ function IdentityDriftCard({ review, projectId }: { review: ReviewRequest; proje
         ))
       )}
       {/* 경위마다 다른 안내는 위 묶음이 이미 했다. 여기에는 **어느 경위에서도 참인 것**만 남긴다 —
-          옛 문구("위 문서는 고아가 됐고 … 새 doc_id 쪽 후보에 같은 판단을 다시 내리거나")는 병합 경로에서
-          거짓이었다: 병합된 문서는 고아가 아니고, 다시 확정할 새 doc_id 자체가 없다. */}
-      <div className="muted small">
-        시스템은 사람의 확정·반려를 되살리지 않습니다. 식별 규칙 config(sender_aliases·sheet_doc_types·
-        column_aliases)를 되돌린 뒤 대장을 다시 올리는 것은 언제나 가능합니다.
+          옛 문구("위 문서는 고아가 됐고 … 새 doc_id 쪽 후보에 같은 판단을 다시 내리거나")는 `row_replaced`
+          경로에서 거짓이었다: 그 문서는 고아가 아니고, 다시 판단할 새 doc_id 자체가 없다.
+          **되돌릴 곳은 지문에서 유도한다**(ADR 0009 §5-2 서두). 여기서 늘 "config 를 되돌리십시오"라고
+          적으면 config 를 한 글자도 바꾸지 않은 경로(워크북 시트명 변경 — 지문 동일)에서 거짓이 되고,
+          CM 은 바뀐 적 없는 config 를 뒤진다. */}
+      <div className="muted small" data-testid="drift-remedy">
+        시스템은 사람의 확정·반려를 되살리지 않습니다.{" "}
+        {identityDriftRemedyNote(src.previous_fingerprint, src.current_fingerprint)}
       </div>
     </div>
   );

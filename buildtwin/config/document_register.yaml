@@ -245,16 +245,18 @@ import_warnings:
   # config 를 되돌리는 대신 탐지를 끄는 방향으로 움직인다. 대신 사람의 판단(확정·반려)이 실제로
   # 걸려 있을 때만 document_identity_drift 검토요청을 CM 큐에 올린다(ADR 0009 §5-2·§5-3).
   #
-  # **두 경고의 분담**(메시지가 이 분담을 그대로 적어야 한다 — 한쪽만 읽고 "검토요청은 고아일 때만
-  # 생긴다"고 오해하면 가장 위험한 경위를 놓친다): DRIFT 는 **이동**(옛 행이 고아가 되는 경위
-  # orphaned)만, COLLISION 은 **병합**(merge_overwritten·merge_absorbed)만 알린다. 병합만 일어난
-  # 적재는 이동이 0건이라 DRIFT 가 아예 뜨지 않는데도 검토요청은 생긴다. 세 경위 모두 검토요청을
-  # 만들고, 사람이 해야 할 일이 서로 달라 제목이 경위별로 갈려 쓰인다
-  # (services/progress/document_mapper._identity_drift_review_title).
+  # **두 경고의 분담(ADR 0009 개정 2에서 바뀌었다).** DRIFT 는 **우리 식별 규칙이 움직였다**를,
+  # COLLISION 은 **한 적재 안에서 두 행이 한 doc_id 로 수렴했다**를 알린다. 개정 1 의 분담("DRIFT 는
+  # 이동만, COLLISION 은 병합만")은 틀렸다 — 사명 변경 주(별칭표 통합 + 옛 법인명 행이 대장에서 빠짐)의
+  # 판단 오염은 이동도 병합도 아니라서 **두 경고 중 어느 것도 뜨지 않은 채** 검토요청만 생겼다(실측:
+  # moved=0, merged=0, 경고 0건, drawing_approval 0.0 → 1.0). 그래서 이제 moved·merged 가 둘 다 0인데
+  # 판단이 오염된 적재에서는 DRIFT 를 **이동 쌍 없이 경위별 건수만으로** 발화한다(§5-2 (사) 4행).
+  # 세 경위(row_moved·row_replaced·row_absorbed) 모두 검토요청을 만들고, 사람이 해야 할 일이 서로 달라
+  # 제목이 경위별로 갈려 쓰인다(services/progress/document_mapper._identity_drift_review_title).
   # 지문(identity_fingerprint)이 **같은데도** 이 경고가 뜨는 경우가 있다 — 실측: 워크북 시트명을
   # 'TFA' → '자료제출' 로 바꾸면 config 는 한 글자도 안 바뀌었는데 doc_id 가 8/10 움직인다(doc_type 이
   # 시트명에서 오기 때문). 그래서 메시지가 두 경우를 모두 안내한다: 지문이 바뀌었으면 config 를,
   # 같으면 대장 파일 쪽(시트명 등)을 본다. 계획 0003 §1-a 블라인드 스팟 1 이 이 경로다.
-  DOCUMENT_IDENTITY_DRIFT: "대장 원문은 그대로인데 doc_id 가 이동했다 — 우리 쪽 식별 규칙이 바뀐 것이다. 지문(identity_fingerprint)이 함께 바뀌었으면 config(sender_aliases·sheet_doc_types·column_aliases)를, 지문이 그대로면 대장 파일 쪽(워크북 시트명 등 config 밖 입력)을 본다. 이 경고가 알리는 것은 이동 경위(orphaned — 확정·반려한 매핑이 고아 문서를 가리키게 된다) 하나뿐이다: 병합 경위(merge_overwritten·merge_absorbed)는 DOCUMENT_IDENTITY_COLLISION 이 알리고, 이동이 0건이라 이 경고가 뜨지 않는 적재에서도 일어난다. 세 경위 모두 사람의 판단(확정·반려)이 걸려 있으면 document_identity_drift 검토요청이 적재당 1건 생성되며, 그 제목이 경위마다 무엇이 오염됐고 사람이 무엇을 해야 하는지 갈라 적는다. 되돌리려면 바꾼 쪽을 원래대로 두고 대장을 다시 올린다"
-  DOCUMENT_IDENTITY_COLLISION: "서로 다른 대장 행이 같은 doc_id 로 병합됐다 — 뒤 행이 앞 행을 덮어써 한 행만 남고(document_count 와 실제 행 수가 어긋난다) 살아남은 행의 승인 상태가 도면 승인 판단의 입력이 된다. 식별 규칙이 지나치게 공격적이다. 사람의 판단은 두 경위로 오염된다: 살아남은 행의 내용이 다른 대장 행으로 바뀌거나(merge_overwritten — 행도 reviewed_by 도 그대로라 고아 표시가 붙지 않는데 화면의 승인 상태가 CM 이 보고 판단한 그 문서의 것이 아니게 된다, 가장 위험한 경위다), 판단이 가리키던 옛 doc_id 가 흡수돼 사라진다(merge_absorbed). 함께 실린 lost_decisions_in_merge 는 이 병합 한 건이 건드린 판단 수이며(적재 전체 합계는 잡 요약의 identity_drift_lost_decisions), 0 이 아니면 document_identity_drift 검토요청이 CM 큐에 함께 올라간다"
+  DOCUMENT_IDENTITY_DRIFT: "대장 원문은 그대로인데 우리 쪽 식별 규칙이 움직였다 — doc_id 가 다른 행으로 옮겨 갔거나, doc_id 는 그대로인 채 그것이 담고 있는 대장 행이 바뀌었다. 지문(identity_fingerprint)이 함께 바뀌었으면 config(sender_aliases·sheet_doc_types·column_aliases)를, 지문이 그대로면 대장 파일 쪽(워크북 시트명 등 config 밖 입력)을 본다. 함께 실린 moved 는 doc_id 가 옮겨 간 쌍의 수이며 **0 일 수 있다** — 이동 없이 담긴 대장 행만 바뀌는 경위(row_replaced)와 그 행이 다른 doc_id 아래로 가는 경위(row_absorbed)는 이동도 병합도 만들지 않기 때문이다(그때는 by_cause 로 경위별 건수만 적는다). 세 경위(row_moved·row_replaced·row_absorbed) 모두 사람의 판단(확정·반려)이 걸려 있으면 document_identity_drift 검토요청이 적재당 1건 생성되며, 그 제목이 경위마다 무엇이 오염됐고 사람이 무엇을 해야 하는지 갈라 적는다. 되돌리려면 바꾼 쪽을 원래대로 두고 대장을 다시 올린다"
+  DOCUMENT_IDENTITY_COLLISION: "한 적재 안에서 서로 다른 대장 행이 같은 doc_id 로 수렴했다 — 뒤 행이 앞 행을 덮어써 한 행만 남고(document_count 와 실제 행 수가 어긋난다) 살아남은 행의 승인 상태가 도면 승인 판단의 입력이 된다. 식별 규칙이 지나치게 공격적이다. 이 경고는 **관측 보고**이지 판단 오염의 판정 조건이 아니다 — 사람의 판단은 이 묶음 없이도 오염된다(사명 변경 주처럼 옛 법인명 행이 대장에서 빠지면 두 행이 한 적재에 함께 있지 않아 묶음이 만들어지지 않는다). 그 경우는 DOCUMENT_IDENTITY_DRIFT 가 경위(row_replaced·row_absorbed)와 함께 알린다. 함께 실린 lost_decisions_in_merge 는 이 병합 한 건이 건드린 판단 수이며(적재 전체 합계는 잡 요약의 identity_drift_lost_decisions), 0 이 아니면 document_identity_drift 검토요청이 CM 큐에 함께 올라간다"
   DOCUMENT_MAPPING_RESYNC_FAILED: "공정표는 정상 적재됐으나 뒤이은 문서↔Activity 매핑 재동기화가 실패함 — 공정표 자체는 사용 가능하고, 문서 매핑은 대장을 재업로드하거나 매핑 재생성을 호출하면 다시 시도됨"

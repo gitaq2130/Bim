@@ -24,7 +24,7 @@ from __future__ import annotations
 import uuid
 from collections import Counter
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Final, TypedDict
 
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
@@ -35,7 +35,7 @@ from packages.core.models.orm import BimObjectRow, DocumentRow, DrawingEntityRow
 from packages.core.models.state import ObjectState
 from services.progress import persistence as progress_db
 from services.progress.config_loader import load_config
-from services.progress.document_mapper import IdentityDriftReport, is_rejected_mapping
+from services.progress.document_mapper import IdentityDriftReport, LostDecision, is_rejected_mapping
 from services.progress.importers.document_register import DocumentRegisterImportResult, RegisterWarning
 
 _DOCUMENT_REGISTER_CONFIG_FILENAME = "document_register.yaml"
@@ -44,15 +44,33 @@ _DOCUMENT_REGISTER_CONFIG_FILENAME = "document_register.yaml"
 # 여기서는 키만 쓴다(`document_possibly_renamed` 와 같은 관례 — 한국어 리터럴을 코드에 두지 않는다).
 _IDENTITY_DRIFT_WARNING_CODE = "DOCUMENT_IDENTITY_DRIFT"
 _IDENTITY_COLLISION_WARNING_CODE = "DOCUMENT_IDENTITY_COLLISION"
-_DECISION_CONFIRMED = "confirmed"
-_DECISION_REJECTED = "rejected"
+_DECISION_CONFIRMED: Final = "confirmed"
+_DECISION_REJECTED: Final = "rejected"
 # 사람의 판단이 오염된 **경위**. `IdentityDriftReport.lost_decisions` 항목의 `cause` 값이며, 소비자
 # (`services/progress/document_mapper._identity_drift_review_title`)가 CM 에게 보일 문구를 이 값으로 가른다.
 # 세 값이 필요한 이유는 셋의 "지금 그 판단이 무엇을 가리키고 있는가"가 서로 다르기 때문이다 —
 # 문구가 사실과 다르면 그 자체가 결함이므로(이 저장소가 세 번 겪었다) 추측으로 합치지 않는다.
-_CAUSE_ORPHANED = "orphaned"                 # 판단이 가리키던 행이 고아가 됐다(doc_id 가 새 값으로 이동)
-_CAUSE_MERGE_OVERWRITTEN = "merge_overwritten"   # 행은 살아 있는데 **내용이 다른 대장 행으로 바뀌었다**(병합)
-_CAUSE_MERGE_ABSORBED = "merge_absorbed"     # 판단이 가리키던 행이 **다른 doc_id 로 흡수돼** 사라졌다(병합)
+#
+# **이름을 바꿨다(ADR 0009 개정 2 §5-2 (마)).** 옛 이름 셋은 전부 사실과 어긋났다: `orphaned` 는 시트명
+# 변경 경로에서 `is_orphaned=False` 인 행에 붙었고(실측 P3 — `moved=9` 인데 고아 0건), `merge_*` 두 개는
+# 새 조건이 잡는 주된 경로에 **병합이 없다**(실측 R1·P9·P11: `merged=0`). 이름이 경위를 거짓으로 말하면
+# 그것을 읽는 문구도 거짓이 된다(CLAUDE.md §6-4 규칙 2).
+_CAUSE_ROW_MOVED = "row_moved"        # 대장 행은 그대로인데 우리 식별 규칙이 그 행을 다른 doc_id 로 옮겼다
+_CAUSE_ROW_REPLACED = "row_replaced"  # 이 doc_id 가 담고 있는 **대장 행 자체**가 바뀌었다(행도 판단도 살아 있다)
+_CAUSE_ROW_ABSORBED = "row_absorbed"  # 판단이 가리키던 대장 행이 **다른 doc_id 아래로** 갔다
+# 행-정체(`_row_identity`)를 이루는 대장 **원문** 필드. `lost_decisions[].changed_fields` 가 이 이름을 쓴다.
+_ROW_IDENTITY_FIELDS = ("sender", "doc_number", "seq_raw", "title")
+
+
+class _DriftDetail(TypedDict):
+    """판정이 `doc_id` 마다 알아낸 것 — `LostDecision` 에서 매핑 쪽 세 필드(`activity_id`/`doc_id`/
+    `decision`)를 뺀 나머지다. 별도 타입으로 두는 이유는 mypy 가 **판정 자리에서** 필드 이름·타입을
+    검증하게 하기 위해서다(오타는 `LostDecision` 이 런타임에도 튕겨 적재 job 을 실패시킨다)."""
+
+    cause: str
+    new_doc_id: str | None
+    changed_fields: list[str]
+    approval_flipped: bool
 _DRIFT_PAIRS_IN_MESSAGE = 5   # 경고 문자열에 나열할 이동 쌍의 최대 수(나머지는 identity_drift.moved 에 전부 있다)
 
 
@@ -212,9 +230,11 @@ class PersistedDocumentImport(BaseModel):
     orphaned_doc_ids: list[str] = Field(default_factory=list)
     unorphaned_doc_ids: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)   # 파서 경고 + document_possibly_renamed + 식별 드리프트 2종
-    # ADR 0009 §5-2. 관측된 것이 있을 때만(moved 또는 merged 가 비어 있지 않을 때만) 채운다 — api 가
-    # `is not None` 으로 검토요청 생성 여부를 가르므로(계획 0003 §3-f), 아무 일도 없었는데 빈 보고서를
-    # 돌려주면 매 적재가 드리프트로 보고된다. 타입은 소비자(services/progress/document_mapper)가 소유한다.
+    # ADR 0009 §5-2. 관측된 것이 있을 때만(`moved`·`merged`·`lost_decisions` 중 하나라도 비어 있지 않을
+    # 때만) 채운다 — api 가 `is not None` 으로 검토요청 생성 여부를 가르므로(계획 0003 §3-f), 아무 일도
+    # 없었는데 빈 보고서를 돌려주면 매 적재가 드리프트로 보고된다. 반대로 `lost_decisions` 를 게이트에서
+    # 빼면 (나)·(다)가 잡은 사건이 `moved=0, merged=0` 인 적재에서 통째로 삼켜진다(개정 2, 실측).
+    # 타입은 소비자(services/progress/document_mapper)가 소유한다.
     identity_drift: IdentityDriftReport | None = None
 
 
@@ -324,93 +344,141 @@ def _identity_collisions(groups: list[list[Document]]) -> list[dict[str, Any]]:
             for group in groups]
 
 
-def _register_row_signature(row: DocumentRow) -> tuple[str | None, ...]:
-    """이 문서 행이 대장의 **어느 행**을 담고 있는가. 적재 전후로 이 값이 달라지면 같은 `doc_id` 아래에
-    다른 대장 행이 들어온 것이다.
+def _row_identity(row: DocumentRow) -> tuple[Any, ...]:
+    """이 `doc_id` 가 대장의 **어느 행**을 담고 있는가 — 전부 대장 **원문**(ADR 0009 §5-2 (나) 표).
 
-    담긴 필드는 "행을 구별하는 값"과 "사람의 판단이 딛고 선 값"이다. `doc_id` 재료 넷
-    (`doc_type`/`sender_normalized`/`seq_normalized`/`title_identity`)은 **일부러 넣지 않는다** — 같은
-    `doc_id` 안에서는 정의상 언제나 같아서 아무것도 구별하지 못한다. 반대로 `sheet_name`/`source_row` 도
-    넣지 않는다: 대장 앞에 행이 하나 끼어들면 전부 밀리는데 그것은 내용 변화가 아니다.
-
-    `approval_status` 가 이 묶음에 있는 것이 핵심이다. 그 값이 `drawing_approval` 논리곱(ADR 0007 §5-1)의
-    입력이므로, 병합이 그 값을 뒤집으면 CM 이 "반려된 도면"이라고 확인해 차단해 둔 작업이 착수 가능해진다."""
-    return (row.sender, row.doc_number, row.seq_raw, row.title, row.result_raw, row.approval_status)
+    `doc_id` 재료 넷(`doc_type`/`sender_normalized`/`seq_normalized`/`title_identity`)은 **일부러 넣지
+    않는다** — 같은 `doc_id` 안에서는 정의상 언제나 같아서 아무것도 구별하지 못한다. `sheet_name`/
+    `source_row` 도 넣지 않는다: 대장 앞에 행이 하나 끼면 전부 밀리는데 그것은 행이 바뀐 것이 아니다."""
+    return tuple(getattr(row, name) for name in _ROW_IDENTITY_FIELDS)
 
 
-def _merge_overwritten_doc_ids(groups: list[list[Document]], previous_signatures: dict[str, tuple[str | None, ...]],
-                               current_rows: dict[str, DocumentRow]) -> list[str]:
-    """병합이 **살아남은 행의 내용을 갈아치운** `doc_id`(ADR 0009 §3 (나)의 아직 안 잡히던 절반).
+def _row_content(row: DocumentRow) -> tuple[Any, ...]:
+    """그 행이 지금 **무엇이라고 말하는가**(ADR 0009 §5-2 (나) 표).
 
-    `_pair_identity_moves` 는 "판단이 가리키던 행이 사라졌는가"만 본다. 그런데 병합에서 흔한 쪽은
-    반대다 — 별칭표 통합처럼 **한쪽 표준명이 그대로인** 변경에서는 그 행의 `doc_id` 가 움직이지 않고,
-    다른 행이 그 위로 붕괴해 뒤 행이 이긴다. 행은 살아 있고 고아도 아니고 `reviewed_by` 도 그대로인데
-    그 문서의 `approval_status` 만 바뀐다. 즉 **판단이 사라지는 게 아니라 판단의 대상이 바뀐다.**
-    ADR 0009 §3 이 스스로 최악이라고 적은 "미승인 도면 위에서 착수 가능을 띄운다"가 바로 이 경로다.
+    `approval_status` 가 여기 있는 것이 핵심이다 — 그 값이 `drawing_approval` 논리곱(ADR 0007 §5-1)의
+    입력이므로, 이 값이 뒤집히면 CM 이 "반려된 도면"이라고 확인해 차단해 둔 작업이 착수 가능해진다.
 
-    두 조건을 모두 요구한다. ① `doc_id` 가 이번 적재의 충돌 묶음에 있다 ② 그 행의 대장 행 지문
-    (`_register_row_signature`)이 적재 전후로 달라졌다. ②만으로는 안 된다 — 대장이 다음 주에 같은 문서의
-    처리결과를 반려에서 승인으로 고쳐 오는 것은 **정상이고 대장이 정본이다**(ADR 0007 §1 규칙 1). ①이
-    붙어야 "우리 식별 규칙이 두 행을 하나로 뭉갠 결과"로 좁혀진다.
-
-    ②는 동시에 반복 오탐을 막는다. 충돌이 상시화된 대장(같은 두 행이 매주 올라온다)에서는 승자가 매번
-    같아 지문이 변하지 않으므로, 사건이 일어난 적재에서 한 번만 발화한다."""
-    return [doc_id for doc_id in (group[0].doc_id for group in groups)
-            if doc_id in previous_signatures and doc_id in current_rows
-            and previous_signatures[doc_id] != _register_row_signature(current_rows[doc_id])]
+    **행-정체와 갈라 둔 이유(개정 2).** 개정 1 의 `_register_row_signature` 는 이 여섯을 한 덩어리로 썼고,
+    그래서 "담긴 행이 바뀌었다"와 "대장이 같은 행의 처리결과를 정상 갱신했다"를 구별하지 못해 조건
+    ①(충돌 묶음)에 기대야 했다. 그 한정어가 이 사이클 세 번째 blocker 의 원인이다(ADR 0009 §5-5)."""
+    return (row.result_raw, row.approval_status)
 
 
-def _merge_absorbed_doc_ids(groups: list[list[Document]], previous_rows: dict[str, DocumentRow],
-                            was_orphaned: dict[str, bool], seen_doc_ids: set[str],
-                            claimed: set[str]) -> dict[str, str]:
-    """병합이 **삼켜 버린** 옛 `doc_id` — 위 함수의 대칭 짝.
+def _changed_identity_fields(previous: tuple[Any, ...], current: tuple[Any, ...]) -> list[str]:
+    """달라진 행-정체 필드 이름. `lost_decisions[].changed_fields` 로 실려 CM 문구가 **아는 것만** 말하게
+    한다(ADR 0009 §5-2 (바) P6·P7 — 대장측 오타 정정을 오탐인 채로 두되 "다른 문서로 바뀌었다"고 단정하지
+    않는다)."""
+    return [name for name, before, after in zip(_ROW_IDENTITY_FIELDS, previous, current) if before != after]
 
-    같은 사건의 반대편이다: 별칭 통합으로 두 행이 하나가 되면 승자 쪽 행은 살아남고(위 함수), **패자
-    쪽에 해당하던 기존 행은 새 `doc_id` 를 얻지 못한 채 그냥 사라진다.** `_pair_identity_moves` 는 이
-    경우를 볼 수 없다 — 그것은 "사라진 옛 행 ↔ 이번에 **새로 생긴** 행"을 짝지어야 하는데, 병합은 이미
-    있던 `doc_id` 로 수렴하므로 새 행이 만들어지지 않는다(실측: created 에 그 문서가 없다).
 
-    짝짓기는 `_pair_identity_moves` 와 같은 보수적 기준이다 — 사라진 기존 행과 충돌 묶음 구성원의
-    **`title` 원문이 글자 그대로 같고** 문서번호가 어긋나지 않을 것. 여기에 "이번 적재의 충돌 묶음"이라는
-    조건이 이미 붙어 있으므로, 대장에서 문서를 **진짜 지운 경우**(고아가 되지만 충돌은 없다)는 걸리지
-    않는다. `was_orphaned` 로 이미 고아였던 행을 빼는 것은 같은 사건을 매 적재 다시 보고하지 않기
-    위해서다 — 사건이 일어난 적재에서 한 번만 발화한다.
+def _replaced_doc_ids(previous_identities: dict[str, tuple[Any, ...]],
+                      previous_contents: dict[str, tuple[Any, ...]],
+                      current_rows: dict[str, DocumentRow], seen_doc_ids: set[str],
+                      absorbed_into: dict[str, str]) -> dict[str, list[str]]:
+    """ADR 0009 §5-2 (나) — 이 `doc_id` 가 **담고 있는 대장 행이 바뀌었다**.
 
-    반환: 삼켜진 옛 `doc_id` → 그것을 삼킨 충돌 묶음의 `doc_id`(경고 문자열이 병합 건별로 "이 병합이
-    사람의 판단 몇 건을 건드렸는가"를 사실대로 적기 위해 필요하다)."""
-    pool = {doc_id: row for doc_id, row in sorted(previous_rows.items())
-            if doc_id not in seen_doc_ids and doc_id not in claimed and not was_orphaned.get(doc_id, False)}
+    행도 `reviewed_by` 도 살아 있고 고아 표시조차 없다. 사라지는 것은 판단이 아니라 판단의 **대상**이고,
+    §3 이 스스로 최악이라 적은 "미승인 도면 위에서 착수 가능"이 이 경로다.
+
+    **`_collision_groups` 를 조건으로 쓰지 않는다(개정 2).** 개정 1 은 "한 적재 안에서 두 행이 같은
+    `doc_id` 로 수렴"을 전제로 걸었는데, 운영에서 흔한 다른 경로가 있다 — 사명 변경 주에 별칭표를
+    통합하면서 **옛 법인명 행이 대장에서 빠지는** 것이다. 두 행이 한 적재에 함께 있지 않으니 충돌 묶음이
+    만들어지지 않고, 그래서 승인 상태가 뒤집혀 `drawing_approval` 0.0 → 1.0 이 되는데도 경고 0건·검토요청
+    0건으로 지나갔다(실측 R1). 충돌 묶음은 이 사실이 생기는 **한 가지 경로**일 뿐이다.
+
+    **발화는 둘의 합집합이다.**
+
+    - **(나-i) 행-정체가 달라졌다.** 충돌 묶음 소속을 묻지 않는다.
+    - **(나-ii) 이 `doc_id` 가 이번 적재에서 다른 `doc_id` 를 흡수했고**(= `absorbed_into` 의 **값**에
+      있다) **행-내용이 달라졌다.** (나-i)만으로 갈아치우면 개정 1 이 **잡던** 경로를 잃는다 — 문서번호
+      열이 없는 현장에서 **행-정체까지 똑같은** 두 행이 시트 둘에 나뉘어 있고 `sheet_doc_types` 변경으로
+      하나가 되면 (나-i)는 침묵한다(실측 P13, `drawing_approval` 0.0 → 1.0). 역방향 확인이 잡은 구멍이다.
+
+    (나-ii)의 좌변으로 "이번 적재에서 새로 충돌 묶음에 들어왔는가"를 쓰려면 지난 적재의 충돌 여부를
+    알아야 해서 컬럼이 필요한데, **흡수 관측이 이미 같은 사실을 준다**(다른 `doc_id` 를 흡수했다 = 이번에
+    새로 뭉쳐졌다). 충돌이 상시화된 대장에서는 사라지는 옛 `doc_id` 가 없어 흡수가 잡히지 않으므로
+    "묶음 안의 정상 처리결과 갱신"이 오탐이 되지 않는다(실측 P4 — 개정 1 의 오탐 1건이 음성이 된다).
+
+    반환: `doc_id` → 달라진 행-정체 필드 목록((나-ii)로만 걸렸으면 `[]`)."""
+    absorbers = set(absorbed_into.values())
+    replaced: dict[str, list[str]] = {}
+    for doc_id in sorted(seen_doc_ids & set(previous_identities)):   # 이번 적재 전후로 살아 있는 doc_id
+        row = current_rows.get(doc_id)
+        if row is None:
+            continue
+        changed = _changed_identity_fields(previous_identities[doc_id], _row_identity(row))
+        if changed:
+            replaced[doc_id] = changed
+        elif doc_id in absorbers and previous_contents[doc_id] != _row_content(row):
+            replaced[doc_id] = []
+    return replaced
+
+
+def _absorbed_doc_ids(previous_identities: dict[str, tuple[Any, ...]],
+                      current_identities: dict[str, tuple[Any, ...]], was_orphaned: dict[str, bool],
+                      seen_doc_ids: set[str], claimed: set[str]) -> dict[str, str]:
+    """ADR 0009 §5-2 (다) — 담고 있던 행이 **다른 `doc_id` 아래로 갔다**. 위 함수의 대칭 짝이다.
+
+    이번 적재에 나타나지 않은 기존 행 중, 그 행이 담고 있던 **행-정체가 이번 적재의 다른 `doc_id` 아래에
+    그대로 살아 있는** 것. 사명 변경 주에 옛 법인명 행이 사라지면 그 판단은 **고아만 되고** 아무 경고도
+    없이 지나갔다(실측 P11).
+
+    **"충돌 묶음 구성원과 제목이 같고 문서번호가 호환된다"를 쓰지 않는다(개정 2).** 개정 1 의 그 조건은
+    두 군데서 틀렸다. ① 충돌 묶음을 요구해 위 경로를 놓쳤다. ② 문서번호가 한쪽이라도 비면 통과시키므로
+    (대장에 문서번호 열이 없는 현장을 위한 완화) **문서번호 열이 없는 현장에서는 "제목만 같으면 통과"로
+    퇴화**해 진짜 삭제를 흡수로 오보고했다(실측 P5). 행-정체 **전체 일치**를 요구하면 둘이 함께 사라진다 —
+    진짜로 지워진 행의 행-정체는 이번 적재 어디에도 없기 때문이다.
+
+    기존 가드 둘은 유지한다: (가)가 이미 짝지은 행(`claimed`) 제외, 이미 고아였던 행 제외 — 한 행은 한
+    경위에만 속하고, 사건이 일어난 적재에서 한 번만 발화한다.
+
+    반환: 사라진 옛 `doc_id` → 지금 그 행을 담고 있는 `doc_id`((나-ii)와 `new_doc_id` 가 이 값을 쓴다)."""
+    holders: dict[tuple[Any, ...], str] = {}
+    for doc_id in sorted(current_identities):
+        holders.setdefault(current_identities[doc_id], doc_id)   # 같은 행-정체가 여럿이면 사전순 첫 번째(결정적)
     absorbed: dict[str, str] = {}
-    for group in groups:
-        for d in group:
-            match = next((doc_id for doc_id, row in pool.items()
-                          if doc_id != d.doc_id and row.title == d.title
-                          and _doc_number_compatible(row.doc_number, d.doc_number)), None)
-            if match is not None:
-                pool.pop(match)     # 한 행은 한 번만 짝지어진다(1:1)
-                absorbed[match] = d.doc_id
+    for doc_id in sorted(previous_identities):
+        if doc_id in seen_doc_ids or doc_id in claimed or was_orphaned.get(doc_id, False):
+            continue
+        holder = holders.get(previous_identities[doc_id])
+        if holder is not None and holder != doc_id:
+            absorbed[doc_id] = holder
     return absorbed
 
 
-def _lost_decisions(session: Session, project_id: str, causes: dict[str, str]) -> list[dict[str, str]]:
+def _lost_decisions(session: Session, project_id: str,
+                    details: dict[str, _DriftDetail]) -> list[LostDecision]:
     """식별 드리프트에 걸린 **사람의 판단**(확정·반려)을 경위(`cause`)와 함께 모은다.
 
-    `causes` 는 `doc_id` → `_CAUSE_*`. 이 목록이 비면 `open_identity_drift_review` 가 아무것도 만들지
-    않으므로(ADR 0009 §5-2 큐 오염 방지), **여기에 담기는 것이 곧 "CM 큐에 올릴 사건"의 정의**다.
-    `cause` 를 항목마다 싣는 이유는 소비자가 CM 에게 보일 문구를 사실대로 쓰려면 "판단이 지금 무엇을
-    가리키고 있는가"를 알아야 하기 때문이다 — 고아가 된 것과 살아 있는 행의 내용이 바뀐 것은 사람이
-    해야 할 일이 다르다(전자는 새 `doc_id` 위에서 다시 확정, 후자는 **지금 화면에 보이는 승인 상태가
-    자기가 본 그 문서의 것이 아님**을 먼저 알아야 한다).
+    `details` 는 `doc_id` → `{cause, new_doc_id, changed_fields, approval_flipped}`(ADR 0009 §5-2 (마)
+    항목 계약). 이 목록이 비면 `open_identity_drift_review` 가 아무것도 만들지 않으므로(§5-2 큐 오염
+    방지), **여기에 담기는 것이 곧 "CM 큐에 올릴 사건"의 정의**다.
+
+    네 값을 항목마다 싣는 이유는 소비자가 CM 에게 보일 문구를 **아는 것만** 쓰게 하기 위해서다.
+    `cause` 는 "판단이 지금 무엇을 가리키고 있는가", `new_doc_id` 는 "다시 판단할 곳이 있는가"를 값으로
+    답한다(`row_replaced` 의 `None` 은 "없다"는 **사실**이지 "모른다"가 아니다). `changed_fields` 는
+    "다른 문서로 바뀐 것"과 "대장이 문서번호 오타를 고친 것"을 한 줄 안에서 가르고, `approval_flipped` 는
+    착수 가능 판단이 실제로 뒤집혔는지를 답한다 — 문구가 산문으로 추측하지 않도록(CLAUDE.md §6-4 규칙 2).
 
     확정/반려의 구분은 `document_mapper.is_rejected_mapping()` 에 맡긴다 — 판정 키 문자열
     (`evidence.extra.mapping_review_decision`)을 이 모듈이 직접 읽지 않는다(ADR 0007 §4-2 규칙 6 ⑥)."""
-    if not causes:
+    if not details:
         return []
-    lost = [{"activity_id": row.activity_id, "doc_id": row.doc_id,
-             "decision": _DECISION_REJECTED if is_rejected_mapping(row.evidence) else _DECISION_CONFIRMED,
-             "cause": causes[row.doc_id]}
-            for row in progress_db.document_mappings_for_project(session, project_id)
-            if row.doc_id in causes and row.reviewed_by is not None]
+    # 필드를 하나씩 적는다(`**detail` 로 펼치지 않는다) — `LostDecision` 이 TypedDict 라 이름 하나만
+    # 틀려도 mypy 가 여기서 잡고, 놓치면 pydantic 이 **런타임에 적재 job 을 실패시킨다.** 이 저장소의
+    # 지배적 실패 모드가 "조용히 죽는 것"이므로 시끄럽게 죽는 쪽이 맞다(계약 정본은 document_mapper).
+    lost: list[LostDecision] = []
+    for row in progress_db.document_mappings_for_project(session, project_id):
+        detail = details.get(row.doc_id)
+        if detail is None or row.reviewed_by is None:
+            continue
+        lost.append({
+            "activity_id": row.activity_id, "doc_id": row.doc_id,
+            "decision": _DECISION_REJECTED if is_rejected_mapping(row.evidence) else _DECISION_CONFIRMED,
+            "cause": detail["cause"], "new_doc_id": detail["new_doc_id"],
+            "changed_fields": detail["changed_fields"], "approval_flipped": detail["approval_flipped"],
+        })
     lost.sort(key=lambda x: (x["activity_id"], x["doc_id"]))
     return lost
 
@@ -446,19 +514,24 @@ def persist_document_register_import(
     채워 넣은 값이다 — 여기서 받는 `project_id`/`file_id` 와 어긋나면(다른 스코프의 결과를 잘못 넘긴 것이므로)
     `persist_drawing` 의 프로젝트 불일치 가드와 같은 방식으로 즉시 `ValueError`.
 
-    **식별 드리프트 판정(ADR 0009 §5-2)**은 세 갈래다. ① 이번 적재에 나타나지 않은 기존 행과 제목 원문이
-    글자 그대로 같은 새 문서 → `identity_drift.moved` + `DOCUMENT_IDENTITY_DRIFT` 경고(`document_possibly_
-    renamed` 는 내지 않는다 — 제목이 바뀌지 않았으므로 그 문구는 거짓이다). ② 한 적재 안에서 두 개 이상의
-    대장 행이 같은 `doc_id` 로 수렴 → `identity_drift.merged` + `DOCUMENT_IDENTITY_COLLISION` 경고(덮어쓰기
-    동작 자체는 유지한다 — 대장이 정본이라 마지막 행이 이긴다. 다만 더 이상 조용하지 않다). ③ ①·②로
-    **사람의 판단이 오염된** 매핑(`reviewed_by is not None`) → `identity_drift.lost_decisions`.
+    **식별 드리프트 판정(ADR 0009 §5-2, 개정 2)**은 세 관측이다.
 
-    ③의 경위(`cause`)는 셋이다. `orphaned` — ①로 판단이 가리키던 행이 고아가 됐다. `merge_overwritten` —
-    ②로 행은 살아 있는데 그 안의 대장 행이 다른 행으로 바뀌었다(승인 상태가 뒤집힐 수 있다).
-    `merge_absorbed` — ②로 판단이 가리키던 행이 다른 `doc_id` 에 흡수돼 사라졌다. 처음에는 `orphaned`
-    하나만 셌고, 그래서 **되돌릴 수 없는 쪽**(ADR 0009 §3 (나) 병합)이 CM 큐에 닿지 못했다: 병합은 판단을
-    없애는 게 아니라 판단의 **대상**을 바꾸므로 이동 조건에 걸리지 않는다. 뒤의 두 경위는 모두 "이번
-    적재의 충돌 묶음"을 전제로 하므로, 사람 판단이 없는 병합은 지금까지대로 경고에서 끝난다(§5-2 큐 오염 방지).
+    - **(가) 이동(`moved`)** — 이번 적재에 나타나지 않은 기존 행과 제목 원문이 글자 그대로 같은 새 문서
+      (`_pair_identity_moves`) → `DOCUMENT_IDENTITY_DRIFT` 경고. `document_possibly_renamed` 는 내지
+      않는다 — 제목이 바뀌지 않았으므로 그 문구는 거짓이다.
+    - **(나) 담긴 대장 행이 바뀌었다(`_replaced_doc_ids`)** — 행-정체가 달라졌거나, 다른 `doc_id` 를
+      흡수하면서 행-내용이 달라졌다.
+    - **(다) 담고 있던 행이 다른 `doc_id` 아래로 갔다(`_absorbed_doc_ids`)** — 행-정체 전체 일치로 짝짓는다.
+
+    셋에 걸린 `doc_id` 를 가리키는 매핑 중 `reviewed_by is not None` 인 것이 `lost_decisions` 이고,
+    경위(`cause`)는 `row_moved`/`row_replaced`/`row_absorbed` 다(한 `doc_id` 는 한 경위에만 속한다).
+
+    **충돌 묶음(`merged`)은 판정 조건이 아니라 보고 값이다(개정 2).** 개정 1 은 (나)·(다)에 "이번 적재의
+    충돌 묶음"을 전제로 걸었고, 그 한정어가 사명 변경 주의 정상 운영(별칭표 통합 + 옛 법인명 행이 대장에서
+    빠짐)을 표 밖으로 밀어냈다 — 두 행이 한 적재에 함께 있지 않으므로 묶음이 만들어지지 않는다. 실측:
+    승인 상태가 뒤집혀 `drawing_approval` 0.0 → 1.0(미승인 도면 위 착수 가능)인데 경고 0건·검토요청 0건.
+    묶음은 계속 관측해 `DOCUMENT_IDENTITY_COLLISION` 경고로 보고하고(덮어쓰기 동작도 유지한다 — 대장이
+    정본이라 마지막 행이 이긴다), `lost_decisions_in_merge` 계산에만 쓴다.
 
     **job 을 실패시키지 않는다**(ADR 0009 §5-2). 원인이 대장이 아니라 우리 config 이므로 거부해도 ADR 0007
     §1 규칙 1 위반은 아니지만, 새 협력사 별칭을 추가한 주에 주간 대장 업로드가 통째로 막히면 운영자는
@@ -482,9 +555,10 @@ def persist_document_register_import(
     # 이번 적재에 나타난 행의 `row.title` 은 루프 도중 이미 새 값이 된다. rename 가드는 "이전 제목"을 봐야 한다.
     previous_titles = {doc_id: existing_row.title for doc_id, existing_row in existing.items()}
     was_orphaned = {doc_id: existing_row.is_orphaned for doc_id, existing_row in existing.items()}
-    # 같은 이유로 대장 행 지문도 값으로 떠 둔다: 병합이 살아 있는 행의 **내용**을 갈아치웠는지는
-    # "적재 전 이 행이 담고 있던 대장 행"과 비교해야만 알 수 있는데, 그 행은 루프 안에서 제자리 갱신된다.
-    previous_signatures = {doc_id: _register_row_signature(existing_row) for doc_id, existing_row in existing.items()}
+    # 같은 이유로 행-정체·행-내용도 값으로 떠 둔다: 이 `doc_id` 가 담고 있던 대장 행이 바뀌었는지는
+    # "적재 전 이 행이 담고 있던 값"과 비교해야만 알 수 있는데, 그 행은 루프 안에서 제자리 갱신된다.
+    previous_identities = {doc_id: _row_identity(existing_row) for doc_id, existing_row in existing.items()}
+    previous_contents = {doc_id: _row_content(existing_row) for doc_id, existing_row in existing.items()}
     # 규칙 4: title 이 미세 수정돼 doc_id 가 바뀌면 (doc_type, sender_normalized, seq_normalized) 로 이전 문서를 찾는다
     rename_index: dict[tuple[str, str, str | None], list[str]] = {}
     for existing_row in existing.values():
@@ -559,27 +633,37 @@ def persist_document_register_import(
     # 고아 판정 뒤에 온다: 위 루프가 끝나야 "이번 적재에 나타난 doc_id" 집합이 확정된다.
     moved = _pair_identity_moves(previous_rows, seen_doc_ids, created_documents)
     moved_previous_ids = {m["previous_doc_id"] for m in moved}
-    # 사람의 판단이 오염되는 길은 셋이고, 이동(moved)은 그중 하나일 뿐이다. 병합은 판단을 **없애지**
-    # 않고 판단의 **대상**을 바꾸므로 이동 조건에 걸리지 않는다 — 그래서 지금까지 `lost_decisions` 가
-    # 비었고 `open_identity_drift_review` 가 언제나 `None` 을 돌려주어, 되돌릴 수 없는 쪽(§3 (나))이
-    # 정작 CM 큐에 닿지 못했다. 세 경위 모두 "충돌 묶음에 속한다"는 조건이 붙어 있어, 사람 판단이 없는
-    # 병합·무변경 재업로드·매칭 튜닝·진짜 삭제·진짜 제목 수정은 여전히 요청을 만들지 않는다.
-    causes: dict[str, str] = {}
+    # 사람의 판단이 오염되는 길은 셋이고, 이동(moved)은 그중 하나일 뿐이다. 나머지 둘은 판단을 **없애지**
+    # 않고 판단의 **대상**을 바꾸거나 옮기므로 이동 조건에 걸리지 않는다. 그 둘의 조건에서 **충돌 묶음을
+    # 뺐다**(개정 2, ADR 0009 §5-2 (나)·(다)) — 충돌 묶음은 그 사실이 생기는 한 가지 경로일 뿐이고,
+    # 사명 변경 주(별칭표 통합 + 옛 법인명 행이 대장에서 빠짐)에는 두 행이 한 적재에 함께 있지 않다.
+    # 대신 판별 재료를 행-정체 / 행-내용으로 갈랐다: 무변경 재업로드·매칭 튜닝·진짜 삭제·진짜 제목
+    # 수정·대장의 정상 처리결과 갱신(상시 충돌 묶음 **안**의 것을 포함)은 여전히 요청을 만들지 않는다.
+    current_identities = {doc_id: _row_identity(existing[doc_id]) for doc_id in seen_doc_ids}
+    absorbed_into = _absorbed_doc_ids(previous_identities, current_identities, was_orphaned, seen_doc_ids,
+                                      moved_previous_ids)
+    replaced = _replaced_doc_ids(previous_identities, previous_contents, existing, seen_doc_ids, absorbed_into)
+    # 한 `doc_id` 는 한 경위에만 속한다(우선순위 (가) → (나) → (다), `setdefault`).
+    details: dict[str, _DriftDetail] = {}
     for previous_id in sorted(moved_previous_ids):
-        causes.setdefault(previous_id, _CAUSE_ORPHANED)
-    for doc_id in _merge_overwritten_doc_ids(collision_groups, previous_signatures, existing):
-        causes.setdefault(doc_id, _CAUSE_MERGE_OVERWRITTEN)
-    absorbed_into = _merge_absorbed_doc_ids(collision_groups, previous_rows, was_orphaned, seen_doc_ids,
-                                            moved_previous_ids)
-    for doc_id in absorbed_into:
-        causes.setdefault(doc_id, _CAUSE_MERGE_ABSORBED)
-    lost_decisions = _lost_decisions(session, project_id, causes)
+        new_doc_id = next(m["new_doc_id"] for m in moved if m["previous_doc_id"] == previous_id)
+        details.setdefault(previous_id, {"cause": _CAUSE_ROW_MOVED, "new_doc_id": new_doc_id,
+                                         "changed_fields": [], "approval_flipped": False})
+    for doc_id, changed_fields in replaced.items():
+        # `row_replaced` 에는 다시 판단할 곳이 **없다** — `new_doc_id=None` 은 "모른다"가 아니라 그 사실이다.
+        details.setdefault(doc_id, {
+            "cause": _CAUSE_ROW_REPLACED, "new_doc_id": None, "changed_fields": changed_fields,
+            "approval_flipped": previous_contents[doc_id][1] != existing[doc_id].approval_status})
+    for doc_id, holder in absorbed_into.items():
+        details.setdefault(doc_id, {"cause": _CAUSE_ROW_ABSORBED, "new_doc_id": holder,
+                                    "changed_fields": [], "approval_flipped": False})
+    lost_decisions = _lost_decisions(session, project_id, details)
     lost_by_doc_id = Counter(lost["doc_id"] for lost in lost_decisions)
     previous_fingerprint = _previous_fingerprint(previous_rows, seen_doc_ids)
 
     for collision in merged:
         last_row = collision["rows"][-1]
-        # 이 병합이 삼킨 옛 행의 판단(`merge_absorbed`)까지 세려면 짝짓기 결과가 필요하므로 여기서 만든다.
+        # 이 병합이 삼킨 옛 행의 판단(`row_absorbed`)까지 세려면 짝짓기 결과가 필요하므로 여기서 만든다.
         # 숫자가 0 이 아니면 이 경고와 함께 `document_identity_drift` 검토요청이 CM 큐에 올라간다.
         # 이름을 `lost_decisions` 로 두지 않는 이유: 이 값은 **이 병합 한 건**의 몫이고, 아래 DRIFT 경고와
         # 잡 요약의 `identity_drift_lost_decisions` 는 적재 전체의 합계다. 같은 이름이 두 범위를 뜻하면
@@ -595,8 +679,14 @@ def persist_document_register_import(
             sheet=str(last_row["sheet"]), row=int(last_row["row"]),
         )))
 
+    # 게이트는 `moved or merged or lost_decisions` 다(개정 2 — 판정만 고치고 이 줄을 두면 수정이 무효다).
+    # 개정 1 의 게이트는 `if moved or merged` 였는데, (나)·(다)가 잡는 사건은 그 둘을 **모두 비운 채**
+    # 일어날 수 있다(사명 변경 주가 정확히 그 모양이다: moved=0, merged=0). 그러면 판정이 옳게 발화해도
+    # 보고서가 만들어지지 않아 검토요청이 게이트에서 다시 조용히 삼켜진다 — 실측으로 확인했다(새 조건 +
+    # 옛 게이트 = `identity_drift=None`, 요청 0건). `lost_decisions` 는 정의상 (가)·(나)·(다)의
+    # 부분집합이므로 이 항을 빼도 되는 조건은 없다.
     drift: IdentityDriftReport | None = None
-    if moved or merged:
+    if moved or merged or lost_decisions:
         drift = IdentityDriftReport(
             previous_fingerprint=previous_fingerprint, current_fingerprint=fingerprint, file_id=file_id,
             moved=moved, merged=merged, lost_decisions=lost_decisions,
@@ -611,6 +701,18 @@ def persist_document_register_import(
             f"(moved={len(moved)}, lost_decisions={len(lost_decisions)}, "
             f"previous_fingerprint={previous_fingerprint!r}, current_fingerprint={fingerprint!r}, "
             f"fingerprint_changed={previous_fingerprint != fingerprint}, pairs=[{shown}]{more})",
+        )))
+    elif lost_decisions and not merged:
+        # ADR 0009 §5-2 (사) 4행 — **경고가 한 건도 없이 검토요청만 생기는 적재를 만들지 않는다.**
+        # 이동 쌍이 없으므로 `pairs` 를 적지 않는다("0건 이동했고"라고 쓰던 옛 문구가 바로 그 거짓이다).
+        by_cause = Counter(str(lost["cause"]) for lost in lost_decisions)
+        warnings.append(str(RegisterWarning(
+            _IDENTITY_DRIFT_WARNING_CODE,
+            f"{warning_messages[_IDENTITY_DRIFT_WARNING_CODE]} "
+            f"(moved=0, merged=0, lost_decisions={len(lost_decisions)}, "
+            f"by_cause={dict(sorted(by_cause.items()))!r}, "
+            f"previous_fingerprint={previous_fingerprint!r}, current_fingerprint={fingerprint!r}, "
+            f"fingerprint_changed={previous_fingerprint != fingerprint})",
         )))
 
     orphaned_ids.sort()

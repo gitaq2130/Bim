@@ -24,11 +24,12 @@ api 가 호출) / 문서가 고아가 되면 자동 종료. api 는 이 함수�
 **식별 드리프트**(ADR 0009 §5-2·§5-3)도 매핑 생명주기에 걸리므로 여기서 소유한다:
 `open_identity_drift_review`가 "우리 식별 규칙이 움직여 CM 이 확정·반려한 판단이 오염됐다"는 사건을 CM 큐에
 올린다. 오염되는 길은 셋이고(`lost_decisions[].cause`) 사람이 해야 할 일이 서로 다르므로 검토요청 제목은
-경위마다 다르게 쓴다(`_identity_drift_review_title`) — 판단이 가리키던 행이 고아가 된 것(`orphaned`),
-살아 있는 행의 **내용이 다른 대장 행으로 바뀐** 것(`merge_overwritten`), 행이 다른 `doc_id` 에 흡수돼
-사라진 것(`merge_absorbed`). 판정 자체(고아 ↔ 신규 쌍 대조, 병합 충돌 판정)는 재업로드 규칙을 소유한
-`services/ingest/persistence`가 하고, 이 모듈은 그 결과(`IdentityDriftReport`)를 받아 검토요청으로만
-바꾼다. 이 kind 는 **확인 전용**이라 해소에 부수 효과가 없다 — 매핑을 되살리지 않는다.
+경위마다 다르게 쓴다(`_identity_drift_review_title`) — 대장 행은 그대로인데 우리 식별 규칙이 그 행을 다른
+`doc_id` 로 옮긴 것(`row_moved`), 살아 있는 `doc_id` 가 **담고 있던 대장 행이 바뀐** 것(`row_replaced`),
+판단이 가리키던 대장 행이 **다른 `doc_id` 아래로 간** 것(`row_absorbed`). 판정 자체(이동 쌍 짝짓기,
+행-정체/행-내용 대조)는 재업로드 규칙을 소유한 `services/ingest/persistence`가 하고, 이 모듈은 그
+결과(`IdentityDriftReport`)를 받아 검토요청으로만 바꾼다. 이 kind 는 **확인 전용**이라 해소에 부수 효과가
+없다 — 매핑을 되살리지 않는다.
 """
 from __future__ import annotations
 
@@ -37,10 +38,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from difflib import SequenceMatcher
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from typing_extensions import TypedDict  # pydantic 은 3.12 미만에서 typing_extensions.TypedDict 를 요구한다
 
 from packages.core.models.document import ActivityDocumentMapping, Document
 from packages.core.models.evidence import Evidence
@@ -66,20 +68,31 @@ _IDENTITY_DRIFT_METHOD = "identity_drift_detection"
 
 # 사람의 판단이 오염된 **경위**(`IdentityDriftReport.lost_decisions[]` 의 `cause`). 값을 붙이는 곳은 판정을
 # 소유한 `services/ingest/persistence`(같은 문자열을 그쪽 상수로 둔다)이고 이 모듈은 소비자다 — CM 에게 보일
-# 문구를 이 값으로 가른다. 셋을 하나로 뭉뚱그린 문구는 그 자체가 거짓이다: `orphaned` 는 판단이 가리키던
-# 행이 사라진 것이라 **새 doc_id 위에서 다시 확정**하면 되지만, `merge_overwritten` 은 행도 `reviewed_by` 도
-# 그대로인 채 그 문서의 **내용(승인 상태)** 만 다른 대장 행으로 바뀐 것이라 새 doc_id 자체가 없고, CM 이 먼저
-# 알아야 할 것은 "지금 화면의 승인 상태는 내가 보고 판단한 그 문서의 것이 아니다"이다.
-_CAUSE_ORPHANED = "orphaned"
-_CAUSE_MERGE_OVERWRITTEN = "merge_overwritten"
-_CAUSE_MERGE_ABSORBED = "merge_absorbed"
-# 생산자가 `cause` 를 싣지 않았을 때 쓰는 자리표시자. **`orphaned` 로 떨어뜨리지 않는다** — 모르는 것을
-# 고아라고 적으면 이 함수가 고치려는 바로 그 거짓이 된다.
+# 문구를 이 값으로 가른다. 셋을 하나로 뭉뚱그린 문구는 그 자체가 거짓이다: `row_moved` 는 대장 행이 그대로
+# 살아 다른 `doc_id` 아래에 있으므로 **그 `new_doc_id` 위에서 같은 판단을 다시 내리면** 되지만,
+# `row_replaced` 는 행도 `reviewed_by` 도 그대로인 채 그 `doc_id` 가 **담고 있는 대장 행**이 바뀐 것이라
+# 다시 판단할 새 `doc_id` 자체가 없고, CM 이 먼저 알아야 할 것은 "지금 화면의 승인 상태는 내가 보고
+# 판단한 그 행의 것이 아니다"이다.
+#
+# **개정 2에서 셋 다 이름을 바꿨다(ADR 0009 §5-2 (마)).** 옛 이름은 전부 관측과 어긋나 있었다 —
+#   `orphaned`          → `row_moved`    : 시트명 변경 경로는 `moved=9` 인데 그 행들이 **고아가 아니다**
+#                                          (실측 P3 `is_orphaned=False`). 판정은 고아를 보지 않는데 이름만 고아였다.
+#   `merge_overwritten` → `row_replaced` : 새 조건이 잡는 주 경로에는 **병합이 없다**(실측 R1 `merged=0`).
+#                                          병합이라 적으면 CM 이 있지도 않은 충돌 묶음을 찾는다.
+#   `merge_absorbed`    → `row_absorbed` : 대칭 짝도 마찬가지로 `merged=0` 에서 발화한다.
+_CAUSE_ROW_MOVED = "row_moved"          # 대장 행은 그대로인데 우리 식별 규칙이 그 행을 다른 doc_id 로 옮겼다
+_CAUSE_ROW_REPLACED = "row_replaced"    # 이 doc_id 가 담고 있던 **대장 행 자체**가 바뀌었다(행도 판단도 살아 있다)
+_CAUSE_ROW_ABSORBED = "row_absorbed"    # 판단이 가리키던 대장 행이 **다른 doc_id 아래로** 갔다
+# 생산자가 `cause` 를 싣지 않았을 때 쓰는 자리표시자. **`row_moved` 로 떨어뜨리지 않는다**(ADR 0009
+# §Deferred 5) — 모르는 경위를 가장 흔한 경위로 적으면 이 함수가 고치려는 바로 그 거짓이 된다.
 _CAUSE_UNSPECIFIED = "unspecified"
-# 문구에 세우는 순서 = 위험한 순서. `merge_overwritten` 이 맨 앞인 이유는 ADR 0009 §3 이 스스로 최악이라고
+# 문구에 세우는 순서 = 위험한 순서. `row_replaced` 가 맨 앞인 이유는 ADR 0009 §3 이 스스로 최악이라고
 # 적은 경로("미승인 도면 위에서 착수 가능을 띄운다")가 이것뿐이기 때문이다 — 나머지 둘은 근거가 사라져
 # 점수가 내려가는(보수적) 실패다.
-_CAUSE_ORDER = (_CAUSE_MERGE_OVERWRITTEN, _CAUSE_MERGE_ABSORBED, _CAUSE_ORPHANED)
+_CAUSE_ORDER = (_CAUSE_ROW_REPLACED, _CAUSE_ROW_ABSORBED, _CAUSE_ROW_MOVED)
+# `lost_decisions[].changed_fields` 가 싣는 대장 **원문** 필드 이름(생산자의 `_ROW_IDENTITY_FIELDS`) →
+# CM 이 읽을 라벨. 여기 없는 이름은 그대로 적는다 — 모르는 필드를 아는 척 번역하지 않는다.
+_ROW_IDENTITY_FIELD_LABELS = {"sender": "발신", "doc_number": "문서번호", "seq_raw": "번호", "title": "제목"}
 
 
 def _load_document_register_config() -> dict[str, Any]:
@@ -557,6 +570,35 @@ def reject_document_mapping(session: Session, project_id: str, activity_id: str,
 # 알아채게 한다 — 그리고 알아채는 자리는 job 경고가 아니라 **사람의 큐**여야 한다(8차 리뷰: 아무도
 # 만들지 않는 검토요청 때문에 CM 큐가 영원히 비어 있었고 어떤 테스트도 실패하지 않았다).
 # ─────────────────────────────────────────────────────────────────────────────
+IdentityDriftCause = Literal["row_moved", "row_replaced", "row_absorbed"]
+"""경위 값의 **정본은 생산자**(`services/ingest/persistence` 의 `_CAUSE_ROW_*`)다 — 같은 문자열이 지금
+세 자리(ingest·이 모듈·`apps/web/src/domain/identityDrift.ts`)에 복제돼 있고, 한 곳으로 올리는 일은
+ADR 0009 §Deferred 5 다. 이 별칭은 그 사실을 타입으로 적어 두는 것이지 검증 장치가 아니다 —
+`LostDecision.cause` 를 이 Literal 로 좁히지 **않는** 이유가 바로 그것이다(아래)."""
+
+
+class LostDecision(TypedDict):
+    """`IdentityDriftReport.lost_decisions[]` 항목 계약(ADR 0009 §5-2 (마), 계획 0003 §12-d).
+
+    필드 넷(`cause`·`new_doc_id`·`changed_fields`·`approval_flipped`)이 있는 이유는 하나다:
+    **문구가 아는 것만 말하게 하기 위해서**(CLAUDE.md §6-4 규칙 2 — 소비자가 산문을 되읽어 분류하지
+    않는다). 이 셋이 없던 개정 1 의 제목은 병합 경로에서 세 군데가 거짓이었다(ADR 0009 §5-4).
+
+    **`cause` 를 `IdentityDriftCause` 로 좁히지 않는다.** 생산자가 새 경위를 추가했는데 이 모듈이
+    따라오지 못한 경우, 좁은 타입은 pydantic 검증에서 항목을 통째로 튕겨 **적재 job 을 실패시키거나
+    사건을 삼킨다**. 그 대신 `_identity_drift_clause` 가 모르는 값을 "설명할 수 없는 경위"로 적어
+    내보낸다 — 모르는 것을 `row_moved` 로 떨어뜨리는 폴백은 금지다(ADR 0009 §Deferred 5).
+    """
+
+    activity_id: str
+    doc_id: str
+    decision: Literal["confirmed", "rejected"]
+    cause: str                      # `IdentityDriftCause` 중 하나. 모르는 값은 그대로 두고 `unspecified` 로 표시
+    new_doc_id: str | None          # None = 다시 판단할 곳이 **없다**(row_replaced). "모른다"가 아니다
+    changed_fields: list[str]       # 달라진 행-정체 필드(sender | doc_number | seq_raw | title). (나-ii)면 []
+    approval_flipped: bool          # 이번 적재에서 approval_status 가 달라졌는가(row_moved/row_absorbed 는 언제나 False)
+
+
 class IdentityDriftReport(BaseModel):
     """한 번의 대장 적재에서 관찰된 식별 드리프트(ADR 0009 §5-2). **판정은 적재 쪽이 소유한다** —
     `services/ingest/persistence.persist_document_register_import` 가 재업로드 규칙(ADR 0007 §2-2)을
@@ -576,35 +618,131 @@ class IdentityDriftReport(BaseModel):
     file_id: str = ""                         # 드리프트를 드러낸 대장 업로드(evidence.source_id)
     moved: list[dict[str, str]] = Field(default_factory=list)        # {"previous_doc_id","new_doc_id","title"} — title 원문이 같은 쌍
     merged: list[dict[str, Any]] = Field(default_factory=list)       # {"doc_id","titles":[...]} — 한 doc_id 로 수렴한 서로 다른 행
-    # {"activity_id","doc_id","decision","cause"} — 이번 적재가 오염시킨 사람의 판단. `cause` 는 오염 **경위**
-    # (`_CAUSE_*`)이고, 이것이 없으면 검토요청 제목이 세 경위를 하나로 뭉뚱그려 거짓을 쓴다.
-    lost_decisions: list[dict[str, str]] = Field(default_factory=list)
+    # 이번 적재가 오염시킨 사람의 판단(ADR 0009 §5-2 (마) 항목 계약 = `LostDecision`).
+    #
+    # 계획 0003 §12-d 대로 `LostDecision` TypedDict 를 쓴다 — bim-ingest 가 개정 2 구현 중 임시로
+    # `dict[str, str]` → `dict[str, Any]` 로 넓혀 둔 자리를 여기서 회수한다(넓힌 이유 자체는 옳았다:
+    # 안 넓히면 `new_doc_id=None`·`changed_fields=[…]`·`approval_flipped=bool` 이 pydantic 검증에서
+    # 튕겨 **대장 적재 job 자체가 실패**한다). `Any` 로 두면 생산자의 필드 오타가 조용히 통과하고,
+    # 조용히 통과한 오타는 `cause` 가 사라진 항목 → `unspecified` 문구로만 드러난다.
+    lost_decisions: list[LostDecision] = Field(default_factory=list)
 
 
-def _decision_counts(lost: Sequence[dict[str, str]]) -> tuple[int, int, int]:
+def _decision_counts(lost: Sequence[LostDecision]) -> tuple[int, int, int]:
     """(전체, 확정, 반려). 반려 표시는 `_MAPPING_REVIEW_DECISION_REJECTED` 하나뿐이고 나머지(값이 없는 경우
     포함)는 확정이다 — `_lost_decisions` 가 `is_rejected_mapping()` 으로 이미 가른 값을 그대로 센다."""
     rejected = sum(1 for d in lost if d.get("decision") == _MAPPING_REVIEW_DECISION_REJECTED)
     return len(lost), len(lost) - rejected, rejected
 
 
-def _identity_drift_clause(cause: str, lost: Sequence[dict[str, str]], drift: IdentityDriftReport) -> str:
-    """한 경위에 대해 **그 경위에서만 참인** 사실을 쓴다. 건수는 이 경위의 몫만 센다."""
+def _particle(word: str, after_batchim: str, after_vowel: str) -> str:
+    """앞말의 **받침 유무**로 조사를 고른다(`이/가`, `은/는`, `을/를`, `과/와`).
+
+    이 모듈이 조사를 붙이는 값 중 **변하는 것은 `changed_fields` 라벨 하나뿐**이다 — 그 라벨은
+    `발신`(받침 O) · `제목`(받침 O) · `번호`(받침 X) · `문서번호`(받침 X)로 갈리므로 조사를 문자열에
+    고정하면 절반이 틀린다(실측: "발신가 달라졌습니다"). 고정 명사에 붙은 조사(`…건이`, `…건은`)는
+    앞말이 늘 `건`이라 이미 맞으므로 이 함수를 태우지 않는다.
+
+    한글 음절 범위(가~힣) 밖이면 **받침이 있는 쪽**을 쓴다. 그 자리에 오는 값은 생산자가 우리가 모르는
+    필드 이름을 원문 그대로 실어 보낸 경우(예: `result_raw`)뿐이고, 그때는 라벨을 아는 척 번역하지
+    않는다는 규칙(`_ROW_IDENTITY_FIELD_LABELS`)과 짝을 이뤄 조사도 한쪽으로 고정하는 편이 낫다."""
+    if not word:
+        return after_batchim
+    last = word[-1]
+    if "가" <= last <= "힣":
+        return after_batchim if (ord(last) - 0xAC00) % 28 else after_vowel
+    return after_batchim
+
+
+def _changed_field_labels(lost: Sequence[LostDecision]) -> str:
+    """이 경위 묶음에서 실제로 달라진 행-정체 필드를 CM 라벨로 나열한다(생산자가 실은 순서 그대로).
+
+    이 값이 있어야 CM 이 "다른 문서로 바뀐 것"과 "대장이 문서번호 오타를 고친 것"을 **한 줄 안에서**
+    가른다. ADR 0009 §5-2 (바)는 후자(P6·P7)를 오탐인 채로 두기로 했고, 그 판단이 성립하는 근거가
+    바로 이 필드다 — 시스템이 구별할 수 없으니 **관측한 사실만 적고 판단은 CM 에게 넘긴다.**"""
+    labels: list[str] = []
+    for item in lost:
+        for name in item.get("changed_fields") or []:
+            label = _ROW_IDENTITY_FIELD_LABELS.get(name, name)
+            if label not in labels:
+                labels.append(label)
+    return "·".join(labels)
+
+
+def _redecide_verb(lost: Sequence[LostDecision]) -> str:
+    """다시 내려야 할 판단의 종류를 **오염된 판단 그대로** 적는다.
+
+    한정어 역방향 확인 — "다시 **확정**하십시오"는 이 묶음에 반려가 섞이면 거짓이다(CM 이 반려한 것을
+    확정하라고 시키는 말이 된다). 반대로 늘 "다시 판단"으로만 적으면 CM 이 무엇을 다시 해야 하는지
+    잃는다. 그래서 값(확정/반려 건수)에서 유도한다."""
+    _, confirmed, rejected = _decision_counts(lost)
+    if confirmed and rejected:
+        return "다시 확정·반려"
+    return "다시 반려" if rejected else "다시 확정"
+
+
+def _identity_drift_clause(cause: str, lost: Sequence[LostDecision], drift: IdentityDriftReport) -> str:
+    """한 경위에 대해 **그 경위에서만 참인** 사실을 쓴다(CLAUDE.md §6-4). 건수는 이 경위의 몫만 센다.
+
+    쓰는 재료는 그 경위가 실제로 싣는 값뿐이다 — `row_moved` 는 `new_doc_id`(있다)와 `drift.moved`,
+    `row_replaced` 는 `changed_fields`·`approval_flipped`(그리고 `new_doc_id` 가 없다는 사실),
+    `row_absorbed` 는 `new_doc_id`. **어느 절에도 "고아"·"병합"은 쓰지 않는다**(ADR 0009 §5-3 개정 2):
+    판정이 둘 다 보지 않으므로 문구가 알 수 없는 말이다. 시트명 변경 경로는 `moved=9` 인데
+    `is_orphaned=False` 이고(P3), `row_replaced` 의 주 경로는 `merged=0` 이다(R1)."""
     total, confirmed, rejected = _decision_counts(lost)
     counted = f"CM 판단 {total}건(확정 {confirmed} · 반려 {rejected})"
     documents = len({d["doc_id"] for d in lost})   # 한 문서에 여러 Activity 매핑이 걸릴 수 있다
-    if cause == _CAUSE_MERGE_OVERWRITTEN:
-        # 행은 살아 있고 고아도 아니다. 사라진 것은 판단이 아니라 **판단의 대상**이다.
-        return (f"서로 다른 대장 행이 한 doc_id 로 병합돼, CM 이 판단한 문서 {documents}건의 내용이 다른 "
-                f"대장 행으로 바뀌었습니다(CM 판단 {total}건 · 확정 {confirmed} · 반려 {rejected}). "
-                "화면의 승인 상태는 CM 이 보고 판단한 그 문서의 것이 아닙니다"
-                "(도면 승인 근거가 뒤집혔을 수 있습니다)")
-    if cause == _CAUSE_MERGE_ABSORBED:
-        return f"{counted}이 가리키던 문서 {documents}건이 다른 doc_id 에 흡수돼 사라졌습니다"
-    if cause == _CAUSE_ORPHANED:
-        # `moved` 는 정의상 이 경위의 원인 그 자체(고아 ↔ 신규 짝짓기 결과)이므로 여기서만 쓴다.
-        # 병합만 있는 적재는 `moved == 0` 이라 이 절 자체가 나오지 않는다 — "0건 이동했고"라고 쓰지 않는다.
-        return (f"대장은 그대로인데 doc_id 가 {len(drift.moved)}건 이동했고, {counted}이 고아 문서에 남았습니다")
+
+    if cause == _CAUSE_ROW_REPLACED:
+        # 한정어 역방향 확인 — 이 절에는 "내용도 함께 바뀌었을 때만" 같은 한정어를 두지 않는다. 그 단어를
+        # 넣으면 승인 상태가 **우연히 같은** 다른 행으로 바뀐 경우가 문구 밖으로 나가고, 그때도 CM 의
+        # 확정은 자기가 보지 않은 도면에 붙어 있다(ADR 0009 §5-2 (바) P6·P7 판단 2). `approval_flipped`
+        # 는 발화를 가르지 않고 **문장의 순서만** 가른다.
+        parts: list[str] = []
+        flipped = {d["doc_id"] for d in lost if d["approval_flipped"]}
+        if flipped:
+            # 역방향 확인 — 이 조건을 없애고 늘 붙이면 뒤집히지 않은 적재에 거짓이 붙는다. 반대로 이것을
+            # 발화 게이트로 쓰면 위 P6·P7 이 표 밖으로 나간다. 그래서 **맨 앞에 세우기만** 한다:
+            # CM 이 미승인 도면 위에서 착수 가능을 보고 있을 수 있다는 사실이 가장 먼저 와야 한다.
+            parts.append(f"도면 승인 근거가 뒤집혔습니다 — 문서 {len(flipped)}건의 승인 상태가 "
+                         "이번 적재에 달라졌습니다")
+        fields = _changed_field_labels(lost)
+        if fields:
+            # 조사는 라벨의 받침에서 유도한다 — `발신`·`제목`은 `이`, `번호`·`문서번호`는 `가`.
+            parts.append(f"CM 이 판단한 문서 {documents}건이 담고 있던 대장 행이 바뀌었습니다"
+                         f"({fields}{_particle(fields, '이', '가')} 달라졌습니다)")
+        else:
+            # 역방향 확인 — `changed_fields` 가 비면 대장 원문 네 필드는 그대로다(ADR 0009 §5-2 (나-ii)로만
+            # 걸린 경우). 그때 "다른 대장 행으로 바뀌었다"고 적으면 관측하지 못한 것을 단정하는 것이다.
+            parts.append(f"CM 이 판단한 문서 {documents}건은 대장 원문(발신·문서번호·번호·제목)이 그대로인데, "
+                         "그 doc_id 가 담은 내용(처리결과·승인 상태)이 달라졌습니다")
+        parts.append(f"{counted}이 그 문서에 걸려 있고, 화면의 승인 상태는 CM 이 보고 판단한 그 대장 행의 "
+                     "것이 아닙니다")
+        if not any(d["new_doc_id"] for d in lost):
+            # 역방향 확인 — "없다"를 **값에서** 읽는다. 경위 이름만 보고 단정하면, 생산자가 언젠가
+            # `new_doc_id` 를 싣기 시작했을 때 문구만 거짓으로 남는다.
+            parts.append("다시 판단할 새 doc_id 는 없습니다")
+        return ". ".join(parts)
+
+    if cause == _CAUSE_ROW_ABSORBED:
+        holders = len({d["new_doc_id"] for d in lost if d["new_doc_id"]})
+        # 역방향 확인 — `new_doc_id` 가 비어 오면 "그 doc_id 위에서"라고 쓸 곳이 없다. 없는 곳을
+        # 가리키지 않도록 문장을 갈라 둔다(값이 없으면 가리키는 말 자체를 빼고 사실만 적는다).
+        where = f"다른 문서(doc_id {holders}건)" if holders else "다른 문서"
+        absorbed = (f"{counted}이 가리키던 대장 행 {documents}건이 지금은 {where} 아래에 있고, "
+                    "이 doc_id 에는 대장 행이 남지 않았습니다")
+        return f"{absorbed}. 그 doc_id 위에서 다시 판단하십시오" if holders else absorbed
+
+    if cause == _CAUSE_ROW_MOVED:
+        # `drift.moved` 는 정의상 이 경위의 원인 그 자체(이동 쌍 짝짓기 결과)이므로 여기서만 쓴다.
+        # 역방향 확인 — 다른 두 경위만 있는 적재는 `moved == 0` 이라 이 절 자체가 만들어지지 않는다.
+        # 그래서 "0건 이동했고"를 쓰는 일은 생기지 않는다.
+        # **"고아"라고 쓰지 않는다**: 옛 행이 고아가 되는지는 이 값들이 답하지 않는다(시트명 변경 경로는
+        # 고아가 되지 않는다 — 실측 P3). 우리가 아는 것은 "행이 다른 doc_id 아래로 옮겨졌다"뿐이다.
+        return (f"대장 행은 그대로인데 우리 식별 규칙이 그 행을 새 doc_id 로 옮겼습니다"
+                f"(이번 적재의 이동 {len(drift.moved)}건). {counted}이 옛 doc_id 에 남아 있습니다 — "
+                f"옮겨간 새 doc_id 위에서 같은 판단을 {_redecide_verb(lost)}하십시오")
+
     # 경위를 모르는 항목(생산자가 새 cause 를 추가했는데 이 문구가 따라오지 못한 경우). 아는 척하지 않는다.
     return (f"{counted}이 이번 적재의 식별 드리프트에 걸렸습니다"
             f"(경위 {cause!r} — 이 문구가 설명할 수 없는 경위입니다. lost_decisions 를 직접 보십시오)")
@@ -614,34 +752,43 @@ def _identity_drift_review_title(drift: IdentityDriftReport) -> str:
     """CM 큐에 뜨는 한 줄. **경위(`cause`)마다 다르게 쓴다.**
 
     하나로 뭉뚱그린 옛 문구("doc_id 가 N건 이동했고 … 고아 문서에 남았습니다 … 새 doc_id 위에서 다시
-    확정하십시오")는 병합 경로에서 세 군데가 거짓이었다: ① `merge_overwritten` 은 고아가 아니다(행도
-    `reviewed_by` 도 살아 있고 바뀐 것은 문서의 **내용**이다) ② 병합에는 다시 확정할 **새 doc_id 가 없다**
-    ③ 병합만 있는 적재는 `moved == 0` 이라 "0건 이동했고"라고 쓰면서 판단 오염을 보고했다.
+    확정하십시오")는 병합 경로에서 세 군데가 거짓이었다: ① 행도 `reviewed_by` 도 살아 있어 고아가 아니다
+    ② 다시 확정할 **새 doc_id 가 없다** ③ `moved == 0` 인 적재에 "0건 이동했고"라고 적었다.
 
-    이 저장소는 "화면·문구가 사실과 다른" 결함을 세 번 겪었고(존재한 적 없는 되돌리기 엔드포인트를 약속한
-    승인 다이얼로그, 그 거짓 문구를 계약으로 고정한 웹 테스트 169건 전원 통과), ADR 0009 §Deferred 2 가
-    `document_possibly_renamed` 문구 정정을 미루면서 "§5-2 가 분리하면 해결된다"고 적은 바로 그 §5-2 의
-    새 제목이 같은 종류의 거짓을 갖고 태어났다. **경위가 섞이면 각 경위를 건수와 함께 나란히 적는다** —
-    합치는 순간 다시 거짓이 되기 때문이다."""
-    by_cause: dict[str, list[dict[str, str]]] = {}
+    **개정 2 — 그 정정판(개정 1)의 제목도 두 군데가 거짓이었다**(ADR 0009 §5-3). ① 옛 `orphaned` 절이
+    "고아 문서에 남았습니다"라고 적는데, 판정은 §5-2 (가)에서 이미 고아를 보지 않기로 고쳤고 시트명 변경
+    경로의 옛 행은 실제로 고아가 되지 않는다(실측 P3 `moved=9`, `is_orphaned=False`). ② 옛
+    `merge_overwritten` 절이 "서로 다른 대장 행이 한 doc_id 로 **병합**돼"로 시작하는데, 새 조건이 잡는 주
+    경로에는 병합이 없다(실측 R1 `merged=0`) — CM 이 있지도 않은 충돌 묶음을 찾게 된다.
+
+    그래서 각 절은 **경위 이름이 아니라 관측한 값**으로 쓴다(`_identity_drift_clause`). 이 저장소는
+    "화면·문구가 사실과 다른" 결함을 반복해 겪었고(존재한 적 없는 되돌리기 엔드포인트를 약속한 승인
+    다이얼로그, 그 거짓 문구를 계약으로 고정한 웹 테스트 169건 전원 통과), ADR 0009 §Deferred 2 가 문구
+    정정을 미루면서 "§5-2 가 분리하면 해결된다"고 적은 바로 그 §5-2 의 제목이 같은 종류의 거짓을 갖고
+    태어났다. **경위가 섞이면 각 경위를 건수와 함께 나란히 적는다** — 합치는 순간 다시 거짓이 된다."""
+    by_cause: dict[str, list[LostDecision]] = {}
     for lost in drift.lost_decisions:
-        by_cause.setdefault(str(lost.get("cause") or _CAUSE_UNSPECIFIED), []).append(lost)
+        # 역방향 확인 — 모르는(또는 빈) `cause` 는 `_CAUSE_UNSPECIFIED` 로 **따로** 모은다.
+        # `_CAUSE_ROW_MOVED` 로 떨어뜨리면 ADR 0009 §5-4 가 고치려는 바로 그 거짓이 재생산된다.
+        by_cause.setdefault(lost.get("cause") or _CAUSE_UNSPECIFIED, []).append(lost)
 
     ordered = [c for c in _CAUSE_ORDER if c in by_cause] + sorted(set(by_cause) - set(_CAUSE_ORDER))
     clauses = [_identity_drift_clause(cause, by_cause[cause], drift) for cause in ordered]
-    orphaned = by_cause.get(_CAUSE_ORPHANED, [])
-
-    tail = "확인용 요청입니다(매핑은 복구되지 않습니다). 식별 규칙 config 를 되돌리고 대장을 다시 올리"
-    if not orphaned:
-        # 병합에는 "다시 확정할 새 doc_id" 가 없다. 없는 행동을 시키지 않는다.
-        tail += "십시오"
-    elif len(clauses) == 1:
-        tail += "거나, 의도한 변경이면 그대로 두고 새 doc_id 위에서 다시 확정하십시오"
-    else:
-        tail += (f"거나, 의도한 변경이면 그대로 두고 고아가 된 판단 {len(orphaned)}건만 새 doc_id 위에서 "
-                 "다시 확정하십시오(병합된 문서에는 새 doc_id 가 없습니다)")
     body = ". 또한 ".join(clauses) if clauses else "식별 규칙이 움직였습니다(오염된 CM 판단은 없습니다)"
-    return f"문서 식별 드리프트: {body} — {tail}"
+
+    # 되돌릴 곳은 **지문이 답한다**(ADR 0009 §5-2 서두: 지문은 판정 조건이 아니라 "어디를 되돌려야
+    # 하는가" 하나를 답하는 보고 값이다). 한정어 역방향 확인 — 여기서 늘 "config 를 되돌리십시오"라고
+    # 적으면 config 를 한 글자도 바꾸지 않은 경로(워크북 시트명 변경: `fingerprint_changed=False`)에서
+    # 거짓이 되고, CM 은 바뀐 적 없는 config 를 뒤지게 된다. 반대로 지문이 달라졌는데 "대장 파일을
+    # 보라"고 적으면 진짜 원인(우리 config)을 가린다. 이전 지문을 모르면(첫 적재) 어느 쪽도 단정하지 않는다.
+    if drift.previous_fingerprint is None:
+        where = "이전 지문이 없어 식별 표면 config 와 대장 파일(시트명 등) 중 어느 쪽이 움직였는지 알 수 없습니다"
+    elif drift.previous_fingerprint != drift.current_fingerprint:
+        where = "식별 표면 config 가 바뀌었습니다 — 되돌리고 대장을 다시 올리십시오"
+    else:
+        where = ("식별 표면 config 는 그대로입니다(지문 동일) — 대장 파일 쪽 입력"
+                 "(워크북 시트명 등)이 바뀌지 않았는지 확인하십시오")
+    return f"문서 식별 드리프트: {body} — 확인용 요청입니다(매핑은 복구되지 않습니다). {where}"
 
 
 def open_identity_drift_review(session: Session, project_id: str,
@@ -814,7 +961,8 @@ def confirmed_required_documents(session: Session, project_id: str, activity_ids
 
 
 __all__ = [
-    "DocumentEvidence", "DocumentMappingSyncResult", "IdentityDriftReport", "close_document_mapping_review",
-    "confirmed_required_documents", "is_rejected_mapping", "map_documents_to_activities",
-    "map_project_documents", "open_identity_drift_review", "reject_document_mapping",
+    "DocumentEvidence", "DocumentMappingSyncResult", "IdentityDriftCause", "IdentityDriftReport",
+    "LostDecision", "close_document_mapping_review", "confirmed_required_documents", "is_rejected_mapping",
+    "map_documents_to_activities", "map_project_documents", "open_identity_drift_review",
+    "reject_document_mapping",
 ]

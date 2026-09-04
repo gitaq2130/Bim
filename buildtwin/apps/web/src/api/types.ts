@@ -371,18 +371,25 @@ export interface ReviewRequest {
 
 /**
  * 사람의 판단(확정·반려)이 식별 드리프트로 **오염된 경위**.
- * 정본은 `services/ingest/persistence.py` 의 `_CAUSE_*` 상수이고, 소비자인
+ * 정본은 `services/ingest/persistence.py` 의 `_CAUSE_ROW_*` 상수이고, 소비자인
  * `services/progress/document_mapper._identity_drift_review_title` 이 CM 에게 보일 문구를 이 값으로 가른다.
  *
+ * **개정 2에서 셋 다 이름이 바뀌었다**(ADR 0009 §5-2 (마)). 옛 이름은 전부 관측과 어긋나 있었다 —
+ * `orphaned` 는 시트명 변경 경로에서 `moved=9` 인데 그 행들이 고아가 아니었고(실측 P3 `is_orphaned=False`),
+ * `merge_*` 둘은 새 조건이 잡는 주 경로에 **병합이 없다**(실측 R1 `merged=0`). 이름이 거짓이면 그 이름으로
+ * 갈린 화면 문구도 함께 거짓이 된다(CLAUDE.md §6-4).
+ *
  * 셋을 하나로 뭉뚱그린 문구는 그 자체가 거짓이다 — 셋의 "그 판단이 지금 무엇을 가리키고 있는가"가 다르다:
- * - `orphaned` — 판단이 가리키던 행이 고아가 됐다. 같은 문서가 **새 doc_id** 로 다시 들어와 있으므로
- *   사람이 그쪽에서 다시 판단할 수 있다.
- * - `merge_overwritten` — 행도 `reviewed_by` 도 그대로인데 그 문서의 **내용(승인 상태)** 이 다른 대장 행의
- *   것으로 바뀌었다. 고아가 **아니고**, 다시 확정할 새 doc_id 도 **없다**. ADR 0009 §3 이 스스로 최악이라
- *   적은 경로다 — 미승인 도면 위에서 착수 가능이 뜬다.
- * - `merge_absorbed` — 판단이 가리키던 문서가 다른 doc_id 에 흡수돼 사라졌다. 새 doc_id 가 없다.
+ * - `row_moved` — 대장 행은 그대로인데 우리 식별 규칙이 그 행을 **다른 `doc_id`** 로 옮겼다. 옛 행이
+ *   고아가 되는지는 이 값이 답하지 않는다(시트명 변경 경로는 고아가 되지 않는다). `new_doc_id` 위에서
+ *   같은 판단을 다시 내리면 된다.
+ * - `row_replaced` — 이 `doc_id` 가 담고 있던 **대장 행 자체**가 다른 행으로 바뀌었다. 행도 `reviewed_by`
+ *   도 살아 있고 고아 표시조차 없으며, **다시 판단할 새 `doc_id` 가 없다**(`new_doc_id=null`).
+ *   ADR 0009 §3 이 스스로 최악이라 적은 경로다 — 미승인 도면 위에서 착수 가능이 뜬다.
+ * - `row_absorbed` — 판단이 가리키던 대장 행이 지금은 **다른 `doc_id` 아래**에 있고, 이 `doc_id` 에는
+ *   대장 행이 남지 않았다. 그 `new_doc_id` 위에서 다시 판단한다.
  */
-export type IdentityDriftCause = "orphaned" | "merge_overwritten" | "merge_absorbed";
+export type IdentityDriftCause = "row_moved" | "row_replaced" | "row_absorbed";
 
 /**
  * `conflicting_sources.lost_decisions[]` 한 항목(`services/ingest/persistence._lost_decisions`).
@@ -390,6 +397,10 @@ export type IdentityDriftCause = "orphaned" | "merge_overwritten" | "merge_absor
  * `cause` 를 `IdentityDriftCause` 로 좁히지 **않는다**: 서버가 새 경위를 추가하면 그 값이 그대로 실려 오는데,
  * 타입이 셋만 허용하면 화면은 "알 수 없는 값"이라는 갈래 자체를 잃고 아는 척하게 된다. `Blocker.kind` 와
  * 같은 처리다(`domain/identityDrift.classifyIdentityDriftCause` 가 모르는 값을 명시적으로 받아낸다).
+ *
+ * 뒤 세 필드(개정 2)는 **문구가 아는 것만 말하게 하려고** 서버가 싣는 값이다(ADR 0009 §5-2 (마),
+ * CLAUDE.md §6-4 규칙 2 — 소비자가 산문을 되읽어 분류하지 않는다). 셋 다 `?`(선택)인 이유는 구버전
+ * 응답에는 없기 때문이고, **없는 것과 `null` 은 다른 사실이다** — `new_doc_id` 참고.
  */
 export interface LostDecision {
   activity_id?: string | null;
@@ -398,15 +409,33 @@ export interface LostDecision {
   decision?: string | null;
   /** `IdentityDriftCause` 중 하나. 구버전 응답·새 경위에는 그 밖의 값이거나 없을 수 있다. */
   cause?: string | null;
+  /**
+   * 그 대장 행이 지금 있는 `doc_id`(`row_moved`/`row_absorbed`). `row_replaced` 는 **`null`** —
+   * "다시 판단할 곳이 **없다**"는 사실이지 "모른다"가 아니다(ADR 0009 §5-2 (마)).
+   * 필드 자체가 **없으면**(구버전 응답) 그것은 "모른다"이므로 화면은 어느 쪽도 단정하지 않는다.
+   */
+  new_doc_id?: string | null;
+  /**
+   * `row_replaced` 에서 달라진 행-정체 필드 이름(`sender`|`doc_number`|`seq_raw`|`title`,
+   * `services/ingest/persistence._ROW_IDENTITY_FIELDS`). 행-내용만 달라진 경우(ADR 0009 §5-2 (나-ii))는
+   * 빈 배열이고, 그때 "다른 대장 행으로 바뀌었다"고 적으면 관측하지 못한 것을 단정하는 것이 된다.
+   */
+  changed_fields?: string[] | null;
+  /** 이번 적재에서 `approval_status` 가 달라졌는가. `row_moved`/`row_absorbed` 는 언제나 `false`. */
+  approval_flipped?: boolean | null;
 }
 
 /** `document_identity_drift` 요청의 `conflicting_sources`(ADR 0009 §5-2). 3축(신고/스캔/논리)은 없다. */
 export interface IdentityDriftSources {
   previous_fingerprint?: string | null;
   current_fingerprint?: string | null;
-  /** 고아 ↔ 신규 짝짓기 결과. `{previous_doc_id, new_doc_id, title}` */
+  /**
+   * 이동 쌍 짝짓기 결과. `{previous_doc_id, new_doc_id, title}`
+   * **"고아 ↔ 신규"가 아니다**(ADR 0009 §5-2 (가) 개정 1 정정): 좌변은 "이번 적재에 나타나지 않은 기존 행
+   * 전부"이고, 시트명 변경 경로에서 그 행들은 고아가 되지 않는다(실측 `orphaned=0`, `moved=8`).
+   */
   moved?: { previous_doc_id?: string; new_doc_id?: string; title?: string }[];
-  /** 한 doc_id 로 수렴한 서로 다른 대장 행. `{doc_id, titles}` */
+  /** 한 적재 안에서 한 doc_id 로 수렴한 서로 다른 대장 행(충돌 묶음). `{doc_id, titles}` */
   merged?: { doc_id?: string; titles?: string[] }[];
   lost_decisions?: LostDecision[];
 }
