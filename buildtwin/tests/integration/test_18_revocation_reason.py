@@ -21,7 +21,8 @@
 **음성 대조군이 왜 이 파일의 절반인가**(CLAUDE.md §6-2). "409 면 통과"도, "CONFIRMED 에서 나가는 409 면
 새 code"도 아니다 — 모든 409 를 새 code 로 바꾸는 구현이 통과하면 안 되고, `from_state == CONFIRMED` 인
 409 를 전부 새 code 로 바꾸는 구현도 통과하면 안 된다. `test_other_conflicts_keep_invalid_transition_code`
-가 그 두 축을 각각 막는다.
+가 그 두 축을 각각 막고, **세 번째 축(actor 가드)** 에서 부모 포맷의 나머지 절반 — 비어 있지 않은
+`reason` 이 앞머리와 함께 실려 나가는 자리 — 을 붙든다.
 """
 from __future__ import annotations
 
@@ -156,11 +157,21 @@ def test_other_conflicts_keep_invalid_transition_code(client, auth, project, ifc
       사유를 붙여도 붙이지 않아도 `invalid_transition` 이어야 한다 — 사유 없이도 그러해야 한다는 것이
       중요하다. 모델 검증자가 `validate_transition` 을 먼저 부르므로 "CONFIRMED 에서 나가는데 note 가
       없다"만 보고 code 를 고르는 구현은 여기서 죽는다.
+    - 축 C: `from_state == CONFIRMED` 이면서 **actor 가드**에 걸리는 거부(contractor 가 CONFIRMED 를
+      떠나려는 시도). 목적지 `(CONFIRMED, IN_PROGRESS)` 는 **허용 표에 있고**, 걸리는 것은 그 actor
+      집합(`{cm}`)이다 — A·B 와 원인이 다르다.
 
     **`detail` 축의 음성 대조군도 여기 있다**(§6-2 3). 위 V8·V9 는 "`not allowed` 가 없다"를 단언하는데,
-    그 한쪽만이면 **부모 포맷에서 그 말을 통째로 지우는 구현**도 초록이다. 아래 두 거부는 실제로 허용 표
-    **밖**이라(축 A: `(PLANNED, CONFIRMED)` 없음 / 축 B: `(CONFIRMED, ESTIMATED_DONE)` 없음) 그 말이
-    **참**이고, 따라서 계속 그렇게 말해야 한다. 두 자리는 같은 상수 `NOT_ALLOWED` 를 본다.
+    그 한쪽만이면 **부모 포맷에서 그 말을 통째로 지우는 구현**도 초록이다. 아래 세 거부는 그 말이
+    **참**인 자리다(축 A: `(PLANNED, CONFIRMED)` 가 표에 없다 / 축 B: `(CONFIRMED, ESTIMATED_DONE)` 이
+    표에 없다 / 축 C: 표에는 있으나 그 actor 집합에 contractor 가 없다). 따라서 계속 그렇게 말해야 하고,
+    세 자리가 같은 상수 `NOT_ALLOWED` 를 본다.
+
+    **A·B 만으로는 부모 포맷의 절반밖에 붙들지 못한다**(심사 minor-1). 둘 다 `reason == ""` 로
+    `validate_transition` 의 **같은 `raise`**(표 조회 실패)를 태우기 때문에, `reason` 이 있을 때만 앞머리를
+    갈아 끼우는 구현이 살아남는다 — 실측: `_verb = "not allowed." if not reason else "blocked:"` 로 바꿔도
+    pytest 738 전원 통과. 축 C 는 저장소에서 **비어 있지 않은 `reason` 을 싣는 유일한 분기**이므로
+    (`"leaving CONFIRMED requires actor=cm"`), 앞머리와 사유의 **합성**이 관측되는 자리도 여기뿐이다.
     """
     # 축 A
     gid = _pick_planned(client, auth, project)
@@ -177,4 +188,24 @@ def test_other_conflicts_keep_invalid_transition_code(client, auth, project, ifc
         assert r.status_code == 409, r.text
         assert r.json()["code"] == "invalid_transition", r.json()
         assert NOT_ALLOWED in r.json()["detail"].lower(), r.json()
+
+    # 축 C — actor 가드(`state.py::validate_transition` 의 `leaving CONFIRMED requires actor=cm`).
+    # 사유를 **채워서** 보낸다: 그래야 거부 원인이 actor 하나로 좁혀져 이 축이 A·B 와 다른 `raise` 를
+    # 태운다는 것이 분명해진다(note 를 비우면 사유 부재 분기와 구별되지 않는다).
+    r = _transition(client, auth, project, "contractor", gid, {"to_state": "IN_PROGRESS", "note": REASON})
+    assert r.status_code == 409, r.text
+    got = r.json()
+    assert got["code"] == "invalid_transition", got
+    assert got["from_state"] == "CONFIRMED" and got["to_state"] == "IN_PROGRESS" and got["actor"] == "contractor"
+    # ① 앞머리는 여기서도 **참**이다 — contractor 에게 이 전이는 실제로 허용되지 않는다.
+    assert NOT_ALLOWED in got["detail"].lower(), got
+    # ② 그리고 **사유가 함께** 실려 온다(§6-2 4). 앞머리만 보면 사유를 통째로 버리는 구현도 초록이고,
+    #    사유만 보면 앞머리를 갈아 끼우는 구현이 초록이다 — 이 분기가 둘을 함께 볼 수 있는 유일한 자리다.
+    #    문구는 고정하지 않는다(§6-4 3): 응답이 스스로 싣는 세 필드와 앞머리를 지운 뒤 **남는 것이 있다**
+    #    만 본다. 어순·구두점을 바꾸는 정당한 개정은 여기서 죽지 않고, 사유를 잃는 개정만 죽는다.
+    residue = got["detail"].lower()
+    for token in (NOT_ALLOWED, got["from_state"].lower(), got["to_state"].lower(), got["actor"], "->", "by"):
+        residue = residue.replace(token, " ", 1)
+    assert residue.strip(" .:-"), got
+
     assert _state_and_history_len(client, auth, project, gid)[0] == "CONFIRMED"
