@@ -52,7 +52,7 @@ _DECISION_REJECTED: Final = "rejected"
 # 문구가 사실과 다르면 그 자체가 결함이므로(이 저장소가 세 번 겪었다) 추측으로 합치지 않는다.
 #
 # **이름을 바꿨다(ADR 0009 개정 2 §5-2 (마)).** 옛 이름 셋은 전부 사실과 어긋났다: `orphaned` 는 시트명
-# 변경 경로에서 `is_orphaned=False` 인 행에 붙었고(실측 P3 — `moved=9` 인데 고아 0건), `merge_*` 두 개는
+# 변경 경로에서 `is_orphaned=False` 인 행에 붙었고(실측 P3 — `moved=8` 인데 고아 0건), `merge_*` 두 개는
 # 새 조건이 잡는 주된 경로에 **병합이 없다**(실측 R1·P9·P11: `merged=0`). 이름이 경위를 거짓으로 말하면
 # 그것을 읽는 문구도 거짓이 된다(CLAUDE.md §6-4 규칙 2).
 _CAUSE_ROW_MOVED = "row_moved"        # 대장 행은 그대로인데 우리 식별 규칙이 그 행을 다른 doc_id 로 옮겼다

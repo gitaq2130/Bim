@@ -71,11 +71,14 @@ _IDENTITY_DRIFT_METHOD = "identity_drift_detection"
 # 문구를 이 값으로 가른다. 셋을 하나로 뭉뚱그린 문구는 그 자체가 거짓이다: `row_moved` 는 대장 행이 그대로
 # 살아 다른 `doc_id` 아래에 있으므로 **그 `new_doc_id` 위에서 같은 판단을 다시 내리면** 되지만,
 # `row_replaced` 는 행도 `reviewed_by` 도 그대로인 채 그 `doc_id` 가 **담고 있는 대장 행**이 바뀐 것이라
-# 다시 판단할 새 `doc_id` 자체가 없고, CM 이 먼저 알아야 할 것은 "지금 화면의 승인 상태는 내가 보고
-# 판단한 그 행의 것이 아니다"이다.
+# 다시 판단할 새 `doc_id` 자체가 없고, CM 이 먼저 알아야 할 것은 "내 판단이 붙어 있는 대상이 움직였다"는
+# 사실이다. **그 승인 상태가 실제로 달라졌는지는 `approval_flipped` 만 답한다** — 개정 3 이전에는 이
+# 자리에서 "지금 화면의 승인 상태는 내가 보고 판단한 그 행의 것이 아니다"라고 단정했는데, 대장이 같은 행의
+# 표기를 스스로 고친 경로(V8a·V8b)와 `changed_fields` 도 비는 경로(P13b)에서 그 말은 거짓이다
+# (ADR 0009 §5-3-b — `_identity_drift_clause` 의 세 갈래).
 #
 # **개정 2에서 셋 다 이름을 바꿨다(ADR 0009 §5-2 (마)).** 옛 이름은 전부 관측과 어긋나 있었다 —
-#   `orphaned`          → `row_moved`    : 시트명 변경 경로는 `moved=9` 인데 그 행들이 **고아가 아니다**
+#   `orphaned`          → `row_moved`    : 시트명 변경 경로는 `moved=8` 인데 그 행들이 **고아가 아니다**
 #                                          (실측 P3 `is_orphaned=False`). 판정은 고아를 보지 않는데 이름만 고아였다.
 #   `merge_overwritten` → `row_replaced` : 새 조건이 잡는 주 경로에는 **병합이 없다**(실측 R1 `merged=0`).
 #                                          병합이라 적으면 CM 이 있지도 않은 충돌 묶음을 찾는다.
@@ -638,10 +641,12 @@ def _decision_counts(lost: Sequence[LostDecision]) -> tuple[int, int, int]:
 def _particle(word: str, after_batchim: str, after_vowel: str) -> str:
     """앞말의 **받침 유무**로 조사를 고른다(`이/가`, `은/는`, `을/를`, `과/와`).
 
-    이 모듈이 조사를 붙이는 값 중 **변하는 것은 `changed_fields` 라벨 하나뿐**이다 — 그 라벨은
+    이 모듈이 조사를 붙이는 값은 둘 다 **런타임에 갈린다**. ① `changed_fields` 라벨 —
     `발신`(받침 O) · `제목`(받침 O) · `번호`(받침 X) · `문서번호`(받침 X)로 갈리므로 조사를 문자열에
-    고정하면 절반이 틀린다(실측: "발신가 달라졌습니다"). 고정 명사에 붙은 조사(`…건이`, `…건은`)는
-    앞말이 늘 `건`이라 이미 맞으므로 이 함수를 태우지 않는다.
+    고정하면 절반이 틀린다(실측: "발신가 달라졌습니다"). ② `changed_fields` 가 빈 `row_replaced` 절이
+    값에서 유도하는 행-내용 라벨(`처리결과 표기` · `승인 상태` · 둘 다). 지금은 셋 다 받침이 없지만
+    라벨이 바뀌면 같은 자리에서 같은 실수가 나므로 이 함수를 태운다. 고정 명사에 붙은 조사
+    (`…건이`, `…건은`)는 앞말이 늘 `건`이라 이미 맞으므로 태우지 않는다.
 
     한글 음절 범위(가~힣) 밖이면 **받침이 있는 쪽**을 쓴다. 그 자리에 오는 값은 생산자가 우리가 모르는
     필드 이름을 원문 그대로 실어 보낸 경우(예: `result_raw`)뿐이고, 그때는 라벨을 아는 척 번역하지
@@ -687,7 +692,7 @@ def _identity_drift_clause(cause: str, lost: Sequence[LostDecision], drift: Iden
     쓰는 재료는 그 경위가 실제로 싣는 값뿐이다 — `row_moved` 는 `new_doc_id`(있다)와 `drift.moved`,
     `row_replaced` 는 `changed_fields`·`approval_flipped`(그리고 `new_doc_id` 가 없다는 사실),
     `row_absorbed` 는 `new_doc_id`. **어느 절에도 "고아"·"병합"은 쓰지 않는다**(ADR 0009 §5-3 개정 2):
-    판정이 둘 다 보지 않으므로 문구가 알 수 없는 말이다. 시트명 변경 경로는 `moved=9` 인데
+    판정이 둘 다 보지 않으므로 문구가 알 수 없는 말이다. 시트명 변경 경로는 `moved=8` 인데
     `is_orphaned=False` 이고(P3), `row_replaced` 의 주 경로는 `merged=0` 이다(R1)."""
     total, confirmed, rejected = _decision_counts(lost)
     counted = f"CM 판단 {total}건(확정 {confirmed} · 반려 {rejected})"
@@ -697,7 +702,7 @@ def _identity_drift_clause(cause: str, lost: Sequence[LostDecision], drift: Iden
         # 한정어 역방향 확인 — 이 절에는 "내용도 함께 바뀌었을 때만" 같은 한정어를 두지 않는다. 그 단어를
         # 넣으면 승인 상태가 **우연히 같은** 다른 행으로 바뀐 경우가 문구 밖으로 나가고, 그때도 CM 의
         # 확정은 자기가 보지 않은 도면에 붙어 있다(ADR 0009 §5-2 (바) P6·P7 판단 2). `approval_flipped`
-        # 는 발화를 가르지 않고 **문장의 순서만** 가른다.
+        # 는 발화를 가르지 않고 **문장의 순서와 표현만** 가른다(아래 세 갈래 — ADR 0009 §5-3-b).
         parts: list[str] = []
         flipped = {d["doc_id"] for d in lost if d["approval_flipped"]}
         if flipped:
@@ -714,10 +719,50 @@ def _identity_drift_clause(cause: str, lost: Sequence[LostDecision], drift: Iden
         else:
             # 역방향 확인 — `changed_fields` 가 비면 대장 원문 네 필드는 그대로다(ADR 0009 §5-2 (나-ii)로만
             # 걸린 경우). 그때 "다른 대장 행으로 바뀌었다"고 적으면 관측하지 못한 것을 단정하는 것이다.
+            # **무엇이 달라졌는지도 값에서 읽는다**(ADR 0009 §5-3-b 곁가지 관찰). (나-ii)는 행-내용
+            # `(result_raw, approval_status)` 중 **어느 한쪽**만 달라져도 발화하므로, 늘 "처리결과·승인
+            # 상태"라고 적으면 승인 상태가 그대로인 적재에서 CM 은 자기 승인 근거가 움직였다고 읽는다
+            # (실측 P13b: 행-정체가 같은 두 행의 처리결과가 `반려`/`부적합` — 둘 다 `REJECTED` 라
+            # `approval_flipped=False`). 이 분기의 전제상 원문 네 필드는 그대로이므로, 뒤집히지 않은
+            # 항목에서 달라질 수 있는 것은 `result_raw` 뿐이다.
+            contents = []
+            if any(not d["approval_flipped"] for d in lost):
+                contents.append("처리결과 표기")
+            if flipped:
+                contents.append("승인 상태")
+            changed_contents = "·".join(contents)
             parts.append(f"CM 이 판단한 문서 {documents}건은 대장 원문(발신·문서번호·번호·제목)이 그대로인데, "
-                         "그 doc_id 가 담은 내용(처리결과·승인 상태)이 달라졌습니다")
-        parts.append(f"{counted}이 그 문서에 걸려 있고, 화면의 승인 상태는 CM 이 보고 판단한 그 대장 행의 "
-                     "것이 아닙니다")
+                         f"그 doc_id 가 담은 {changed_contents}"
+                         f"{_particle(changed_contents, '이', '가')} 달라졌습니다")
+        # 한정어 역방향 확인(ADR 0009 §5-3-b) — 이 문장은 개정 2 까지 **한정어 없이** "화면의 승인 상태는
+        # CM 이 보고 판단한 그 대장 행의 것이 아닙니다"로 붙었고, 이 절에서 **유일하게 역방향 확인이 없던
+        # 자리**였다("모든 row_replaced 에 공통으로 참"이라고 여겨 건너뛴 자리다. CLAUDE.md §6-3 은
+        # 한정어를 **빼는** 방향도 확인 대상이라고 적는다). 그 단정이 거짓인 적재가 실제로 있다:
+        # ① 대장이 **같은 행의** 표기를 스스로 고친 경로(V8a·V8b·P8b·FP1 — `approval_flipped=False`,
+        # `drawing_approval` 0.0 → 0.0, `is_orphaned=False`), ② 행-정체가 같은 두 행의 처리결과가
+        # `반려`/`부적합` 이라 둘 다 `REJECTED` 인 경로(P13b — `changed_fields=[]` 이면서
+        # `approval_flipped=False`). 둘 다 승인 상태 **값**은 CM 이 판단할 때와 한 글자도 다르지 않다.
+        # 이 오탐들을 남기기로 한 근거가 "대가는 부수 효과 없는 확인 요청 1건"인데(§5-2 (바)), 요청
+        # 본문이 "네가 본 승인 상태가 그 행의 것이 아니다"라고 말하면 CM 은 도면을 다시 연다 — 대가가
+        # **CM 의 도면 재확인 1회**가 되어 그 결정의 전제가 깨진다.
+        # 반대 방향도 확인했다 — 이것을 **발화** 게이트로 올리면 §5-2 (바) 근거 2 가 일부러 표 안에 남긴
+        # 변종(승인 상태가 **우연히 같은** 다른 행으로 바뀐 경우)이 다시 밖으로 나간다. 그래서 발화는
+        # 그대로 두고(`lost_decisions` 불변) **문장의 표현만** 가른다. 근거는 `approval_flipped` 뿐이다:
+        # `changed_fields` 는 "무엇이" 달라졌는지만 답해 대장측 오타 정정(V8a `['sender']`)과 행 교체
+        # (V7a `['sender','doc_number']`)를 가르지 못하고, `new_doc_id` 는 이 경위에서 **언제나 `None`**
+        # 이라 "다시 판단할 곳이 있는가"에만 답한다.
+        if flipped:
+            parts.append(f"{counted}이 그 문서에 걸려 있고, 그 판단은 지금 화면에 떠 있는 승인 상태와 "
+                         "다른 값 위에서 내려졌습니다")
+        elif fields:
+            parts.append(f"{counted}이 그 문서에 걸려 있고, 승인 상태 값 자체는 CM 이 판단할 때와 같습니다 — "
+                         "달라진 것은 이 doc_id 가 담고 있는 대장 원문이고, 대장이 같은 행을 고쳐 적은 "
+                         "것인지 다른 행으로 바뀐 것인지는 이번 적재의 값으로 가릴 수 없습니다")
+        else:
+            # 역방향 확인 — 여기서 "달라진 것은 대장 원문"이라고 적으면 `changed_fields == []` 가 말하는
+            # 바로 그 사실(원문 네 필드는 그대로)을 뒤집는 거짓이 된다. 위 `else` 분기가 이미 무엇이
+            # 달라졌는지 적었으므로 이 절은 승인 상태만 말한다(ADR 0009 §5-3-b 결정표 셋째 줄).
+            parts.append(f"{counted}이 그 문서에 걸려 있고, 승인 상태 값은 CM 이 판단할 때와 같습니다")
         if not any(d["new_doc_id"] for d in lost):
             # 역방향 확인 — "없다"를 **값에서** 읽는다. 경위 이름만 보고 단정하면, 생산자가 언젠가
             # `new_doc_id` 를 싣기 시작했을 때 문구만 거짓으로 남는다.
@@ -757,7 +802,7 @@ def _identity_drift_review_title(drift: IdentityDriftReport) -> str:
 
     **개정 2 — 그 정정판(개정 1)의 제목도 두 군데가 거짓이었다**(ADR 0009 §5-3). ① 옛 `orphaned` 절이
     "고아 문서에 남았습니다"라고 적는데, 판정은 §5-2 (가)에서 이미 고아를 보지 않기로 고쳤고 시트명 변경
-    경로의 옛 행은 실제로 고아가 되지 않는다(실측 P3 `moved=9`, `is_orphaned=False`). ② 옛
+    경로의 옛 행은 실제로 고아가 되지 않는다(실측 P3 `moved=8`, `is_orphaned=False`). ② 옛
     `merge_overwritten` 절이 "서로 다른 대장 행이 한 doc_id 로 **병합**돼"로 시작하는데, 새 조건이 잡는 주
     경로에는 병합이 없다(실측 R1 `merged=0`) — CM 이 있지도 않은 충돌 묶음을 찾게 된다.
 

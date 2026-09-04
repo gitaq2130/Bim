@@ -136,8 +136,11 @@ def test_row_replaced_reads_whether_there_is_a_new_doc_id_from_the_value(session
     with_new = _title_for(session, _replaced(new_doc_id="doc-v1-0123456789abcdef"))
 
     assert without != with_new, without          # 값이 갈리는데 제목이 같다 = 값을 읽지 않는다
-    assert "없습니다" in without, without         # 정말 없을 때는 없다고 말한다
-    assert "없습니다" not in with_new, with_new   # 있을 때 "없다"는 이 자리에서 참일 수 없는 말이다
+    # 표지는 이 문장 **전체**여야 한다. 부분열 "없습니다" 로 걸면 ADR §5-3-b 가 새로 만든 갈래 2
+    # 문장("…가릴 수 없습니다")에 걸려, 이 자리와 무관한 문면 변경이 이 테스트를 깨뜨린다.
+    _NO_NEW_DOC_ID = "다시 판단할 새 doc_id 는 없습니다"
+    assert _NO_NEW_DOC_ID in without, without          # 정말 없을 때는 없다고 말한다
+    assert _NO_NEW_DOC_ID not in with_new, with_new    # 있을 때 "없다"는 이 자리에서 참일 수 없는 말이다
 
 
 def test_causes_are_written_in_the_dangerous_order(session) -> None:
