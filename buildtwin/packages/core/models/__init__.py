@@ -42,6 +42,7 @@ from .state import (
                        Actor,
                        InvalidTransitionError,
                        ObjectState,
+                       RevocationReasonRequiredError,
                        StateTransition,
                        UserRole,
                        allowed_targets,
