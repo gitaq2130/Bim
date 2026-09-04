@@ -382,7 +382,11 @@ function ActionsTab({ d, projectId }: { d: ObjectDetail; projectId?: string }) {
         title={pending?.label ?? ""}
         message={
           pending && isConfirmAction(pending)
-            ? "이 객체를 '확정(CONFIRMED)' 상태로 전이합니다. CM 승인 행위로 기록되며 되돌리려면 사유가 필요합니다."
+            ? // ADR 0011 규칙 3 1단계: 옛 문구의 "되돌리려면 사유가 필요합니다"는 거짓이었다 —
+              // 되돌리기 경로는 실재하지만(state.py 의 (CONFIRMED,MISMATCH)·(CONFIRMED,IN_PROGRESS))
+              // 사유 없이도 201 로 통과한다. 지금 참인 것만 남긴다: 이탈 actor 가 cm 으로 묶여 있다는 것
+              // (state.py `leaving CONFIRMED requires actor=cm`). 사유 요건이 실제로 서면 3단계에서 갱신한다.
+              "이 객체를 '확정(CONFIRMED)' 상태로 전이합니다. CM 승인 행위로 기록되며, 이 확정은 CM 만 되돌릴 수 있습니다."
             : pending?.to_state
               ? `'${STATE_LABELS_KO[pending.to_state]}' 상태로 전이를 요청합니다.`
               : undefined

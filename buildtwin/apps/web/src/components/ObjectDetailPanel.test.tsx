@@ -189,3 +189,85 @@ describe("ObjectDetailPanel", () => {
     expect(alert).not.toHaveTextContent("ambiguous");
   });
 });
+
+/**
+ * ADR 0011 규칙 3 / CLAUDE.md §6-4 — 확정 다이얼로그 문구는 "CM 이 다음 행동을 고르는 유일한 입력"이다.
+ *
+ * 옛 문구는 "되돌리려면 **사유가 필요합니다**"라고 말했는데, 실측(ADR 0011 §2)에서 `CONFIRMED→MISMATCH`
+ * 가 note 없이 201 로 통과하고 감사 이력에 `note: None` 이 남았다. 되돌리기 **경로**는 실재하므로
+ * 거짓인 것은 사유 요건 쪽이다.
+ *
+ * §6-4 3 대로 **문장을 통째로 베끼지 않는다** — 베끼면 거짓 문구가 계약이 된다. 대신 "그 상황에서
+ * 참일 수 없는 말이 없다"를 단언한다: 확정 다이얼로그가 사유 요건을 말한다면, 같은 화면의 되돌리기
+ * 다이얼로그가 **실제로** 그것을 강제해야 한다. 두 사실을 함께 단언하므로(§6-2 4) 1단계(문구만 정정)와
+ * 3단계(requireNote 도입 후 문구 갱신) 양쪽에서 참이고, 지금의 결함 상태에서만 죽는다.
+ */
+const NOTE_REQUIRED_CLAIM = /사유(가 필요|가 있어야|를 남겨|를 입력|를 적어| 필수)/;
+
+const confirmedDetail = {
+  ...objectDetailFixture,
+  basic: { ...objectDetailFixture.basic, state: "CONFIRMED" },
+  current_state: { ...objectDetailFixture.current_state, state: "CONFIRMED", actor: "cm", actor_id: "user-cm" },
+  next_actions: [
+    { kind: "revoke_confirmation", label: "확정 취소", allowed_roles: ["cm"], to_state: "MISMATCH" },
+    { kind: "order_rework", label: "재시공 지시", allowed_roles: ["cm"], to_state: "IN_PROGRESS" },
+  ],
+};
+
+describe("확정 다이얼로그 문구 ↔ 되돌리기의 사유 요건 (ADR 0011)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetStore();
+  });
+
+  /** 두 프로젝트를 한 목 안에서 가른다 — 상세 URL 은 같고 project_id 쿼리만 다르다(ADR 0005). */
+  function mountBoth() {
+    mockFetch((url) => {
+      if (url.includes(`/api/objects/${encodeURIComponent(GID)}`)) {
+        const pid = new URL(url, "http://x").searchParams.get("project_id");
+        return { body: pid === "pRevert" ? confirmedDetail : objectDetailFixture };
+      }
+      if (url.endsWith("/api/projects/pConfirm")) return { body: { project_id: "pConfirm", name: "P", my_role: "cm" } };
+      if (url.endsWith("/api/projects/pRevert")) return { body: { project_id: "pRevert", name: "P", my_role: "cm" } };
+      return undefined;
+    });
+    return {
+      confirmPanel: renderWithProviders(<ObjectDetailPanel globalId={GID} projectId="pConfirm" />),
+      revertPanel: renderWithProviders(<ObjectDetailPanel globalId={GID} projectId="pRevert" />),
+    };
+  }
+
+  it("정규식 자기 점검 — 옛 거짓 문장을 실제로 잡는다(안 잡으면 아래 단언이 장식이 된다)", () => {
+    expect(NOTE_REQUIRED_CLAIM.test("CM 승인 행위로 기록되며 되돌리려면 사유가 필요합니다.")).toBe(true);
+    expect(NOTE_REQUIRED_CLAIM.test("CM 승인 행위로 기록되며, 이 확정은 CM 만 되돌릴 수 있습니다.")).toBe(false);
+  });
+
+  it("확정 문구가 사유 요건을 말한다면, 같은 화면의 되돌리기 다이얼로그가 그것을 강제해야 한다", async () => {
+    resetStore();
+    loginAs("cm");
+    const user = userEvent.setup();
+    const { confirmPanel, revertPanel } = mountBoth();
+
+    // (1) 확정 다이얼로그의 문구
+    const a = confirmPanel.container;
+    await within(a).findByText("C-12", { selector: "strong" });
+    await user.click(within(a).getByRole("tab", { name: "다음행동" }));
+    await user.click(await within(a).findByRole("button", { name: "확정" }));
+    const confirmMessage = (await within(a).findByTestId("confirm-message")).textContent ?? "";
+    expect(confirmMessage).toContain("CONFIRMED");
+
+    // (2) 같은 화면의 되돌리기 다이얼로그가 사유를 강제하는가
+    const b = revertPanel.container;
+    await within(b).findByText("C-12", { selector: "strong" });
+    await user.click(within(b).getByRole("tab", { name: "다음행동" }));
+    await user.click(await within(b).findByRole("button", { name: "확정 취소" }));
+    const revertDialog = within(b).getByRole("dialog");
+    const revertRequiresNote =
+      (within(revertDialog).getByRole("button", { name: "확정 취소" }) as HTMLButtonElement).disabled &&
+      /필수/.test(within(revertDialog).getByText(/사유 \/ 메모/).textContent ?? "");
+
+    // 함의: 문구가 요건을 약속하면 화면이 그 요건을 실제로 갖고 있어야 한다.
+    expect({ 확정문구가_사유요건을_말한다: NOTE_REQUIRED_CLAIM.test(confirmMessage), 되돌리기가_사유를_강제한다: revertRequiresNote })
+      .not.toEqual({ 확정문구가_사유요건을_말한다: true, 되돌리기가_사유를_강제한다: false });
+  });
+});
