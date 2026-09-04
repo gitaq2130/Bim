@@ -261,7 +261,8 @@ def submit_daily_report(session: Session, project_id: str, payload: DailyReportC
 
 # ------------------------------------------------------------------ documents (ADR 0007)
 def document_view(row: DocumentRow) -> DocumentView:
-    return DocumentView(**db.document_row_to_model(row).model_dump(), imported_at=row.imported_at)
+    return DocumentView(**db.document_row_to_model(row).model_dump(), imported_at=row.imported_at,
+                       identity_fingerprint=row.identity_fingerprint)
 
 
 def document_detail(session: Session, project_id: str, doc_id: str) -> DocumentDetail:

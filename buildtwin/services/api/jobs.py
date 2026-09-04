@@ -11,6 +11,8 @@
 - document_register : xlsx → progress.importers.document_register.import_document_register(파싱)
                 → ingest.persistence.persist_document_register_import(적재·재업로드·orphan 규칙)
                 → progress.document_mapper.map_project_documents(문서↔Activity 매핑 후보, 항상 needs_review=True)
+                → progress.document_mapper.open_identity_drift_review(식별 드리프트가 CM 판단을 고아로 만든
+                  경우에만 검토요청 1건 — ADR 0009 §5-2·§5-3)
                 (ADR 0007 §2·§4). 헤더/필수 컬럼을 못 찾아 **어떤 시트도** 읽지 못하는 경우(422
                 `document_register_invalid`)는 이 잡 실행 전에 업로드 라우트가 동기적으로 걸러낸다
                 (routers/files.py — 이 코드는 HTTP 응답이라 비동기 잡 결과로는 표현할 수 없다). 이 러너는
@@ -238,17 +240,35 @@ def run_schedule(session: Session, job: JobRow, file_row: FileRow, options: dict
 
 
 def run_document_register(session: Session, job: JobRow, file_row: FileRow, options: dict[str, Any]) -> tuple[str, dict[str, Any], list[dict]]:
-    """대장 xlsx → Document 적재 → 문서↔Activity 매핑 후보(ADR 0007 §2·§4). 세 서비스 함수를 순서대로 호출만
-    한다(CLAUDE.md §3 규칙 11) — 정규화·재업로드/orphan 규칙·매핑 판정은 모두 그 함수들이 소유.
+    """대장 xlsx → Document 적재 → 식별 드리프트 검토요청 → 문서↔Activity 매핑 후보(ADR 0007 §2·§4,
+    ADR 0009 §5-2·§5-3). 네 서비스 함수를 순서대로 호출만 한다(CLAUDE.md §3 규칙 11) — 정규화·재업로드/
+    orphan 규칙·드리프트 판정·매핑 판정·큐 등재 조건은 모두 그 함수들이 소유.
     "어떤 시트도 못 읽음"(422 document_register_invalid) 가드는 업로드 라우트가 이미 통과시켰으므로 여기서는
-    다시 검사하지 않는다(재업로드 경쟁을 생각해도, 그 사이 파일이 바뀔 수 없다 — file_id 는 불변 저장 파일이다)."""
+    다시 검사하지 않는다(재업로드 경쟁을 생각해도, 그 사이 파일이 바뀔 수 없다 — file_id 는 불변 저장 파일이다).
+
+    드리프트 검토요청은 `map_project_documents` **앞**에서 만든다. `persisted.identity_drift.lost_decisions`
+    는 매핑 재계산 이전의 관측이고, 그 관측을 만든 함수 바로 다음에 소비하는 편이 읽기 쉽다. 두 호출은 같은
+    세션·같은 트랜잭션이라 순서를 바꿔도 결과는 같다(어느 쪽이 던져도 잡 전체가 실패·롤백된다)."""
     from services.ingest.persistence import persist_document_register_import
-    from services.progress.document_mapper import map_project_documents
+    from services.progress.document_mapper import map_project_documents, open_identity_drift_review
     from services.progress.importers.document_register import import_document_register
 
     path = _file_path(file_row)
     import_result = import_document_register(path, job.project_id, file_row.file_id, file_uri=file_row.uri)
     persisted = persist_document_register_import(session, job.project_id, file_row.file_id, import_result)
+    # ADR 0009 §5-2·§5-3 — 식별 드리프트를 CM 검토 큐로 올린다. 여기가 **유일한 호출자**다: 판정은 ingest 가
+    # 이미 끝냈고(`persisted.identity_drift`), "큐에 올릴 만한 사건인가"(잃어버린 사람의 판단이 실제로 있는가)
+    # 는 `open_identity_drift_review` 가 정한다 — 비어 있으면 None 을 돌려주고 아무것도 만들지 않는다.
+    # api 는 둘을 잇기만 한다(CLAUDE.md §3 규칙 11: 판정을 여기 복제하지 않는다).
+    #
+    # **경고를 여기서 다시 만들지 않는다**(계획 0003 §3-f 두 줄은 이 점에서 틀렸다). 계획의
+    # `if persisted.identity_drift is not None: warnings.append(_warning("DOCUMENT_IDENTITY_DRIFT", ...))` 는
+    # ① 병합만 관측된 적재(moved=0, merged=1)에도 DRIFT 라벨을 붙이고(그건 COLLISION 이다)
+    # ② `services/ingest/persistence.py` 가 이미 발화한 같은 사건을 두 번 내보낸다
+    # (config/document_register.yaml 의 두 code 주석이 발화 주체를 그 모듈로 지정한다 — 그 경고들은
+    #  `persisted.warnings` 를 타고 바로 위 줄에서 이미 job 경고가 된다). 대신 아래 summary 에 카운트만 싣는다.
+    drift = persisted.identity_drift
+    drift_review_id = open_identity_drift_review(session, job.project_id, drift) if drift is not None else None
     sync = map_project_documents(session, job.project_id)
     warnings = [_warning("DOCUMENT_REGISTER_WARNING", w) for w in persisted.warnings]
     warnings.extend(sync.warnings)   # "어떤 Activity 에도 매핑되지 않은 문서" 경고(progress 가 만든다)
@@ -256,7 +276,14 @@ def run_document_register(session: Session, job: JobRow, file_row: FileRow, opti
                "mapping_count": len(sync.mappings),
                "mapping_needs_review_count": sum(1 for m in sync.mappings if m.needs_review),
                "created_review_count": len(sync.created_review_ids),
-               "closed_review_count": len(sync.closed_review_ids)}
+               "closed_review_count": len(sync.closed_review_ids),
+               # 잡 결과 **숫자만** 보고도 드리프트를 알 수 있어야 한다(계획 0003 §3-f). 보고서 전문은
+               # `identity_drift`(persisted.model_dump 가 이미 싣는다)에 있고, 이 셋은 그 요약이다.
+               # 관측이 없으면 0 — 키가 나타났다 사라졌다 하면 소비자가 `.get()` 마다 분기해야 한다.
+               "identity_drift_moved": len(drift.moved) if drift else 0,
+               "identity_drift_merged": len(drift.merged) if drift else 0,
+               "identity_drift_lost_decisions": len(drift.lost_decisions) if drift else 0,
+               "identity_drift_review_id": drift_review_id}
     return "done", summary, warnings
 
 

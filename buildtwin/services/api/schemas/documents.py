@@ -11,8 +11,17 @@ from packages.core.models.document import ActivityDocumentMapping, Document
 
 class DocumentView(Document):
     """`Document` + `imported_at`(대장 마지막 적재 시각 — ADR 0007 Consequences: "언제 기준 데이터인가"를
-    화면에 노출한다). ORM 전용 필드라 코어 `Document` 모델에는 없다."""
+    화면에 노출한다) + `identity_fingerprint`. 둘 다 **적재 단위** 값이라 행 단위 코어 모델(`Document`)에는
+    없고 `DocumentRow` 에만 있다 — 같은 방식으로 여기서만 얹는다.
+
+    `identity_fingerprint`(ADR 0009 §5-2)는 이 행을 쓴 적재가 사용한 식별 표면 지문이다. 한 프로젝트의
+    문서에 서로 다른 지문이 섞여 있으면 그 사이에 `doc_id` 재료 config(`sender_aliases`·`sheet_doc_types`·
+    `column_aliases`)가 바뀐 것이므로, 드리프트 검토요청의 `previous_fingerprint`/`current_fingerprint` 를
+    화면에서 실제 문서와 맞춰 볼 수 있다. ADR 0009 이전에 쓰인 행에는 없다(`None`).
+
+    `title_identity` 는 코어 `Document` 에 있어 상속으로 이미 실린다(여기서 다시 선언하지 않는다)."""
     imported_at: datetime | None = None
+    identity_fingerprint: str | None = None
 
 
 class DocumentList(BaseModel):
