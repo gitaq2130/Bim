@@ -1,0 +1,14 @@
+{
+  "id": "construction",
+  "label": "건설현장 발주처–PM단(CM단) 회의",
+  "docTitle": "회 의 록",
+  "roles": {
+    "emphasis": "발주처",
+    "known": ["발주처", "PM단", "설계사", "시공사"],
+    "colors": { "emphasis": "C00000", "other": "1F4E79" }
+  },
+  "quorum": { "enabled": false },
+  "resolution": { "enabled": false },
+  "legalBasis": null,
+  "notes": "발주처 지시사항을 빨강 볼드로 구분하는 것이 이 서식의 핵심."
+}
