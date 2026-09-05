@@ -1476,18 +1476,29 @@ blocker 와 데이터 모양·결과가 같다 — 행도 `reviewed_by` 도 살�
    아니다**. 바뀌는 것은 **누가 열거를 유지하는가**이고, 답은 사람이 아니다.
 
    **열거를 대신하는 것: `tests/invariants/test_identity_drift_cause_contract.py`**(계획 0005 작업 8, qa).
-   그 파일은 값을 다시 적지 않고 정본을 import 해 비교하며, `apps/web/src` **전수**를 훑어
-   `cause === "…"` 비교 자리가 감사 목록과 어긋나면 그 파일 이름을 대고 실패한다
-   (`test_web_source_tree_has_no_unaudited_cause_literal`). 새 경위를 추가하거나 이름을 바꾸는 변경이
-   함께 고쳐야 할 자리를 **이 항목이 아니라 그 테스트가** 말한다.
+   그 파일은 값을 다시 적지 않고 정본을 import 해 비교하며, `apps/web/src` **전수**를 **두 축으로** 훑는다
+   — 축마다 무엇이 밖인지가 곧 그 축의 정의이고, 두 축은 서로의 밖을 메우므로 둘 다 남는다:
 
-   **감사가 무엇을 잡는가 — 심어 보고 잰 값**(2026-09-05, 작업 트리 `/home/user/Bim/buildtwin`,
-   전량 기준선 `781 passed`. 각 심기 뒤 저장소 루트 `git status --porcelain` 이 빈 출력임을 확인했다):
+   - **비교 자리 목록**(`test_web_source_tree_has_no_unaudited_cause_literal`) — `cause` 와 문자열 리터럴이
+     한 줄에서 **등호로 마주 보는 모양** 하나만 본다. 그 모양 밖으로 값을 소비하는 새 화면은 이 칸에서
+     **이름조차 불리지 않는다**. 대신 얻는 것이 조기 경보다: 그 모양으로 정본 **안** 값만 쓰는 새 화면도
+     개명이 일어나기 **전에** 이름으로 부른다.
+   - **값 토큰 == 정본**(`test_web_source_tree_declares_no_cause_value_outside_canon`, 심사 major-3 이 열었다)
+     — 모양을 묻지 않고 비테스트 웹 소스의 `row_` 토큰을 정본과 등호로 비교한다. 모양 축 밖의 소비도
+     여기서 죽지만, `row_` 로 시작하지 않는 새 이름은 이 축 밖이다.
+
+   새 경위를 추가하거나 이름을 바꾸는 변경이 함께 고쳐야 할 자리를 **이 항목이 아니라 그 테스트가** 말한다.
+
+   **감사가 무엇을 잡는가 — 심어 보고 잰 값**(2026-09-05 **재측**, HEAD `788223f`, 전량 기준선
+   `783 passed`. 각 심기 뒤 저장소 루트 `/home/user/Bim` 에서 `git status --porcelain` 이 빈 출력임을
+   확인했다. 앞선 판은 같은 두 결함을 전량 기준선 781 passed 에서 쟀고 첫 행에 `7 failed` 라 적었는데,
+   그 값은 심사 major-3 이 더한 **값 축 칸을 세지 못한 값**이다):
 
    | 심은 결함 | 감사 밖 | 감사 |
    |---|---|---|
-   | 파이썬만 일관 개명(`row_absorbed` → `row_relocated`; 생산·소비·파이썬 테스트 전부, TS·yaml 그대로) | 감사 제외 pytest 전량 **746 passed** · vitest 전량 **268 passed** | **7 failed** |
-   | 정본에서 뗀 같은 값 재선언(`_CAUSE_ROW_ABSORBED = "row_absorbed"`) | 감사 제외 pytest 전량 **746 passed**(값이 같으므로 어떤 단언도 달라지지 않는다. 감사 도입 전 전량은 **738 passed**) | **2 failed** — `test_python_alias_sites_declare_no_literal_of_their_own[persistence.py]`, `test_python_alias_values_equal_canon_at_runtime` |
+   | 파이썬만 일관 개명(`row_absorbed` → `row_shifted`; 정본과 그 값을 적은 파이썬 테스트, TS·yaml 그대로) | 감사 제외 pytest **746 passed**(실패 0) · vitest **268 passed**(실패 0) | **8 failed, 775 passed** — 실패는 전부 이 감사 파일 안 |
+   | 같은 개명이되 새 이름을 감사의 자기검증 씨앗(`SEED_TO = "row_relocated"`)으로 고르면 | 위와 같다 | **9 failed, 774 passed** — 늘어난 하나는 결함이 아니라 `test_web_source_scan_sees_the_shapes_the_comparison_axis_misses` 다(씨앗이 정본 안으로 들어오면 seeded divergence 가 divergence 가 아니다) |
+   | 정본에서 뗀 같은 값 재선언(`services/ingest/persistence.py` 의 `_CAUSE_ROW_ABSORBED = "row_absorbed"`) | 감사 제외 pytest **746 passed**(실패 0 — 값이 같으므로 감사 밖의 어떤 단언도 달라지지 않는다. 감사 도입 전 전량은 **738 passed**) | **2 failed, 781 passed** — `test_python_alias_sites_declare_no_literal_of_their_own[persistence.py]`, `test_python_alias_values_equal_canon_at_runtime` |
 
    첫 행이 이 항목이 존재한 이유다: 파이썬 안에서 일관되기만 하면 파이썬 검사도 웹 검사도 전부 초록인데,
    그 제품은 서버가 보낸 값을 `SERVER_CAUSE_TO_LOCAL` 이 찾지 못해 **모든 항목을 "경위 미상"으로**
@@ -1516,6 +1527,37 @@ blocker 와 데이터 모양·결과가 같다 — 행도 `reviewed_by` 도 살�
       감사에 넣으면 감사가 정본을 거짓으로 만든다.
    ⑤ **값 집합만 비교하고 의미는 비교하지 않는다.** 두 이름을 서로 맞바꾸는 개명은 **모든 칸을 통과한다.**
       이것이 이 감사의 가장 큰 구멍이고, 값 대조로는 닫히지 않는다.
-   ⑥ 파일 목록의 자동 유지는 **`apps/web/src` 의 비교 자리에만** 있다. 파이썬 별칭 자리와
+   ⑥ 파일 목록의 자동 유지는 **`apps/web/src` 를 훑는 두 축에만** 있다. 파이썬 별칭 자리와
       `config/document_register.yaml` 은 감사가 경로를 손으로 적고, 그 경로에 없는 **새 파일**은 밖이다
       (파일이 옮겨지면 추출이 공집합이 되는 대신 그 자리에서 죽도록 존재 단언이 앞에 있다).
+   ⑦ **비교 자리 전수 칸의 축은 모양 하나다.** `cause` 와 문자열 리터럴이 한 줄에서 등호로 마주 보는
+      그 모양 **밖으로** 값을 소비하는 새 화면은 그 칸에서 **이름조차 불리지 않는다**(심사 major-3 이
+      연 구멍). 그래서 축을 **모양이 아니라 값으로** 넓혀 값 토큰 칸을 더했다 — 모양을 열거해 넓히지
+      않은 이유는 §6-1 그대로 **열거가 곧 그 열거의 한계**이기 때문이다(다음 모양이 다시 밖으로 나간다).
+      두 축의 진리표를 실행으로 태웠다(2026-09-05, HEAD `788223f`, 기준선 `.venv/bin/pytest -q
+      tests/invariants` → **104 passed**. 각 심기는 `apps/web/src/pages/__ArchProbe.tsx` 한 파일이고,
+      심기 전후로 저장소 루트 `/home/user/Bim` 의 `git status --porcelain` 이 빈 출력임을 확인했다):
+
+      | 심은 것 | 결과 | 어느 축이 봤나 |
+      |---|---|---|
+      | 모양 **밖** + 정본 **밖** 값 — `switch (item.cause) { case "row_moved": … case "row_vanished": … }` | **1 failed, 103 passed** | 값 축만(`test_web_source_tree_declares_no_cause_value_outside_canon`) |
+      | 모양 **안** + 정본 **안** 값 — `item.cause === "row_moved"` | **1 failed, 103 passed** | 비교 축만(`test_web_source_tree_has_no_unaudited_cause_literal`) — 개명 **전**에 울리는 조기 경보가 여기다 |
+      | 모양 **밖** + `row_` 로 시작하지 않는 새 이름 — `case "sheet_vanished"` | **104 passed** | 둘 다 침묵(아래 ⓐ) |
+
+      *역방향 확인 — 값 축이 넓히면서 미는 것.*
+        ⓐ `row_` 로 시작하지 않는 새 이름은 못 본다(③ 과 같은 한계이고, 위 표 3행이 그 실측이다).
+        ⓑ 비테스트 웹 소스의 **주석**이 개명 전 이름을 보존하면 이 칸이 죽는다. `docs/`(④)와 달리 코드
+           트리에는 그 보존을 허용하지 않는 결정이다 — 주석에 남은 옛 이름과 "개명이 닿지 않은 코드"를
+           이 축은 구별할 수 없고, 후자가 훨씬 비싸다.
+        ⓒ **테스트 파일은 제외한다** — `unspecified` 폴백을 태우려면 정본 밖 값을 일부러 심어야 한다.
+        ⓓ 값이 정본 안이기만 하면 새 파일은 값 축에서 이름 불리지 않는다. 다만 개명이 실제로 일어나는
+           순간 그 파일에 옛 이름이 남으므로 그때 이 칸이 파일 이름을 댄다 — 값 축은 경보를 **harm
+           시점으로 늦출 뿐 harm 을 놓치지는 않는다**. 비교 자리 칸을 넓히면서도 지우지 않은 이유가 그
+           시차다(위 표 2행).
+
+      *이 서술이 낡으면 무엇이 먼저 죽는가.* "모양 하나"는 감사의 비교 정규식에 매인 단정이라 그 정규식이
+      넓어지는 날 낡는다. 그 자리를 지키는 것이
+      `test_web_source_scan_sees_the_shapes_the_comparison_axis_misses` 다 — 실측(임시로 비교 정규식에
+      `case "…"` 를 더해 태움): `.venv/bin/pytest -q tests/invariants` → **3 failed, 101 passed** 이고
+      그중 그 테스트가 "머리말 ⑥ 의 '한 모양뿐'이 낡았다"는 메시지로 죽는다. 그러므로 이 문단은 사람이
+      유지하지 않는다 — 정규식을 넓히는 사람이 그 실패로 이 문단을 고치라는 말을 듣는다.
