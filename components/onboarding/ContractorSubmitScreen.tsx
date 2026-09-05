@@ -36,7 +36,7 @@ export default function ContractorSubmitScreen({
         <input
           value={draft.companyName}
           onChange={(e) => updateDraft({ companyName: e.target.value })}
-          placeholder="예: 동부건설"
+          placeholder="예: 한빛건설"
           className="h-12 w-full rounded-xl border border-line-2 bg-surface-2 px-3.5 text-[15px] text-text placeholder:text-text-3 focus:outline-none"
         />
       </div>

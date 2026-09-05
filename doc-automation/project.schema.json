@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/site-doc-automation/project.schema.json",
+  "title": "현장 프로파일",
+  "description": "문서 자동화 스킬이 현장마다 달라지는 값을 읽어가는 설정 파일. 스킬 본문에는 현장 고유값을 두지 않고 전부 여기에서만 바꾼다.",
+  "type": "object",
+  "required": ["project", "primeContractor"],
+  "additionalProperties": false,
+  "properties": {
+    "project": {
+      "type": "object",
+      "required": ["name", "shortName"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "description": "정식 공사명. 검토서 머리말과 관리대장 제목 행에 그대로 들어간다." },
+        "shortName": { "type": "string", "description": "파일명에 쓰는 약칭." },
+        "siteCode": { "type": "string", "description": "문서번호 가운데 들어가는 현장 코드(예: HG). 문서번호 파싱에 쓴다." },
+        "period": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "원도급 공사기간. 하도급 검토서 고정 항목.",
+          "properties": {
+            "start": { "type": "string" },
+            "end": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "primeContractor": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "description": "원사업자(원도급사).",
+      "properties": {
+        "name": { "type": "string" },
+        "representative": { "type": "string" }
+      }
+    },
+
+    "cm": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "건설사업관리(CM/PM단). 검토서 서명란에 들어간다.",
+      "properties": {
+        "organization": { "type": "string" },
+        "engineer": { "type": "string", "description": "건설사업관리기술자 성명." }
+      }
+    },
+
+    "documentNumber": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "문서번호 체계. 현장마다 토큰 순서가 다르므로 패턴으로 기술한다.",
+      "properties": {
+        "pattern": {
+          "type": "string",
+          "default": "{sender}-{siteCode}-{type}-{trade}-{serial}",
+          "description": "하이픈으로 나뉜 토큰 순서. 파서가 이 순서대로 읽는다."
+        },
+        "types": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "문서 유형 토큰 목록. 관리대장 시트명과 대응한다."
+        }
+      }
+    },
+
+    "ledger": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "문서관리대장 서식. 현장마다 컬럼 위치가 다르다.",
+      "properties": {
+        "headerRow": { "type": "integer", "default": 3 },
+        "dataStartRow": { "type": "integer", "default": 4 },
+        "titleLine1": { "type": "string", "description": "1행 병합셀 문구(예: 승인/검토/참조 요청서(TFA))." },
+        "titleLine2": { "type": "string", "description": "2행 병합셀 문구. 보통 공사명." },
+        "columns": {
+          "type": "object",
+          "description": "컬럼 문자 매핑. 제목 열은 문서 유형마다 다를 수 있어 유형별 지정을 허용한다.",
+          "additionalProperties": {
+            "oneOf": [
+              { "type": "string" },
+              { "type": "object", "additionalProperties": { "type": "string" } }
+            ]
+          }
+        },
+        "fillColumns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "정리본에서 값을 채울 열. 나머지는 비운다(수식 열 보호)."
+        },
+        "highlightColor": { "type": "string", "default": "FFFF00" }
+      }
+    },
+
+    "holidayPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "휴일작업계획서 취합 서식.",
+      "properties": {
+        "sheetName": { "type": "string", "default": "PM단 보고용" },
+        "organizations": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "당직자 열 순서. 이 순서가 곧 출력 열 순서다."
+        },
+        "font": { "type": "string", "default": "굴림체" },
+        "columnWidths": {
+          "type": "object",
+          "additionalProperties": { "type": "number" },
+          "description": "열 문자 → 너비."
+        }
+      }
+    },
+
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "directory": { "type": "string", "default": "/mnt/user-data/outputs/" },
+        "fileNamePrefix": { "type": "string", "description": "생성 파일 접두. 보통 project.shortName." }
+      }
+    }
+  }
+}

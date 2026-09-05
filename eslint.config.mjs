@@ -14,6 +14,12 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     "android/**",
     "artifact/dist/**",
+
+    // 앱과 별개로 도는 스탠드얼론 스크립트. 각자 package.json 과 런타임을
+    // 가지므로 Next.js 앱의 린트 규칙 대상이 아니다.
+    "tools-site/**",
+    "doc-automation/**",
+    "scripts/**",
   ]),
 ]);
 

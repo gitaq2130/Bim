@@ -101,7 +101,7 @@ export default function MyProfilePage() {
 
         <Field label="이름" value={name} onChange={setName} />
         <Field label="직급" value={rank} onChange={setRank} placeholder="예: 현장소장" />
-        <Field label="회사" value={company} onChange={setCompany} placeholder="예: 동부건설" />
+        <Field label="회사" value={company} onChange={setCompany} placeholder="예: 한빛건설" />
         <Field label="파트" value={trade} onChange={setTrade} placeholder="예: 철근공사" />
         <Field label="휴대전화" value={mobile} onChange={setMobile} placeholder="휴대전화를 입력하세요" />
         <Field label="이메일" value={email} onChange={setEmail} placeholder="이메일을 입력하세요" />
