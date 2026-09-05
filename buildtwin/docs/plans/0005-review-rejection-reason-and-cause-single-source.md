@@ -51,6 +51,10 @@ $ cd <SCRATCH>/tree && PYTHONPATH=<SCRATCH>/tree .venv/bin/pytest tests/unit tes
 (둘 다 이 사이클의 산출물이고 architect 소유다 — `CLAUDE.md` 는 과제 3, 계획 문서는 이 파일 자신.
 **코드 변경 0건** — 탐침·절제는 전부 별도 트리에서 했고 작업 트리에 파일을 만들지 않았다.)
 
+**이 문서의 `파일:줄` 참조는 위 트리의 것이다** — HEAD 가 움직여도 갱신하지 않는다
+(`.claude/agents/architect.md` §핵심 설계 원칙 7). 뒤에 **커밋을 명시한 실측**(`404022d` 절제)만
+예외이고, 그 자리에 커밋을 적어 둔다.
+
 ---
 
 ## 목표
@@ -170,16 +174,26 @@ $ grep -rn "@router.post\|@router.put\|@router.patch\|@router.delete" services/a
 거는 비대칭을 남기지 않는다"가 여기 그대로 걸린다.
 
 *역방향 확인 — 자리 B 에 거는 조건을 좁히지 않았는가.* 조건을 `status == "rejected" and 미결 inspection 이
-있을 때` 로 좁혔다. **이 한정어 때문에 빠지는 것**: 미결 inspection 이 없는 상태의 같은 목적지 전이
-(`accept_rework` = MISMATCH→IN_PROGRESS)는 사유 없이 통과한다. 그것이 **의도**다 — 그 전이는 어떤
-검토요청도 닫지 않는다. 음성 대조군으로 태웠다(가드 설치 후):
+있을 때` 로 좁혔다. **이 한정어 때문에 빠지는 것**: `from_state == INSPECTION_REQUESTED` 인데 **미결
+inspection 이 0건**인 전이 — 큐에서 그 요청을 `on_hold` 로 닫으면 그 상태가 실제로 만들어지고, 그 뒤의
+`reject_inspection` 은 사유 없이 통과한다. 그것이 **의도**다: 닫는 요청이 없으면 사유를 요구할 근거가
+없다. 한정어를 실제로 빼서(`and open_reviews` 만 제거) 나란히 태웠다 — 작업 트리 `404022d`:
 
 ```
-{"to_state":"IN_PROGRESS(accept_rework, 미결 inspection 없음)","req_note":null,"http":201}
+{"setup":"큐 on_hold 200 → 객체 INSPECTION_REQUESTED 유지, has_open_review=false, open_review_ids=[]"}
+{"to_state":"IN_PROGRESS(reject_inspection, 미결 inspection 0건)","req_note":null,
+ "한정어 있음":201, "한정어 뺌":"409 rejection_reason_required · 객체 INSPECTION_REQUESTED 유지"}
+{"to_state":"IN_PROGRESS(accept_rework, from_state=MISMATCH)","req_note":null,
+ "한정어 있음":201, "한정어 뺌":201}
 ```
 
-**이 한정어를 빼면**(모든 CM 전이에 사유 요구) 정상 업무가 막힌다 — ADR 0011 이 CONFIRMED **진입**을
-같은 이유로 뺀 것과 같은 판단이다.
+**`accept_rework` 는 이 한정어가 거르는 것이 아니다.** `close_inspection_reviews` 첫 줄의
+`transition.from_state != ObjectState.INSPECTION_REQUESTED` 에서 먼저 돌아가므로 한정어는 **평가조차
+되지 않고**, 위 실측대로 한정어의 유무와 값이 같다. 그것을 음성 대조군으로 쓰면 §6-2 의 질문
+("이 기대값을 결함 있는 코드가 그대로 만족하는가")에 **예**다 — 한정어를 지운 구현이 그 칸을 통과한다.
+그래서 이 한정어의 음성 대조군은 **미결 inspection 0건 축**이고, `accept_rework` 는 그것과 별개로
+**`from_state` 축**의 음성 대조군으로 남긴다(그 조건을 빼면 CM 의 상시 재작업 승인이 막힌다 —
+ADR 0011 이 CONFIRMED **진입**을 같은 이유로 뺀 것과 같은 판단이다).
 
 ## 1-c. 어떤 `kind` · 어떤 결정이 대상인가 — 양쪽을 각각 셌다
 
@@ -284,7 +298,8 @@ ADR 0011 §Deferred 1 이 "CM 상시 업무를 바꾸는 결정이므로 실측 
 | `INSPECTION_REQUESTED → MISMATCH`(=`flag_mismatch`) | 없음 | 201, 요청 `rejected` | **409 동일**, 객체 상태 유지 |
 | `INSPECTION_REQUESTED → IN_PROGRESS` | 공백만 | 201, 요청 `rejected` | **409 동일** |
 | `INSPECTION_REQUESTED → IN_PROGRESS` | 사유 | 201, 요청 `rejected` | 201, 요청 `rejected` |
-| `MISMATCH → IN_PROGRESS`(=`accept_rework`, 미결 inspection 없음) | 없음 | 201 | **201**(음성 대조군 — 막히지 않는다) |
+| `INSPECTION_REQUESTED → IN_PROGRESS`, 미결 inspection **0건**(큐에서 `on_hold` 로 닫은 뒤) | 없음 | 201 | **201**(이 한정어의 음성 대조군 — 한정어를 빼면 여기가 409 로 뒤집힌다. `404022d` 절제 실측) |
+| `MISMATCH → IN_PROGRESS`(=`accept_rework`) | 없음 | 201 | **201**(`from_state` 축의 음성 대조군 — 한정어의 유무와 무관하게 201 이다) |
 
 **기존 스위트 폭발 반경 = 0.** 가드를 넣은 채 전량을 돌렸다:
 
@@ -303,7 +318,8 @@ ADR 0011 §Deferred 1 이 "CM 상시 업무를 바꾸는 결정이므로 실측 
 | **(빠지는 것을 태웠다)** 승인에도 요구하면? | `inspection/approved` = 검측 승인이 사유 없이는 불가 | — | 기각. ADR 0011 §Deferred 1 이 "실측 없이 정하지 않는다"로 미뤄 둔 항목이고 이 사이클 범위 밖. 그대로 Deferred(§Deferred 1) |
 | kind 를 가르지 **않는다**(5 kind 전부) | — | kind 별 예외 | 코드 인용: `ReviewsPage.tsx:177` `requireNote={pending?.decision === "rejected"}` 는 kind 를 보지 않는다. 서버를 kind 로 가르면 화면·서버 축이 어긋난다(§1-c) |
 | `not (note or "").strip()`(공백만 거부) | 없음 | 공백 한 칸이 사유로 통과하는 경우 | 실측: HEAD 에서 `note="   "` 반려는 200 이고 `resolution_note` 에 `"   "` 가 그대로 저장된다(§1-e 기준선). 화면은 `ConfirmDialog.tsx:44` 에서 `!note.trim()` 으로 잠그지만 API 직접 호출에는 그 방어가 없다 |
-| 자리 B 의 `미결 inspection 이 있을 때` | 모든 CM 전이(→IN_PROGRESS·→MISMATCH)에 사유 필수 | 검토요청을 닫지 않는 전이(`accept_rework` 등) | 실측 음성 대조군: `MISMATCH → IN_PROGRESS`, note 없음 → **201**(막히지 않는다) |
+| 자리 B 의 `미결 inspection 이 있을 때` | **`from_state == INSPECTION_REQUESTED` 인데 미결 inspection 이 0건**인 전이까지 사유 필수 | 바로 그 전이(큐에서 `on_hold` 로 닫은 객체의 `reject_inspection`) | **절제 실측**(`404022d`, `and open_reviews` 만 뺀 트리와 나란히): 한정어 있음 **201** / 뺌 **409 `rejection_reason_required`**, 객체 `INSPECTION_REQUESTED` 유지 |
+| **(이 한정어의 음성 대조군이 아니다)** `accept_rework` = `MISMATCH → IN_PROGRESS` | — | — | 같은 절제 실측에서 **양쪽 다 201** — `from_state` 검사에서 먼저 돌아가 한정어가 평가되지 않는다. 이 행이 지키는 것은 `from_state` 축 |
 | 자리 B 를 `close_inspection_reviews` 에 둔다(`StateTransition._check` 가 아니라) | — | 모델 검증자로는 이 조건을 볼 수 없다 | 코드 인용: `state.py::StateTransition._check` 는 `session` 을 갖지 않아 "미결 inspection 이 있는가"를 물을 수 없다. `close_inspection_reviews(session, project_id, global_id, transition)`(`state_machine.py:132`)가 그 사실을 아는 유일한 자리다 |
 | 술어를 `packages/core/models/review.py` 에 둔다 | — | 서비스 층에 두면 세 소유가 각자 복제한다 | 1-a 표: `rejected` 를 쓰는 세 자리가 progress-engine·api·sync-2d3d 로 소유가 전부 다르다. 공통 상위는 `packages/core` 뿐이다 |
 
@@ -408,7 +424,10 @@ CM 이 읽으므로 넣었다(§6-4: 문구는 장식이 아니다). 이 판단�
 한국어 "행 이동")는 밖이고 ② **아직 존재하지 않는 네 번째 경위 이름**은 원리상 밖이다.
 *블라인드 스팟 한 건 실측*: ①을 태웠다 —
 `grep -rniE "row[- ]moved|row[- ]replaced|row[- ]absorbed" . | grep -v node_modules | grep -v "/.git/" | grep -v "row_"`
-→ **0건**(이 계획 문서 자신이 그 패턴을 인용하므로, 문서가 쓰이기 전 실행 기준). 표기 변종은 이 저장소에 없다.
+→ **`docs/` 밖에 0건**이다. 저장소 전체로는 이 계획 문서 자신과 ADR 0009 §Deferred 5 개정 3 ①이 그
+패턴을 인용하는 줄이 잡히는데, 위 ③ 대로 `docs/` 는 감사 대상이 아니라 실해가 없다. **개수로 적지
+않는다** — 결론이 기대는 것은 "코드 트리에 표기 변종이 없다"는 부재이고, 개수로 적으면 그 문장 자신이
+히트가 되어 다음 커밋에서 거짓이 된다(ADR 0009 §Deferred 5 개정 3 ①이 그렇게 거짓이 됐다).
 
 ## 2-b. 이 작업이 실제로 닫는 구멍과 **닫지 못하는 것**
 
@@ -617,6 +636,13 @@ review.py / moved=9 / useCreateDailyReport / REPORTED / PLANNED / moved = 9 / mo
 | CLAUDE.md 전체 문자 | 20,782 | 20,641 | **-141자** |
 | §6 문자 비중 | 58.8% | **58.6%** | -0.2%p |
 
+*"압축 후" 칸은 커밋이 아니라 **압축 커밋을 쓰는 중의 작업 트리**다.* 같은 커밋이 같은 파일의 다른 곳에
+더 썼으므로 커밋된 값은 다르다 — `05b7940` 388줄 20,782자(§6 54.6%·58.8%) → `9989288` 376줄 21,083자
+(§6 53.2%·59.4%). 즉 위 두 비중은 **어느 커밋에서도 재현되지 않고**, 날짜만으로는 어느 시점인지
+가릴 수 없다. 커밋으로 못박은 값은 CLAUDE.md §6-5 압축 규칙에 있다(정의: §6 = `## 6.` 제목 줄부터 EOF).
+**줄 차이(-17줄)와 문자 차이(-141자)는 §6-1 만 재면 커밋에서도 그대로다**(64줄 3,406자 → 47줄 3,265자;
+위 표의 63·46 은 제목 줄을 뺀 수).
+
 **표는 같은 관측값을 더 적은 줄에 담지만 더 적은 문자에 담지는 않는다.** 남은 §6-1 의 대부분은
 **규칙**이고 규칙은 압축 대상이 아니므로(§6 압축 규칙), "읽히는 길이"를 근거 압축만으로 끌어내리는 데에는
 **상한**이 있다. 이 사실을 CLAUDE.md §6-5 압축 규칙에 한 줄로 적어 두었다 — 다음 압축(§6-2·§6-4)이 이
@@ -651,7 +677,7 @@ review.py / moved=9 / useCreateDailyReport / REPORTED / PLANNED / moved = 9 / mo
 | 1 | **architect** | `docs/adr/0012-rejecting-a-review-requires-reason.md` | 이 계획 §과제 1 | ADR 0012 | 불변식 4·자리 둘·code·부가 필드 계약이 적힘. ADR 0011 §Decision 규칙 1-a 표 3행의 "도달 가능해지는 조건"에 **③ 하위 타입이면**을 추가 | — |
 | 2 | **architect** | `packages/core/models/review.py` | ADR 0012 · ADR 0009 §Deferred 5 | ① `ReviewRejectionReasonRequiredError`(**`Exception` 직속** — §1-f 교차 확인) + `rejection_reason_missing()` ② `IDENTITY_DRIFT_CAUSE_*` 정본 + `IDENTITY_DRIFT_CAUSES` + `IdentityDriftCause` | **architect 단독 커밋 2건으로 뗀다**(CLAUDE.md §2 — 과제 1 분과 과제 2 분을 섞지 않는다). `LostDecision.cause` 를 좁히지 않는다 | V11 |
 | 3 | **api** | `services/api/usecases.py`, `services/api/errors.py`, `docs/api.md` | 작업 2 | `resolve_review` 프롤로그 가드(자리 A) + `_rejection_reason_required` 핸들러(409, `review_request_ids`·`review_kind`) + `transition_object` 에 `except ReviewRejectionReasonRequiredError: session.rollback(); raise` | 45칸 곱이 §1-e "가드 후" 표와 일치. `docs/api.md` 재생성 | V1~V4 |
-| 4 | **progress-engine** | `services/progress/state_machine.py` | 작업 2 | `close_inspection_reviews` 가드(자리 B) + CM 사유를 `resolution_note` 에 함께 적기(§1-g 가) | 자리 B 구/신 표 5행 일치. `accept_rework` 음성 대조군 201 유지 | V5~V7, V12 |
+| 4 | **progress-engine** | `services/progress/state_machine.py` | 작업 2 | `close_inspection_reviews` 가드(자리 B) + CM 사유를 `resolution_note` 에 함께 적기(§1-g 가) | 자리 B 구/신 표 6행 일치. 음성 대조군 둘(미결 inspection 0건 축 · `from_state` 축) 모두 201 유지 | V5~V7, V12 |
 | 5 | **frontend** | `apps/web/src/api/client.ts`, `components/ErrorBox.tsx`, `components/ObjectDetailPanel.tsx` | 작업 3·4 | `KnownApiErrorCode` 에 `rejection_reason_required` 추가 → `CODE_MESSAGES` 컴파일 강제. `REVOCATION_KINDS` 옆에 `REVIEW_REJECTING_KINDS`(`reject_inspection`·`flag_mismatch`)를 두고 `requireNote` 를 넘긴다. 다이얼로그 문구(§1-g 나) | 문구에 "새로고침"이 없고 "사유"가 있다. `tsc --noEmit` 통과 | V8~V10 |
 | 6 | **architect** | `docs/glossary.md` | 작업 3 | "오류 응답 code 어휘" 표에 `rejection_reason_required` 행 + ADR 0012 부칙(부가 필드가 `from_state` 계열이 **아닌** 이유) | 부칙 append-only 유지 | — |
 | 7 | **progress-engine** + **bim-ingest** | `services/progress/document_mapper.py`, `services/ingest/persistence.py` | 작업 2 | `_CAUSE_ROW_*`·`_CAUSE_UNSPECIFIED`·`IdentityDriftCause` 를 정본 import 로 교체 | **작업 트리에서 `pytest` 738 유지**(탐침 트리에서는 726 으로 확인했다 — §0 주의). 두 파일이 문자열 리터럴을 다시 선언하지 않는다 | V13 |
@@ -662,6 +688,15 @@ review.py / moved=9 / useCreateDailyReport / REPORTED / PLANNED / moved = 9 / mo
 **커밋 경계(CLAUDE.md §2).** 작업 2 는 `packages/core/models/` 를 건드리므로 **architect 단독 커밋**이다.
 작업 3·4·5·7 은 각자 소유 디렉터리만 만진다. 작업 7 은 두 소유(progress-engine·bim-ingest)가 섞이므로
 **커밋을 둘로 뗀다** — 뗄 수 없으면 그 이유를 커밋 본문에 적는다.
+
+**이 표의 `담당 파일` 은 그 사이클의 배정이지 소유가 아니다.** 소유 판정의 정본은 CLAUDE.md §2 하나이고
+(특히 작업 9 의 `apps/web/src/**/*.test.tsx` 는 §2 가 `frontend`·`qa` 의 **공동 편집 자리**로 둔 경로다),
+이 표를 소유로 읽으면 한 파일에 두 축이 다른 주인을 지목한다 — 실제로 `92daacb`(frontend)와
+`3f606f3`(qa)가 그렇게 서로 다른 축에서만 이탈로 보였다.
+**§2 의 예외는 "같은 파일의 같은 줄을 함께 고쳐야 하는 경우" 하나뿐이다** — 서로 다른 파일을 한 커밋에
+묶는 근거가 되지 않는다(2026-09-05 `d0a0e88` 이 두 소유의 세 파일 — frontend 의 `api/types.ts`·`domain/identityDrift.ts` 와
+qa 의 `tests/unit/progress/test_identity_drift_review_title.py` — 을 한 커밋에 묶어 체크 3 FAIL;
+소유별로 떼고 각 본문에 같은 한 문장을 적으면 원자성과 사실이 둘 다 선다).
 
 ---
 
@@ -736,7 +771,7 @@ rejection_reason_required: "반려하려면 사유를 입력해야 합니다. �
 | V4 | 5 kind × {`approved`,`on_hold`} × note 없음 | 200 — **30칸 전수** | 아니오. 조건을 넓힌 구현(모든 결정에 사유)이 여기서 죽는다 |
 | V5 | `INSPECTION_REQUESTED → IN_PROGRESS`(cm, note 없음) | 409 `rejection_reason_required` **+ 객체 상태가 `INSPECTION_REQUESTED` 로 남는다 + 요청이 `open` 으로 남는다**(셋을 함께 단언 — §6-2 4) | 아니오. 자리 A 만 고친 구현이 여기서 죽는다(HEAD 실측 201) |
 | V6 | `INSPECTION_REQUESTED → MISMATCH`(cm, note 없음) | V5 와 동일 | 아니오. `to_state` 로만 가른 구현(→IN_PROGRESS 만 막음)이 여기서 죽는다 |
-| V7 | **음성 대조군** `MISMATCH → IN_PROGRESS`(cm, note 없음, 미결 inspection **없음**) | 201 | **예 — 그래서 V5·V6 과 쌍으로만 의미가 있다.** 이 축이 없으면 "모든 CM 전이를 막는" 구현이 통과한다 |
+| V7 | **음성 대조군 두 축**(cm, note 없음): ⓐ `from_state == INSPECTION_REQUESTED` 인데 미결 inspection **0건**(큐에서 `on_hold` 로 닫은 뒤의 `reject_inspection`) ⓑ `MISMATCH → IN_PROGRESS`(=`accept_rework`) | 둘 다 201 | **예 — 그래서 V5·V6 과 쌍으로만 의미가 있다.** 그리고 **두 축은 서로를 대신하지 못한다**: 절제 실측(`404022d`, `and open_reviews` 만 제거) 결과 ⓑ 는 양쪽 다 201 이라 그 절제를 **잡지 못하고**(`from_state` 검사에서 먼저 돌아간다), ⓐ 만 409 로 뒤집혀 잡는다. ⓑ 가 잡는 것은 `from_state` 조건을 지운 구현이다 |
 | V8 | 화면: 객체 패널 `검측 반려(재작업)` 다이얼로그 | 사유 라벨에 "(필수)"가 붙고 사유가 비면 확인 버튼 `disabled` | 아니오. `REVOCATION_KINDS` 만 있는 지금 구현에서 `false`(실측) |
 | V9 | 화면: `ErrorBox` 가 `rejection_reason_required` 를 받았을 때 | **"새로고침"이라는 말이 없다** + "사유"라는 말이 있다(문장을 베끼지 않는다 — §6-4 3) | 아니오. `invalid_transition` 문구를 재사용한 구현이 죽는다 |
 | V10 | 화면: 큐 반려 다이얼로그(기존) | V8 과 같은 단언, 5 kind 전부 | 부분(기존 `ReviewsPage.test.tsx:362` 가 일부 덮는다). kind 축으로 넓힌다 |
@@ -960,3 +995,11 @@ config 칸, `docs/`(옛 이름을 의도적으로 보존하므로 대상 아님)
 **§6 의 길이 판단.** §6 을 늘리는 것 자체가 비용이라는 판단은 이미 §6-5 압축 규칙에 있다(줄 -17 / 문자
 -141 이 §6-1 압축의 실측 이득이었다). 그래서 이번 추가는 **표 행**(근거의 압축 형식)으로만 하고, 규칙
 문장은 부딪히는 두 요구를 가르는 한 문장으로 제한했다. 서사는 이 마감 문서에 둔다.
+
+**반려 라운드에서 더한 것: §6-1 표에 한 행(9회차) 하나뿐.** 같은 자리 **다섯 번째** 관측이고, 새로 말하는
+것은 "개수를 세지 않으려고 **열거**로 바꾸면 열거의 길이가 곧 개수라 같은 자리에서 다시 낡는다"이다 —
+`80a84f9` 가 개수를 지우며 심은 열거가 두 커밋 만에 거짓이 됐다. **규칙 문장은 더하지 않았다**: 이번
+관측은 §6-1 의 이름 붙은 블라인드 스팟과 §6-1 ②의 **재발**이지 새로운 종류가 아니므로 §6-5 대로 근거만
+더한다. §6-5 압축 규칙의 비중 문장은 **늘린 것이 아니라 재측정**이다(날짜 기준 → 커밋 기준).
+소유 축 정리(`apps/web/src/**/*.test.ts(x)`)는 §6 이 아니라 **§2 소유 규칙**에 들어갔다 — 그것이
+`reviewer` 체크 3 이 읽는 자리이기 때문이고, 에이전트 정의는 그 줄을 가리키기만 한다.

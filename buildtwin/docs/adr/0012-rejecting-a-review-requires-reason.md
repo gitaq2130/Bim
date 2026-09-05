@@ -32,6 +32,11 @@ $ cd /home/user/Bim/buildtwin && .venv/bin/pytest -q      (필터 없이 tail)
 > `tests/fixtures/sample.ply` 가 아카이브에 들어오지 않아 12건이 빠진다). **이 ADR 의 수치는 전부
 > 작업 트리(738 기준선)의 값**이고, 두 트리의 값을 섞지 않는다.
 
+**이 문서의 모든 `파일:줄` 참조는 위 HEAD `9989288` 트리의 것이다** — HEAD 가 움직여도 갱신하지 않는다
+(`.claude/agents/architect.md` §핵심 설계 원칙 7). 갱신하면 이 ADR 이 보고하는 실측과 인용 트리가
+어긋나고, 기록물이 사람이 유지하는 열거가 된다. 뒤에 **명시적으로 다른 커밋을 적은 실측**(§한정어
+역방향 확인 표의 절제 실측)만 예외이고, 그 자리에 커밋을 적어 둔다.
+
 ### 1. 화면만 요구하고 서버는 받아 준다 (ADR 0011 §Deferred 2)
 
 화면은 **다섯 kind 전부**에서 반려에 사유를 요구한다 — `kind` 를 보지 않는다.
@@ -79,6 +84,10 @@ apps/web/src/pages/ReviewsPage.tsx:177    requireNote={pending?.decision === "re
 | `INSPECTION_REQUESTED → IN_PROGRESS`(cm) | 미전송 | **201** | `rejected` | `INSPECTION_REQUESTED -> IN_PROGRESS by cm (u-cm-dc39d3db); transition_id=3c611d32-…` |
 | `INSPECTION_REQUESTED → MISMATCH`(cm) | 미전송 | **201** | `rejected` | `INSPECTION_REQUESTED -> MISMATCH by cm (u-cm-dc39d3db); transition_id=8a7a47bc-…` |
 | `MISMATCH → IN_PROGRESS`(cm, 미결 inspection **없음**) | 미전송 | 201 | — (닫히는 요청 없음) | — |
+
+> **3행이 보이는 것은 `from_state` 축이지 "미결 inspection 이 있을 때" 축이 아니다.** `accept_rework`
+> 는 `close_inspection_reviews` 첫 줄의 `from_state != INSPECTION_REQUESTED` 에서 먼저 돌아가므로 그
+> 한정어는 **평가조차 되지 않고**, 한정어를 빼도 값이 같다(절제 실측은 §한정어 역방향 확인 표).
 
 화면에도 그 문이 있다. 같은 실측의 `next_actions`(`INSPECTION_REQUESTED` / cm):
 
@@ -180,8 +189,11 @@ inspection 이 있는가"를 물을 수 없다(`packages/core/models/state.py:17
 `self` 뿐이다). 그 사실을 아는 유일한 자리가 `close_inspection_reviews(session, project_id,
 global_id, transition)` 다.
 
-**조건에 `미결 inspection 이 있을 때` 를 넣는다.** 그래서 어떤 검토요청도 닫지 않는 CM 전이
-(`accept_rework` = `MISMATCH → IN_PROGRESS`)는 사유 없이 통과한다 — 실측 §2 표 3행 **201**.
+**조건에 `미결 inspection 이 있을 때` 를 넣는다.** 이 한정어가 실제로 가르는 것은
+**`from_state == INSPECTION_REQUESTED` 인데 미결 inspection 이 0건인 전이**다 — 큐에서 그 요청을
+`on_hold` 로 닫은 뒤의 `reject_inspection` 이 그 상태를 실제로 만든다. 닫는 것이 없으면 사유를 요구할
+근거가 없다. **`accept_rework`(`MISMATCH → IN_PROGRESS`)는 이 한정어가 거르는 것이 아니다** — 위
+`from_state` 검사에서 먼저 돌아간다. 절제 실측은 §한정어 역방향 확인 표에 있다.
 
 ### 규칙 3 — 예외는 `Exception` 직속이다. `InvalidTransitionError` 를 **상속하지 않는다**
 
@@ -296,7 +308,8 @@ glossary "오류 응답 code 어휘" 표에 행을 더하고, 부가 필드가 `
 | **(빠지는 것을 태웠다)** 승인에도 요구하면? | 검측 승인이 사유 없이는 불가 | — | 기각. ADR 0011 §Deferred 1 이 "CM 상시 업무를 바꾸는 결정이므로 실측 없이 정하지 않는다"로 미뤄 둔 항목이다. 그대로 Deferred(§Deferred 1) |
 | kind 를 가르지 **않는다**(5 kind 전부) | — | kind 별 예외 | 코드 인용: `ReviewsPage.tsx:177` `requireNote={pending?.decision === "rejected"}` 는 kind 를 보지 않는다. 서버를 kind 로 가르면 화면·서버의 축이 어긋난다 |
 | `not (note or "").strip()`(공백만 거부) | 없음 | 공백 한 칸이 사유로 통과하는 경우 | 실행값: `rejected` + `note="   "` → **200**, 그리고 `on_hold` + `note="   "` 는 `resolution_note` 에 `"   "` 가 **그대로 저장**된다(§1 표 2·4행). 화면은 `ConfirmDialog.tsx:44` 에서 `!note.trim()` 으로 잠그지만 API 직접 호출에는 그 방어가 없다 |
-| 문 B 의 `미결 inspection 이 있을 때` | 모든 CM 전이(→IN_PROGRESS·→MISMATCH)에 사유 필수 | 검토요청을 닫지 않는 전이(`accept_rework`) | 실행값(음성 대조군, HEAD): `MISMATCH → IN_PROGRESS`, note 미전송, 그 객체의 미결 inspection 목록 `[]` → **201** |
+| 문 B 의 `미결 inspection 이 있을 때` | **`from_state == INSPECTION_REQUESTED` 인데 미결 inspection 이 0건**인 전이까지 사유 필수(큐에서 `on_hold` 로 닫은 객체의 `reject_inspection`) | 바로 그 전이 — 닫는 요청이 없으므로 사유를 요구할 근거가 없다 | **절제 실행값**(작업 트리 `404022d`, 가드에서 `and open_reviews` 만 뺀 트리와 나란히): 큐 `on_hold` 200 → 객체 `INSPECTION_REQUESTED` 유지·`has_open_review=false`·`open_review_ids=[]`, 이어 note 미전송 `reject_inspection` → **한정어 있음 201 / 뺌 409 `rejection_reason_required` + 객체 `INSPECTION_REQUESTED` 유지**. 그 요청의 최종 상태는 양쪽 다 `on_hold` 라 불변식은 서 있다 |
+| **(이 한정어의 음성 대조군이 아니다)** `accept_rework` = `MISMATCH → IN_PROGRESS`, note 미전송 | — | — | 같은 절제 실행값에서 **양쪽 다 201**. 이 전이를 거르는 것은 이 한정어가 아니라 `close_inspection_reviews` 첫 줄의 `transition.from_state != ObjectState.INSPECTION_REQUESTED` 이고, 그래서 한정어는 평가조차 되지 않는다. 이 행이 지키는 것은 **문 B 를 `from_state` 로 가르는 조건** 쪽이다(그 조건을 빼면 CM 의 상시 재작업 승인이 막힌다) |
 | 문 B 를 `close_inspection_reviews` 에 둔다(`StateTransition._check` 가 아니라) | — | 모델 검증자로는 이 조건을 볼 수 없다 | 코드 인용: `packages/core/models/state.py` `def _check(self) -> StateTransition:` — 인자가 `self` 뿐이라 `session` 이 없다. `close_inspection_reviews(session, project_id, global_id, transition)`(`state_machine.py:132`)가 그 사실을 아는 유일한 자리다 |
 | 예외를 `Exception` **직속**으로 둔다 | — | `InvalidTransitionError` 핸들러의 MRO 상속(409 + `invalid_transition`) | 실행값(monkeypatch 탐침): 하위 타입 → **200, `code` 없음**(삼켜짐) / `Exception` 직속 → **resolve_review 밖으로 전파**. 코드 인용: `usecases.py:442-446` `except InvalidTransitionError … log.info("inspection rejected but no rework transition: %s", exc)` |
 | 가드를 `review_already_resolved` **뒤**에 둔다 | — | 낡은 요청에 사유 없는 반려를 보낸 경우가 새 code 로 바뀐다 | 코드 인용: `tests/integration/test_08_review_requests.py:127-129` 가 그 조합(`{"decision":"rejected"}`, note 미전송, 이미 `approved` 인 요청)에 `code == "review_already_resolved"` 를 고정한다 |
