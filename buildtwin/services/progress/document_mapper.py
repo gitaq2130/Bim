@@ -48,7 +48,14 @@ from packages.core.models.document import ActivityDocumentMapping, Document
 from packages.core.models.evidence import Evidence
 from packages.core.models.orm import ActivityDocumentMappingRow, DocumentRow
 from packages.core.models.progress import Activity
-from packages.core.models.review import ReviewRequest
+from packages.core.models.review import (
+    IDENTITY_DRIFT_CAUSE_ROW_ABSORBED,
+    IDENTITY_DRIFT_CAUSE_ROW_MOVED,
+    IDENTITY_DRIFT_CAUSE_ROW_REPLACED,
+    IDENTITY_DRIFT_CAUSE_UNSPECIFIED,
+    IdentityDriftCause,
+    ReviewRequest,
+)
 
 from . import persistence as db
 from .config_loader import load_document_register_config
@@ -67,8 +74,10 @@ _IDENTITY_DRIFT_WARNING_CODE = "DOCUMENT_IDENTITY_DRIFT"
 _IDENTITY_DRIFT_METHOD = "identity_drift_detection"
 
 # 사람의 판단이 오염된 **경위**(`IdentityDriftReport.lost_decisions[]` 의 `cause`). 값을 붙이는 곳은 판정을
-# 소유한 `services/ingest/persistence`(같은 문자열을 그쪽 상수로 둔다)이고 이 모듈은 소비자다 — CM 에게 보일
-# 문구를 이 값으로 가른다. 셋을 하나로 뭉뚱그린 문구는 그 자체가 거짓이다: `row_moved` 는 대장 행이 그대로
+# 소유한 `services/ingest/persistence` 이고 이 모듈은 소비자다 — CM 에게 보일 문구를 이 값으로 가른다.
+# **값의 정본은 `packages/core/models/review.IDENTITY_DRIFT_CAUSES` 하나뿐이고**(ADR 0009 §Deferred 5,
+# 계획 0005 §과제 2), 아래 `_CAUSE_*` 는 그 정본의 **별칭**이다 — 이 모듈은 값을 다시 적지 않는다.
+# 셋을 하나로 뭉뚱그린 문구는 그 자체가 거짓이다: `row_moved` 는 대장 행이 그대로
 # 살아 다른 `doc_id` 아래에 있으므로 **그 `new_doc_id` 위에서 같은 판단을 다시 내리면** 되지만,
 # `row_replaced` 는 행도 `reviewed_by` 도 그대로인 채 그 `doc_id` 가 **담고 있는 대장 행**이 바뀐 것이라
 # 다시 판단할 새 `doc_id` 자체가 없고, CM 이 먼저 알아야 할 것은 "내 판단이 붙어 있는 대상이 움직였다"는
@@ -83,12 +92,13 @@ _IDENTITY_DRIFT_METHOD = "identity_drift_detection"
 #   `merge_overwritten` → `row_replaced` : 새 조건이 잡는 주 경로에는 **병합이 없다**(실측 R1 `merged=0`).
 #                                          병합이라 적으면 CM 이 있지도 않은 충돌 묶음을 찾는다.
 #   `merge_absorbed`    → `row_absorbed` : 대칭 짝도 마찬가지로 `merged=0` 에서 발화한다.
-_CAUSE_ROW_MOVED = "row_moved"          # 대장 행은 그대로인데 우리 식별 규칙이 그 행을 다른 doc_id 로 옮겼다
-_CAUSE_ROW_REPLACED = "row_replaced"    # 이 doc_id 가 담고 있던 **대장 행 자체**가 바뀌었다(행도 판단도 살아 있다)
-_CAUSE_ROW_ABSORBED = "row_absorbed"    # 판단이 가리키던 대장 행이 **다른 doc_id 아래로** 갔다
-# 생산자가 `cause` 를 싣지 않았을 때 쓰는 자리표시자. **`row_moved` 로 떨어뜨리지 않는다**(ADR 0009
-# §Deferred 5) — 모르는 경위를 가장 흔한 경위로 적으면 이 함수가 고치려는 바로 그 거짓이 된다.
-_CAUSE_UNSPECIFIED = "unspecified"
+_CAUSE_ROW_MOVED = IDENTITY_DRIFT_CAUSE_ROW_MOVED          # 대장 행은 그대로인데 우리 식별 규칙이 그 행을 다른 doc_id 로 옮겼다
+_CAUSE_ROW_REPLACED = IDENTITY_DRIFT_CAUSE_ROW_REPLACED    # 이 doc_id 가 담고 있던 **대장 행 자체**가 바뀌었다(행도 판단도 살아 있다)
+_CAUSE_ROW_ABSORBED = IDENTITY_DRIFT_CAUSE_ROW_ABSORBED    # 판단이 가리키던 대장 행이 **다른 doc_id 아래로** 갔다
+# 생산자가 `cause` 를 싣지 않았을 때 쓰는 자리표시자(정본의 `IDENTITY_DRIFT_CAUSE_UNSPECIFIED`, 소비 전용).
+# **`row_moved` 로 떨어뜨리지 않는다**(ADR 0009 §Deferred 5) — 모르는 경위를 가장 흔한 경위로 적으면 이
+# 함수가 고치려는 바로 그 거짓이 된다. 정본이 이 값을 `IDENTITY_DRIFT_CAUSES` 에 넣지 않는 이유도 같다.
+_CAUSE_UNSPECIFIED = IDENTITY_DRIFT_CAUSE_UNSPECIFIED
 # 문구에 세우는 순서 = 위험한 순서. `row_replaced` 가 맨 앞인 이유는 ADR 0009 §3 이 스스로 최악이라고
 # 적은 경로("미승인 도면 위에서 착수 가능을 띄운다")가 이것뿐이기 때문이다 — 나머지 둘은 근거가 사라져
 # 점수가 내려가는(보수적) 실패다.
@@ -573,11 +583,15 @@ def reject_document_mapping(session: Session, project_id: str, activity_id: str,
 # 알아채게 한다 — 그리고 알아채는 자리는 job 경고가 아니라 **사람의 큐**여야 한다(8차 리뷰: 아무도
 # 만들지 않는 검토요청 때문에 CM 큐가 영원히 비어 있었고 어떤 테스트도 실패하지 않았다).
 # ─────────────────────────────────────────────────────────────────────────────
-IdentityDriftCause = Literal["row_moved", "row_replaced", "row_absorbed"]
-"""경위 값의 **정본은 생산자**(`services/ingest/persistence` 의 `_CAUSE_ROW_*`)다 — 같은 문자열이 지금
-세 자리(ingest·이 모듈·`apps/web/src/domain/identityDrift.ts`)에 복제돼 있고, 한 곳으로 올리는 일은
-ADR 0009 §Deferred 5 다. 이 별칭은 그 사실을 타입으로 적어 두는 것이지 검증 장치가 아니다 —
-`LostDecision.cause` 를 이 Literal 로 좁히지 **않는** 이유가 바로 그것이다(아래)."""
+# `IdentityDriftCause` 는 `packages/core/models/review` 에서 import 해 그대로 재수출한다(파일 상단 import,
+# `__all__` 에 이름이 남아 있다). 이 모듈은 그 Literal 을 다시 적지 않는다 — 이 파일이 기대는 **부재**는
+# **주석 밖에서 경위 값을 문자열로 적는 코드 줄이 이 파일에 하나도 없다**는 것이고, 실행으로 확인하는
+# 명령은 아래다(기대 히트 0). 주석·docstring 은 옛 이름과 개명 근거를 의도적으로 인용하므로
+# `^[^#]*` 로 주석 줄을 뺀다 — 빼지 않으면 이 문단 자신이 히트한다(실측: 뺄 때 0, 안 뺄 때 1).
+#     grep -nE '^[^#]*(= *"row_|Literal\[ *"row_|= *"unspecified")' services/progress/document_mapper.py
+# 그 부재가 깨지면 정본과 갈라져도 mypy·pytest 가 침묵한다.
+# 이 Literal 은 **생산 시점 계약**을 적는 데에만 쓴다 — `LostDecision.cause` 를 이것으로 좁히지 **않는**
+# 이유가 바로 그것이다(아래).
 
 
 class LostDecision(TypedDict):
