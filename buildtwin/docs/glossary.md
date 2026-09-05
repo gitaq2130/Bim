@@ -159,6 +159,7 @@ reviewer 4차 지적 1: 동일 상태코드(특히 409)가 서로 무관한 여�
 | `ambiguous_global_id` | 409 | `global_id`가 둘 이상의 프로젝트에 존재하는데 `?project_id=`를 주지 않고 `/api/objects/{global_id}`(조회·전이)를 호출함(ADR 0005 §3) |
 | `invalid_transition` | 409 | 상태기계가 허용하지 않는 전이 요청(예: PLANNED→CONFIRMED 직행, actor 불일치) |
 | `revocation_reason_required` | 409 | **확정을 되돌리는데 사유가 없다** — `from_state == CONFIRMED` 인 전이(`revoke_confirmation` = →MISMATCH, `order_rework` = →IN_PROGRESS, 둘 다 CM 전용)에 비어 있지 않은 `evidence.note` 가 없음(ADR 0011 불변식 3). **`invalid_transition` 과 갈라 놓은 이유**: 그 code 의 화면 안내는 "현재 상태에서는 이 작업을 수행할 수 없습니다. 화면을 새로고침해 최신 상태를 확인하세요"인데 이 경우엔 거짓이다 — 전이 자체는 허용 표에 있고, 새로고침해도 달라지지 않으며, CM 이 할 일은 사유를 적는 것이다. 서버 예외는 `RevocationReasonRequiredError`(`InvalidTransitionError` 하위 타입)이고, 하위 타입이 MRO 로 먼저 잡히므로 핸들러 등록 순서와 무관하게 이 code 가 나간다. **`detail` 도 부모 포맷을 쓰지 않는다** — 위 서문이 "모르는 code 는 `detail` 을 그대로 보여준다"고 약속하는 이상 `detail` 은 계약면이고, 부모의 `"… not allowed."` 를 그대로 실으면 이 code 를 가른 근거를 응답 자신이 반박한다(ADR 0011 규칙 1-b). 실측 원문: `CONFIRMED -> MISMATCH by cm requires evidence.note (revocation reason)`. 다른 전이 거부는 실제로 허용되지 않은 것이라 `invalid_transition` 의 `"… not allowed."` 가 그대로 참이다 |
+| `rejection_reason_required` | 409 | **검토요청을 `rejected` 로 닫는데 사유가 없다** — `decision == "rejected"` 이고 사유(`note`, 문 A) 또는 `evidence.note`(문 B)가 `None`·`""`·공백만임(ADR 0012 불변식 4). **문이 둘이다**: 문 A = `POST /api/review-requests/{id}/resolve`(5 kind 전부 — `mapping`·`verification`·`inspection`·`document_mapping`·`document_identity_drift`), 문 B = `POST /api/objects/{gid}/transitions` 중 CM 의 `reject_inspection`(INSPECTION_REQUESTED→IN_PROGRESS)·`flag_mismatch`(INSPECTION_REQUESTED→MISMATCH)로, 이 둘은 큐를 거치지 않고 `close_inspection_reviews` 로 내려가 미결 inspection 요청을 `rejected` 로 닫는다. 문 B 는 **미결 inspection 요청이 있을 때만** 걸린다(닫는 것이 없으면 사유를 요구하지 않는다 — `accept_rework` 는 통과). **부가 필드는 `review_kind`(문자열)와 `review_request_ids`(리스트) 둘뿐이다** — `from_state`/`to_state`/`actor` 는 싣지 않는다(아래 ADR 0012 부칙). **`revocation_reason_required` 와 갈라 놓은 이유**: 그 code 의 화면 안내는 "확정을 되돌리려면 사유를 입력해야 합니다"인데, 문 A 의 네 kind 반려는 확정을 되돌리는 일이 아니라 그 문장이 거짓이다. **`invalid_transition` 도 아닌 이유**: 그 문구의 두 절("수행할 수 없습니다"·"새로고침")이 둘 다 거짓이다 — 반려는 허용된 행위이고, 새로고침해도 달라지지 않으며(요청은 `open`, 객체 상태도 그대로 — 부분 적용 없음), 문 A 의 네 kind 에는 전이 자체가 없다. 서버 예외는 `packages/core/models/review.py::ReviewRejectionReasonRequiredError`(**`Exception` 직속** — `InvalidTransitionError` 하위 타입이면 `usecases.resolve_review` 의 inspection 분기 `log.info` 가 삼킨다, ADR 0012 규칙 3)이고, 상속으로 얻는 폴백이 없으므로 `errors.py::_rejection_reason_required` 전용 핸들러가 이 code 의 일부다. 실측 `detail` 원문: `rejecting review request <id> (kind=inspection) requires a non-empty reason` |
 | `transition_blocked_by_review` | 409 | 미결 verification ReviewRequest 가 있어 system 전이가 막힘(ADR 0001 불변식 4) |
 | `review_already_resolved` | 409 | 이미 `open`이 아닌(approved/rejected/on_hold) ReviewRequest 를 다시 처리하려 함 |
 | `inspection_confirm_failed` | 409 | 검측(inspection) ReviewRequest 승인 시 CONFIRMED 전이가 상태기계에 의해 거부됨 |
@@ -254,6 +255,44 @@ reviewer 4차 지적 1: 동일 상태코드(특히 409)가 서로 무관한 여�
   고르므로(`starlette/_exception_handler.py::_lookup_exception_handler`), `errors.py` 의 등록 순서는
   이 선택에 영향을 주지 않는다. 실측(2026-09-04): 상위(`InvalidTransitionError`) 핸들러를 **먼저** 등록한
   상태에서도 응답 code 는 `revocation_reason_required` 였다.
+
+### 부칙 — ADR 0012 검토요청 반려 사유 (architect, 2026-09-05)
+
+이 절도 append-only — 기존 문장·행은 그대로 둔다. 특히 위 "부칙 — reviewer 5차 지적 반영"의 **응답 모양
+일관성** 문단과 "부칙 — ADR 0011 확정 취소 사유"의 첫 불릿은 **고치지 않는다**. 그 두 문단이 말하는 것은
+"같은 `code` 는 어느 경로로 발생하든 같은 부가 필드를 싣는다"이고, `rejection_reason_required` 도 그 요구를
+지킨다 — 두 경로 모두 `review_kind`·`review_request_ids` 를 싣는다. 아래는 **그 부가 필드가 왜
+`from_state` 계열이 아닌가**에 대한 답이다(ADR 0012 규칙 4).
+
+- **부가 필드가 `from_state`/`to_state`/`actor` 가 **아닌** 이유 — 두 raise 자리의 공통 분모가 그 셋을
+  포함하지 않는다.** 이 code 를 던지는 자리는 정확히 둘이다(`grep -rn "ReviewRejectionReasonRequiredError("
+  --include=*.py services packages` 의 raise 히트):
+  - **문 A** `services/api/usecases.py::resolve_review` 의 프롤로그 — 큐 해소. 여기에는 **전이가 없다.**
+    5 kind 중 넷(`mapping`·`verification`·`document_mapping`·`document_identity_drift`)은 객체 상태기계를
+    아예 지나지 않으므로 `from_state`·`to_state`·`actor` 라는 값이 **존재하지 않는다**. 있지도 않은 값을
+    싣으려면 지어내야 하고, 지어낸 값은 화면이 그것으로 분기하는 순간 거짓 안내가 된다
+    (CLAUDE.md §6-4 규칙 2: 모르는 값은 모른다고 적고 흔한 값으로 떨어뜨리는 폴백을 두지 않는다).
+  - **문 B** `services/progress/state_machine.py::close_inspection_reviews` — 객체 전이. 여기에는 전이가
+    있지만, 두 자리가 **함께** 실을 수 있는 것만 부가 필드가 된다. 문 B 만 세 필드를 더 실으면 같은 `code` 가
+    경로에 따라 모양이 달라져 위 "응답 모양 일관성"을 깬다.
+  두 자리가 함께 갖는 것은 `review_kind` 와 `review_request_ids` 뿐이고, **그 둘만 싣는다.**
+- **`revocation_reason_required` 와 대칭이 아닌 이유(그 code 는 세 필드를 싣는다).** 그 code 의 raise 자리는
+  `StateTransition._check` **하나**이고 그 자리는 언제나 전이 위에 있다. 자리가 하나면 공통 분모가 곧 그
+  자리의 전부다. 이 code 는 자리가 둘이고 그중 하나에 전이가 없다 — **부가 필드는 code 의 성질이 아니라
+  raise 자리 집합의 교집합**이라는 것이 두 code 의 차이를 만든다.
+- **이 결정이 깨뜨리는 것(그리고 실측).** 문 B 는 "전이가 거부됐는데 `from_state`/`to_state`/`actor` 가 없는"
+  첫 응답이 된다. **그 세 필드를 오류 응답에서 읽는 화면이 있는가 — 실행값(2026-09-05):**
+  `grep -rn "from_state\|to_state" apps/web/src --include=*.ts --include=*.tsx | grep -v test` 의 히트는
+  세 파일 15줄이고 **한 줄도 오류 응답을 읽지 않는다**: `ObjectDetailPanel.tsx` 10줄(전이 이력 표시,
+  `next_actions[].to_state` 소비, 전이 **요청** 본문, 그리고 주석), `api/types.ts` 4줄(타입 선언),
+  `api/client.ts` 1줄(이번 사이클에 더한 주석). 오류 경로는 `setMessage(errorText(e))` 하나이며
+  `errorText`(`apps/web/src/components/ErrorBox.tsx`)는 `code` 와 `detail` 만 읽는다 — **0건.**
+  깨질 화면은 오늘 없지만 계약면 변경이므로 위 표에 행을 더하고 이 부칙을 남긴다.
+- **화면 쪽 정본 동기화(2026-09-05).** `KnownApiErrorCode`(`apps/web/src/api/client.ts`)에
+  `rejection_reason_required` 를 더했고, 그 유니온이 `Record<KnownApiErrorCode, string>` 인 `CODE_MESSAGES`
+  (`apps/web/src/components/ErrorBox.tsx`)의 exhaustiveness 를 컴파일로 강제한다. 다만 **그 강제는
+  "유니온 ↔ 표" 정합성만 잡는다** — 이 표(정본)에 새 code 가 늘어도 컴파일은 걸리지 않는다. 그래서 이 표에
+  행을 더하는 사람이 그 유니온도 함께 본다(client.ts 상단 TODO 가 그 자동화를 후속으로 남겨 두었다).
 
 ## ADR 0007 추가 항목 (architect, 2026-09-03) — 문서관리대장 연동
 
