@@ -66,9 +66,13 @@ export default {
 
 정적 파일이라 어디든 올라간다. 무료 구간으로 충분하다.
 
-1. **Vercel** 또는 **Netlify** 에 이 저장소를 연결한다.
-   - Build command: `node tools-site/build.mjs`
-   - Output directory: `tools-site/dist`
+1. **Vercel** 또는 **Netlify** 에 이 저장소를 연결한다. 설정 파일이 이미 들어 있다.
+   - Vercel — 프로젝트 생성 시 **Root Directory 를 `tools-site` 로** 지정한다.
+     나머지(빌드 명령·출력 폴더)는 `vercel.json` 이 처리한다.
+   - Netlify — `netlify.toml` 에 base 까지 적혀 있어 저장소만 연결하면 된다.
+
+   > 저장소 루트에 Next.js 앱(안건톡)이 함께 있다. Root Directory 를 지정하지 않으면
+   > 그쪽을 빌드하려 하므로 반드시 `tools-site` 를 지정할 것.
 2. 도메인을 연결한다. 광고를 붙이려면 자기 도메인이 사실상 필요하다.
 3. `src/shell.mjs` 의 `SITE.origin` 을 실제 주소로 바꾼다.
    (정규 URL·OG 태그·사이트맵이 이 값을 쓴다.)

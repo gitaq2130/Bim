@@ -1,0 +1,12 @@
+# Netlify 로 배포할 때 쓴다. Vercel 은 vercel.json 을 본다.
+# 저장소 루트가 아니라 이 폴더를 base 로 지정해야 한다.
+[build]
+  base    = "tools-site"
+  command = "node build.mjs"
+  publish = "dist"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
