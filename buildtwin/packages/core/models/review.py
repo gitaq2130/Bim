@@ -47,6 +47,59 @@ ReviewKind = Literal["mapping", "verification", "inspection", "document_mapping"
 ReviewStatus = Literal["open", "approved", "rejected", "on_hold"]
 
 
+class ReviewRejectionReasonRequiredError(Exception):
+    """불변식 4(ADR 0012): 검토요청을 `rejected` 로 닫으려면 비어 있지 않은 사유가 필요하다.
+
+    **`InvalidTransitionError` 를 상속하지 않는다 — `Exception` 직속이다.**
+    `services/api/usecases.py::resolve_review` 의 inspection 분기는 `except InvalidTransitionError` 로
+    받고 `decision == "rejected"` 이면 그 예외를 `log.info` 로 흘려보낸다. ADR 0012 규칙 2 가 이 예외의
+    raise 자리로 지정한 `services/progress/state_machine.py::close_inspection_reviews` 는 그 분기
+    안쪽에 있으므로, 하위 타입이면 방어가 그 `log.info` 안에서 사라진다. 실측(2026-09-05, 작업 트리
+    HEAD `9989288`, 임시 탐침이 `transition_with_effects` 를 갈아 끼워 각각을 던지게 했다):
+    하위 타입 → **200 · 응답에 `code` 없음 · 요청은 `rejected` 로 닫힘**, `Exception` 직속 → 전파.
+    ADR 0011 §Decision 규칙 1-a 표 3행이 그 사실을 조건 ③ 으로 싣는다.
+
+    **이 타입이 기대는 부재(2026-09-05 실측).**
+    ① `services/api/usecases.py`·`services/api/routers/review_requests.py`·
+       `services/progress/state_machine.py` 에 `except Exception`·bare `except` 가 **없다**
+       (`grep -n "except Exception\\|except BaseException\\|except:"` → 히트 0). 넓은 `except` 가
+       그 경로에 생기면 상속을 끊어 둔 것이 무의미해진다.
+    ② `services/api/errors.py::install_handlers` 가 등록한 핸들러 중 `Exception` 자체(또는 이 타입의
+       상위)를 받는 것이 **없다**(`grep -n "@app.exception_handler" services/api/errors.py` 의 인자는
+       `ApiError`·`HTTPException`·`InvalidTransitionError`·`RevocationReasonRequiredError`·
+       `TransitionBlockedByReviewError`·`ObjectNotFoundError`). 상속으로 얻는 HTTP 폴백이 없다는 것이
+       `Exception` 직속의 값이자 대가다 — 이 예외를 409 `rejection_reason_required` 로 내보내는 일은
+       전용 핸들러가 한다(ADR 0012 규칙 4).
+
+    부가 필드는 `review_kind` 와 `review_request_ids` 다. 응답이 그 둘만 싣는 이유는 raise 자리들의
+    공통 분모가 그것뿐이기 때문이다 — 큐 경로에는 전이가 없어 `from_state`/`to_state`/`actor` 가
+    존재하지 않는다(ADR 0012 규칙 4).
+    """
+
+    def __init__(self, review_kind: str, review_request_ids: list[str], source: str) -> None:
+        self.review_kind = review_kind
+        self.review_request_ids = list(review_request_ids)
+        self.source = source   # "resolve_review" | "state_transition" — 어느 문으로 들어왔는지(로그·테스트용)
+        ids = ", ".join(self.review_request_ids) or "(none)"
+        super().__init__(f"rejecting review request {ids} (kind={review_kind}) requires a non-empty reason")
+
+
+def rejection_reason_missing(note: str | None) -> bool:
+    """`None`·`""`·공백만이면 True — 즉 "사유가 없다".
+
+    판정을 `packages/core/models/` 에 두는 이유는 `rejected` 를 쓰는 자리의 **소유가 서로 다르기**
+    때문이다: `services/progress/state_machine.py`(progress-engine) · `services/api/usecases.py`(api) ·
+    `services/sync/review_queue.py`(sync-2d3d). 공통 상위는 `packages/core` 뿐이라, 서비스 층에 두면
+    같은 판정이 소유마다 복제된다.
+
+    `.strip()` 을 쓰는 이유는 공백만인 사유가 실제로 저장되기 때문이다 — 실측(2026-09-05, 작업 트리
+    HEAD `9989288`): `POST /api/review-requests/{id}/resolve {"decision":"on_hold","note":"   "}` →
+    200 이고 `resolution_note` 에 `"   "` 가 그대로 남는다. 화면은 `ConfirmDialog.tsx:44` 의
+    `!note.trim()` 으로 잠그지만 API 직접 호출에는 그 방어가 없다.
+    """
+    return not (note or "").strip()
+
+
 class ReviewRequest(BaseModel):
     review_request_id: UUID = Field(default_factory=uuid4)
     project_id: str
