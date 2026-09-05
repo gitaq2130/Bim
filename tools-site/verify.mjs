@@ -83,5 +83,70 @@ eq("29.99억", grade(2999999999), "초급기술인 이상");
 eq("100억 경계", grade(10000000000), "고급기술인 이상");
 eq("700억", grade(70000000000), "기술사");
 
+/* --- 설계변경 증감률 --- */
+function change(B,A){ const d=A-B; return {diff:d, rate:+((d/B)*100).toFixed(2),
+  sign: d>0?"+":(d<0?"△":"")}; }
+let ch=change(1097204046,1160204046);
+eq("설계변경 증감액", ch.diff, 63000000);
+eq("설계변경 부호", ch.sign, "+");
+let ch2=change(1000000000,900000000);
+eq("감액 부호 △", ch2.sign, "△");
+eq("감액 증감률", ch2.rate, -10);
+
+/* --- 기성금 --- */
+function claim(C,R,P,ADV,AR){
+  const cum=Math.floor(C*R), settle=Math.floor(ADV*AR);
+  return {cum, settle, claim: cum-P-settle};
+}
+let pc=claim(1000000000,0.425,300000000,100000000,0.425);
+eq("누계 기성금액", pc.cum, 425000000);
+eq("선금 정산액", pc.settle, 42500000);
+eq("이번 청구액", pc.claim, 82500000);
+
+/* --- 면적 안분 --- */
+function share(T,TA,MA){ return Math.floor(T*(MA/TA)); }
+eq("면적 안분 100만/1000㎡ 중 100㎡", share(1000000,1000,100), 100000);
+eq("안분 0면적", share(1000000,1000,0), 0);
+
+/* --- 금액 한글 --- */
+const DIGITS=["","일","이","삼","사","오","육","칠","팔","구"];
+const SMALL=["","십","백","천"], BIG=["","만","억","조","경"];
+function fourDigits(n,keepOne){
+  let out="", s=String(n).padStart(4,"0");
+  for(let i=0;i<4;i++){
+    const d=Number(s[i]), unit=SMALL[3-i];
+    if(d===0) continue;
+    if(d===1 && unit && !keepOne) out+=unit; else out+=DIGITS[d]+unit;
+  }
+  return out;
+}
+function toHangul(n,keepOne){
+  n=Math.floor(n); if(n===0) return "영";
+  const g=[]; while(n>0){ g.push(n%10000); n=Math.floor(n/10000); }
+  const parts=[];
+  for(let i=g.length-1;i>=0;i--){
+    if(g[i]===0) continue;
+    let head=fourDigits(g[i],keepOne);
+    if(!keepOne && g[i]===1 && i===1) head="";
+    parts.push(head+BIG[i]);
+  }
+  return parts.join("");
+}
+eq("한글 0", toHangul(0,true), "영");
+eq("한글 15 계약서", toHangul(15,true), "일십오");
+eq("한글 15 관행", toHangul(15,false), "십오");
+eq("한글 115 계약서", toHangul(115,true), "일백일십오");
+eq("한글 115 관행", toHangul(115,false), "백십오");
+eq("한글 1억", toHangul(100000000,true), "일억");
+eq("한글 1만", toHangul(10000,true), "일만");
+eq("한글 1만 관행", toHangul(10000,false), "만");
+eq("한글 10203", toHangul(10203,true), "일만이백삼");
+eq("한글 1097204046", toHangul(1097204046,true), "일십억구천칠백이십만사천사십육");
+eq("한글 1000000", toHangul(1000000,true), "일백만");
+eq("한글 20000000", toHangul(20000000,true), "이천만");
+eq("한글 1억 관행(일억 유지)", toHangul(100000000,false), "일억");
+eq("한글 12000 관행", toHangul(12000,false), "만이천");
+eq("한글 10001 관행", toHangul(10001,false), "만일");
+
 console.log("\n"+pass+" passed, "+fail+" failed");
 process.exit(fail?1:0);
