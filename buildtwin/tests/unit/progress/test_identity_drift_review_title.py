@@ -1,9 +1,13 @@
 """식별 드리프트 검토요청 제목 — **모르는 경위를 아는 경위로 떨어뜨리지 않는다**
 (ADR 0009 §Deferred 5 · §5-3-a · §5-4, CLAUDE.md §6-4 규칙 2, 담당: qa).
 
-`cause` 문자열의 정본은 생산자(`services/ingest/persistence` 의 `_CAUSE_ROW_*`)이고 지금 그 값은 **네
-자리에 복제돼 있다**(ADR 0009 §Deferred 5). 값을 한 곳으로 올리는 일은 이 사이클의 범위 밖이므로,
-그때까지의 유일한 방어가 **폴백 규칙**이다: **소비 자리 둘**(§Deferred 5 표의 2 `document_mapper` ·
+`cause` 문자열의 정본은 `packages/core/models/review.py` 의 `IDENTITY_DRIFT_CAUSE_*` 다(계획 0005
+작업 7 이 ADR 0009 §Deferred 5 를 닫았다 — `persistence._CAUSE_ROW_*` 와 `document_mapper._CAUSE_ROW_*`
+는 이제 그 정본을 가리키는 별칭이고, 남의 파일이 심볼 이름으로 가리키고 있어 남겨 둔 것이다).
+**파이썬 밖은 그 단일화가 닿지 않는다** — `apps/web` 둘과 `config/document_register.yaml` 은 여전히
+별도 선언이고, 그 불일치를 파이썬 테스트는 잡지 못한다(실측: `row_absorbed` 를 파이썬 전 계층에
+일관 개명하고 TS·yaml 을 두면 pytest·vitest **전원 통과**). 그래서 아래 **폴백 규칙**이 계속
+방어다: **소비 자리 둘**(§Deferred 5 표의 2 `document_mapper` ·
 3 `identityDrift.ts` — 4번은 상수가 아니라 `ReviewKind` 머리 **주석**이고 1번은 생산자다) 모두 모르는
 `cause` 를 `unspecified` 로 두고 `row_moved` 로 떨어뜨리지 않는다. 모르는 경위를 가장 흔한 경위로
 적으면 §5-4 가 고치려는 바로 그 거짓("고아 문서에 남았습니다 / 0건 이동했고 / 새 doc_id 위에서 다시

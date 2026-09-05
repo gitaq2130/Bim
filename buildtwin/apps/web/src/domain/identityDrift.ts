@@ -2,7 +2,10 @@
  * 식별 드리프트가 사람의 판단을 오염시킨 **경위**(`LostDecision.cause`, ADR 0009 §5-2 (마)·§5-3) 분류와,
  * 그 경위에서 **참인 문장만** 만들어 내는 자리.
  *
- * 정본은 서버가 보내는 기계 판독 값(`services/ingest/persistence.py` 의 `_CAUSE_ROW_*`)이다. 검토요청
+ * 정본은 서버가 보내는 기계 판독 값이고, 그 값의 정본 정의는 `packages/core/models/review.py` 의
+ * `IDENTITY_DRIFT_CAUSE_*` 다(계획 0005 작업 7 — `persistence._CAUSE_ROW_*` 는 그것을 가리키는 별칭).
+ * 이 파일의 아래 선언은 그 정본과 **기계적으로 묶여 있지 않다**(TS 는 파이썬 상수를 import 할 수 없다).
+ * 검토요청
  * `title` 산문은 이미 경위별로 갈려 쓰이지만(`document_mapper._identity_drift_review_title`), 화면이
  * 그 산문을 부분 문자열로 되읽어 분류하는 것은 이 저장소가 `Blocker.kind` 도입으로 걷어낸 패턴이므로
  * 하지 않는다(`domain/documentBlocker` 머리말과 같은 이유).

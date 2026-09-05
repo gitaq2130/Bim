@@ -371,7 +371,8 @@ export interface ReviewRequest {
 
 /**
  * 사람의 판단(확정·반려)이 식별 드리프트로 **오염된 경위**.
- * 정본은 `services/ingest/persistence.py` 의 `_CAUSE_ROW_*` 상수이고, 소비자인
+ * 정본은 `packages/core/models/review.py` 의 `IDENTITY_DRIFT_CAUSE_*` 다(계획 0005 작업 7).
+ * `services/ingest/persistence.py` 의 `_CAUSE_ROW_*` 는 그 정본을 가리키는 별칭이다. 소비자인
  * `services/progress/document_mapper._identity_drift_review_title` 이 CM 에게 보일 문구를 이 값으로 가른다.
  *
  * **개정 2에서 셋 다 이름이 바뀌었다**(ADR 0009 §5-2 (마)). 옛 이름은 전부 관측과 어긋나 있었다 —
