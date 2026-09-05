@@ -36,6 +36,7 @@ from packages.core.models.orm import (
     ReviewRequestRow,
 )
 from packages.core.models.progress import DailyReport
+from packages.core.models.review import ReviewRejectionReasonRequiredError, rejection_reason_missing
 from packages.core.models.state import Actor, InvalidTransitionError, ObjectState
 from services.knowledge import RuleEngine, load_rules, persist_verdicts, record_expert_review
 from services.progress import persistence as db
@@ -221,6 +222,14 @@ def transition_object(session: Session, global_id: str, req: TransitionRequest, 
         raise
     except TransitionBlockedByReviewError:
         # 마찬가지로 errors.py 전용 핸들러가 review_request_ids 를 싣는다 — 감싸지 않는다.
+        session.rollback()
+        raise
+    except ReviewRejectionReasonRequiredError:
+        # ADR 0012 규칙 2(문 B): close_inspection_reviews 가 사유 없는 반려를 거부했다. 이 예외는
+        # InvalidTransitionError 하위 타입이 아니므로(ADR 0012 규칙 3) 위 두 except 에 걸리지 않는다.
+        # 전이행·객체 상태가 이미 flush 된 뒤에 나므로 명시적으로 되돌린다 — 의존성이 세션을 닫아 주는
+        # 것에 기대지 않는다(계획 0005 열린 질문 3). errors.py 전용 핸들러가 409 + review_kind/
+        # review_request_ids 를 싣는다 — 감싸지 않는다.
         session.rollback()
         raise
     t = result.transition
@@ -428,6 +437,13 @@ def resolve_review(session: Session, review_request_id: str, decision: str, note
     project_role(session, row.project_id, user, CONFIRM_ROLE)   # ADR 0006 규칙 6: 대상 행의 project_id 로 검사
     if row.status != "open":
         raise Conflict(f"review request already {row.status}", code="review_already_resolved")
+    # ADR 0012 불변식 4 / 규칙 1(문 A). **순서가 계약이다 — 이 가드는 review_already_resolved 검사 *뒤*다.**
+    # 앞에 두면 이미 처리된 요청에 사유 없는 반려를 보냈을 때 code 가 뒤집힌다
+    # (tests/integration/test_08_review_requests.py:127-129 가 그 조합에 review_already_resolved 를 고정한다).
+    # 낡은 요청과 빠진 사유는 CM 이 할 일이 다르고(새로고침 ↔ 사유 작성), 낡은 요청이 먼저다.
+    # 자리는 분기 dispatch 앞의 프롤로그 — 5 kind × 3 decision 전부가 이 줄을 지난다.
+    if decision == "rejected" and rejection_reason_missing(note):
+        raise ReviewRejectionReasonRequiredError(row.kind, [review_request_id], "resolve_review")
     before = db.review_row_to_model(row).model_dump(mode="json")
     evidence = Evidence(source_type="cm_action", source_id=user.user_id, method="review_resolution", note=note,
                         extra={"review_request_id": review_request_id, "review_kind": row.kind, "decision": decision,

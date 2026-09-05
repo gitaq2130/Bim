@@ -214,7 +214,8 @@
 이 계약은 OpenAPI 스키마가 아니라 `services/api/errors.py`의 예외 핸들러가 만든다(생성 시 고정 삽입).
 
 `ApiError` 계열 예외(및 상태기계의 `InvalidTransitionError` / `RevocationReasonRequiredError` /
-`TransitionBlockedByReviewError` / `ObjectNotFoundError`)는 도메인에 맞는 HTTP 상태코드와 함께 다음
+`TransitionBlockedByReviewError` / `ObjectNotFoundError`, 그리고 코어 모델의
+`ReviewRejectionReasonRequiredError`)는 도메인에 맞는 HTTP 상태코드와 함께 다음
 본문을 반환한다:
 
 ```json
@@ -222,10 +223,17 @@
 ```
 
 일부 `code`는 부가 필드를 더 싣는다(`invalid_transition`·`revocation_reason_required` →
-`from_state`/`to_state`/`actor`, `transition_blocked_by_review` → `review_request_ids`) — 어떤 호출
+`from_state`/`to_state`/`actor`, `transition_blocked_by_review` → `review_request_ids`,
+`rejection_reason_required` → `review_kind`/`review_request_ids`) — 어떤 호출
 경로로 발생했든 같은 `code`는 같은 모양의 응답을 낸다. `RevocationReasonRequiredError`는
 `InvalidTransitionError`의 하위 타입이지만 스타레트가 `type(exc).__mro__`를 순회해 가장 하위 핸들러를
 고르므로 `revocation_reason_required`로 나간다(등록 순서 무관, ADR 0011).
+`rejection_reason_required`(409, ADR 0012 불변식 4 — 검토요청을 `rejected`로 닫는데 사유가 비었다)는
+반대다: `ReviewRejectionReasonRequiredError`는 `InvalidTransitionError`의 하위 타입이 **아니라서**
+MRO로 상속되는 핸들러가 없고, `errors.py`의 전용 핸들러가 없으면 `code` 없는 500이 된다.
+이 `code`가 `from_state`/`to_state`/`actor`를 싣지 **않는** 이유는 두 발생 경로
+(`POST /api/review-requests/{id}/resolve` 큐 · `POST /api/objects/{global_id}/transitions` 전이)의
+공통 분모가 그 둘이 아니기 때문이다 — 큐 경로에는 전이가 없어 그 세 필드가 존재하지 않는다.
 인증 실패(401)도 `code: "unauthorized"`를 싣는다. FastAPI 자체 요청 검증 실패
 (422, `RequestValidationError`)는 이 계약 밖으로, `code` 없이 FastAPI 기본 형식(`{"detail": [...]}` )을
 그대로 반환한다.

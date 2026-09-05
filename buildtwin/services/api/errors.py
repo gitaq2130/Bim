@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from packages.core.models.review import ReviewRejectionReasonRequiredError
 from packages.core.models.state import InvalidTransitionError, RevocationReasonRequiredError
 from services.progress.state_machine import ObjectNotFoundError, TransitionBlockedByReviewError
 
@@ -104,6 +105,32 @@ def install_handlers(app: FastAPI) -> None:
         return JSONResponse(status_code=409, content={"detail": str(exc), "code": "revocation_reason_required",
                                                       "from_state": exc.from_state.value,
                                                       "to_state": exc.to_state.value, "actor": exc.actor.value})
+
+    @app.exception_handler(ReviewRejectionReasonRequiredError)
+    async def _rejection_reason_required(_: Request, exc: ReviewRejectionReasonRequiredError) -> JSONResponse:
+        """ADR 0012 불변식 4 — 검토요청을 `rejected` 로 닫는데 사유가 없다(문 A 큐 · 문 B 상태 전이).
+
+        **이 핸들러가 없으면 500 이다.** `ReviewRejectionReasonRequiredError` 는 `Exception` 직속이라
+        (ADR 0012 규칙 3 — 하위 타입이면 `usecases.resolve_review` 의 inspection 분기 `log.info` 가
+        삼킨다) 위 `_invalid_transition` 이 MRO 로 받아 주지 않는다. 즉 이 핸들러는 편의가 아니라
+        불변식의 일부다.
+
+        **상태코드 409.** 요청 스키마 위반(422)이 아니라 **대상의 현재 상태에 대한 요건**이고
+        (문 B 에서는 "미결 inspection 이 있을 때"만 걸린다), glossary 서문의 호환 약속대로 `code` 를
+        모르는 클라이언트에게는 그대로 409 + `detail` 이다.
+
+        **부가 필드는 `review_kind`·`review_request_ids` 둘뿐이다.** glossary 부칙 "응답 모양 일관성"은
+        같은 code 가 어느 경로로 나가든 같은 부가 필드를 싣기를 요구하는데, 두 raise 자리의 공통 분모가
+        그 둘뿐이다 — 문 A 의 네 kind(mapping·verification·document_mapping·document_identity_drift)에는
+        전이가 없어 `from_state`/`to_state`/`actor` 가 **존재하지 않는다**(ADR 0012 규칙 4).
+
+        `detail` 은 예외 자신의 문장을 그대로 쓴다. `InvalidTransitionError` 의 `"… not allowed."` 를
+        빌려 쓰지 않는다 — 반려는 허용된 행위이고 빠진 것은 사유뿐이라 그 문장이 여기서 거짓이다
+        (ADR 0011 규칙 1-b 와 같은 판단).
+        """
+        return JSONResponse(status_code=409, content={"detail": str(exc), "code": "rejection_reason_required",
+                                                      "review_kind": exc.review_kind,
+                                                      "review_request_ids": list(exc.review_request_ids)})
 
     @app.exception_handler(TransitionBlockedByReviewError)
     async def _blocked(_: Request, exc: TransitionBlockedByReviewError) -> JSONResponse:
