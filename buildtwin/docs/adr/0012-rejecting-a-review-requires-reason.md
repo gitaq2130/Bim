@@ -85,9 +85,10 @@ apps/web/src/pages/ReviewsPage.tsx:177    requireNote={pending?.decision === "re
 | `INSPECTION_REQUESTED → MISMATCH`(cm) | 미전송 | **201** | `rejected` | `INSPECTION_REQUESTED -> MISMATCH by cm (u-cm-dc39d3db); transition_id=8a7a47bc-…` |
 | `MISMATCH → IN_PROGRESS`(cm, 미결 inspection **없음**) | 미전송 | 201 | — (닫히는 요청 없음) | — |
 
-> **3행이 보이는 것은 `from_state` 축이지 "미결 inspection 이 있을 때" 축이 아니다.** `accept_rework`
-> 는 `close_inspection_reviews` 첫 줄의 `from_state != INSPECTION_REQUESTED` 에서 먼저 돌아가므로 그
-> 한정어는 **평가조차 되지 않고**, 한정어를 빼도 값이 같다(절제 실측은 §한정어 역방향 확인 표).
+> **3행은 두 축 어느 쪽도 보이지 않는다.** `accept_rework` 는 `close_inspection_reviews` 첫 줄의
+> `from_state != INSPECTION_REQUESTED` 에서 먼저 돌아가므로 "미결 inspection 이 있을 때" 한정어는
+> **평가조차 되지 않고**, 그렇다고 `from_state` 축을 보는 것도 아니다 — 이 전제는 미결 inspection 이
+> 0건이라 그 조건을 지워도 값이 201 그대로다(절제 실측은 §한정어 역방향 확인 표).
 
 화면에도 그 문이 있다. 같은 실측의 `next_actions`(`INSPECTION_REQUESTED` / cm):
 
@@ -309,7 +310,7 @@ glossary "오류 응답 code 어휘" 표에 행을 더하고, 부가 필드가 `
 | kind 를 가르지 **않는다**(5 kind 전부) | — | kind 별 예외 | 코드 인용: `ReviewsPage.tsx:177` `requireNote={pending?.decision === "rejected"}` 는 kind 를 보지 않는다. 서버를 kind 로 가르면 화면·서버의 축이 어긋난다 |
 | `not (note or "").strip()`(공백만 거부) | 없음 | 공백 한 칸이 사유로 통과하는 경우 | 실행값: `rejected` + `note="   "` → **200**, 그리고 `on_hold` + `note="   "` 는 `resolution_note` 에 `"   "` 가 **그대로 저장**된다(§1 표 2·4행). 화면은 `ConfirmDialog.tsx:44` 에서 `!note.trim()` 으로 잠그지만 API 직접 호출에는 그 방어가 없다 |
 | 문 B 의 `미결 inspection 이 있을 때` | **`from_state == INSPECTION_REQUESTED` 인데 미결 inspection 이 0건**인 전이까지 사유 필수(큐에서 `on_hold` 로 닫은 객체의 `reject_inspection`) | 바로 그 전이 — 닫는 요청이 없으므로 사유를 요구할 근거가 없다 | **절제 실행값**(작업 트리 `404022d`, 가드에서 `and open_reviews` 만 뺀 트리와 나란히): 큐 `on_hold` 200 → 객체 `INSPECTION_REQUESTED` 유지·`has_open_review=false`·`open_review_ids=[]`, 이어 note 미전송 `reject_inspection` → **한정어 있음 201 / 뺌 409 `rejection_reason_required` + 객체 `INSPECTION_REQUESTED` 유지**. 그 요청의 최종 상태는 양쪽 다 `on_hold` 라 불변식은 서 있다 |
-| **(이 한정어의 음성 대조군이 아니다)** `accept_rework` = `MISMATCH → IN_PROGRESS`, note 미전송 | — | — | 같은 절제 실행값에서 **양쪽 다 201**. 이 전이를 거르는 것은 이 한정어가 아니라 `close_inspection_reviews` 첫 줄의 `transition.from_state != ObjectState.INSPECTION_REQUESTED` 이고, 그래서 한정어는 평가조차 되지 않는다. 이 행이 지키는 것은 **문 B 를 `from_state` 로 가르는 조건** 쪽이다(그 조건을 빼면 CM 의 상시 재작업 승인이 막힌다) |
+| **(이 한정어의 음성 대조군이 아니다)** `accept_rework` = `MISMATCH → IN_PROGRESS`, note 미전송 | — | — | 같은 절제 실행값에서 **양쪽 다 201**. 이 전이를 거르는 것은 이 한정어가 아니라 `close_inspection_reviews` 첫 줄의 `transition.from_state != ObjectState.INSPECTION_REQUESTED` 이고, 그래서 한정어는 평가조차 되지 않는다. **이 행은 `from_state` 조건도 지키지 않는다** — 이 전제가 앞선 CM 전이로 요청을 이미 닫아 미결 inspection 이 0건이라, 그 조건만 지운 트리에서도 201 그대로다(실측 2026-09-05, HEAD `41e5fe0`: 그 조건만 지운 트리 `.venv/bin/pytest -q` → **783 passed**, 실패 0). **`from_state` 축은 현재 어떤 테스트도 지키지 않는다.** 그 조건이 무보호로 지키고 있는 것 자체는 실재한다(탐침 실측 2026-09-05): `INSPECTION_REQUESTED` 에서 **system** 스캔 판정(`ScanState.MISMATCH` → `ObjectStateMachine.apply_scan_verdict`, 운영 진입점은 `services/api/jobs.py` 의 `verdict` 잡)으로 MISMATCH 에 내려오면 `close_inspection_reviews` 가 `actor != CM` 에서 돌아가 **미결 inspection 이 열린 채 MISMATCH** 가 된다(그 객체의 `open_reviews(kind="inspection")` **1건**). 그 상태에서 note 없는 `accept_rework` 는 **조건 있음 → 201·`closed=[]` / 조건 뺌 → `ReviewRejectionReasonRequiredError`** 다 |
 | 문 B 를 `close_inspection_reviews` 에 둔다(`StateTransition._check` 가 아니라) | — | 모델 검증자로는 이 조건을 볼 수 없다 | 코드 인용: `packages/core/models/state.py` `def _check(self) -> StateTransition:` — 인자가 `self` 뿐이라 `session` 이 없다. `close_inspection_reviews(session, project_id, global_id, transition)`(`state_machine.py:132`)가 그 사실을 아는 유일한 자리다 |
 | 예외를 `Exception` **직속**으로 둔다 | — | `InvalidTransitionError` 핸들러의 MRO 상속(409 + `invalid_transition`) | 실행값(monkeypatch 탐침): 하위 타입 → **200, `code` 없음**(삼켜짐) / `Exception` 직속 → **resolve_review 밖으로 전파**. 코드 인용: `usecases.py:442-446` `except InvalidTransitionError … log.info("inspection rejected but no rework transition: %s", exc)` |
 | 가드를 `review_already_resolved` **뒤**에 둔다 | — | 낡은 요청에 사유 없는 반려를 보낸 경우가 새 code 로 바뀐다 | 코드 인용: `tests/integration/test_08_review_requests.py:127-129` 가 그 조합(`{"decision":"rejected"}`, note 미전송, 이미 `approved` 인 요청)에 `code == "review_already_resolved"` 를 고정한다 |

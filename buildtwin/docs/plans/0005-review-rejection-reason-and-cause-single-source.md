@@ -191,9 +191,16 @@ inspection 이 0건**인 전이 — 큐에서 그 요청을 `on_hold` 로 닫으
 `transition.from_state != ObjectState.INSPECTION_REQUESTED` 에서 먼저 돌아가므로 한정어는 **평가조차
 되지 않고**, 위 실측대로 한정어의 유무와 값이 같다. 그것을 음성 대조군으로 쓰면 §6-2 의 질문
 ("이 기대값을 결함 있는 코드가 그대로 만족하는가")에 **예**다 — 한정어를 지운 구현이 그 칸을 통과한다.
-그래서 이 한정어의 음성 대조군은 **미결 inspection 0건 축**이고, `accept_rework` 는 그것과 별개로
-**`from_state` 축**의 음성 대조군으로 남긴다(그 조건을 빼면 CM 의 상시 재작업 승인이 막힌다 —
-ADR 0011 이 CONFIRMED **진입**을 같은 이유로 뺀 것과 같은 판단이다).
+그래서 이 한정어의 음성 대조군은 **미결 inspection 0건 축**이다. 그리고 `accept_rework` 는
+**`from_state` 축의 음성 대조군도 되지 못한다** — 이 전제(앞선 CM 전이가 그 요청을 이미 닫았다)에서는
+미결 inspection 이 0건이라 `from_state` 조건을 지워도 201 그대로다. 실측(2026-09-05, HEAD `41e5fe0`):
+그 조건만 지운 트리 `.venv/bin/pytest -q` → **783 passed**(실패 0). 즉 **`from_state` 축은 현재 어떤
+테스트도 지키지 않는다.** 그 조건이 무보호로 지키는 것 자체는 실재한다(탐침 실측): `INSPECTION_REQUESTED`
+에서 **system** 스캔 판정(`ScanState.MISMATCH`)으로 MISMATCH 에 내려오면 `close_inspection_reviews` 가
+`actor != CM` 에서 돌아가 미결 inspection 이 **열린 채** MISMATCH 가 되고
+(`open_reviews(kind="inspection")` **1건**), 그 상태의 note 없는 `accept_rework` 는 조건 있음 **201** /
+조건 뺌 **`ReviewRejectionReasonRequiredError`** 다 — ADR 0011 이 CONFIRMED **진입**을 CM 상시 업무라는
+이유로 뺀 것과 같은 판단이다.
 
 ## 1-c. 어떤 `kind` · 어떤 결정이 대상인가 — 양쪽을 각각 셌다
 
@@ -299,7 +306,7 @@ ADR 0011 §Deferred 1 이 "CM 상시 업무를 바꾸는 결정이므로 실측 
 | `INSPECTION_REQUESTED → IN_PROGRESS` | 공백만 | 201, 요청 `rejected` | **409 동일** |
 | `INSPECTION_REQUESTED → IN_PROGRESS` | 사유 | 201, 요청 `rejected` | 201, 요청 `rejected` |
 | `INSPECTION_REQUESTED → IN_PROGRESS`, 미결 inspection **0건**(큐에서 `on_hold` 로 닫은 뒤) | 없음 | 201 | **201**(이 한정어의 음성 대조군 — 한정어를 빼면 여기가 409 로 뒤집힌다. `404022d` 절제 실측) |
-| `MISMATCH → IN_PROGRESS`(=`accept_rework`) | 없음 | 201 | **201**(`from_state` 축의 음성 대조군 — 한정어의 유무와 무관하게 201 이다) |
+| `MISMATCH → IN_PROGRESS`(=`accept_rework`) | 없음 | 201 | **201**(어느 축의 음성 대조군도 아니다 — 이 전제에서는 미결 inspection 이 0건이라 두 조건 중 무엇을 지워도 201 이다. 실측: `from_state` 조건만 지운 트리 `.venv/bin/pytest -q` → **783 passed**) |
 
 **기존 스위트 폭발 반경 = 0.** 가드를 넣은 채 전량을 돌렸다:
 
@@ -319,7 +326,7 @@ ADR 0011 §Deferred 1 이 "CM 상시 업무를 바꾸는 결정이므로 실측 
 | kind 를 가르지 **않는다**(5 kind 전부) | — | kind 별 예외 | 코드 인용: `ReviewsPage.tsx:177` `requireNote={pending?.decision === "rejected"}` 는 kind 를 보지 않는다. 서버를 kind 로 가르면 화면·서버 축이 어긋난다(§1-c) |
 | `not (note or "").strip()`(공백만 거부) | 없음 | 공백 한 칸이 사유로 통과하는 경우 | 실측: HEAD 에서 `note="   "` 반려는 200 이고 `resolution_note` 에 `"   "` 가 그대로 저장된다(§1-e 기준선). 화면은 `ConfirmDialog.tsx:44` 에서 `!note.trim()` 으로 잠그지만 API 직접 호출에는 그 방어가 없다 |
 | 자리 B 의 `미결 inspection 이 있을 때` | **`from_state == INSPECTION_REQUESTED` 인데 미결 inspection 이 0건**인 전이까지 사유 필수 | 바로 그 전이(큐에서 `on_hold` 로 닫은 객체의 `reject_inspection`) | **절제 실측**(`404022d`, `and open_reviews` 만 뺀 트리와 나란히): 한정어 있음 **201** / 뺌 **409 `rejection_reason_required`**, 객체 `INSPECTION_REQUESTED` 유지 |
-| **(이 한정어의 음성 대조군이 아니다)** `accept_rework` = `MISMATCH → IN_PROGRESS` | — | — | 같은 절제 실측에서 **양쪽 다 201** — `from_state` 검사에서 먼저 돌아가 한정어가 평가되지 않는다. 이 행이 지키는 것은 `from_state` 축 |
+| **(이 한정어의 음성 대조군이 아니다)** `accept_rework` = `MISMATCH → IN_PROGRESS` | — | — | 같은 절제 실측에서 **양쪽 다 201** — `from_state` 검사에서 먼저 돌아가 한정어가 평가되지 않는다. **이 행은 `from_state` 축도 지키지 않는다**: 그 조건만 지운 트리에서 `.venv/bin/pytest -q` → **783 passed**(실패 0, HEAD `41e5fe0`). `from_state` 축은 현재 어떤 테스트도 지키지 않는다 |
 | 자리 B 를 `close_inspection_reviews` 에 둔다(`StateTransition._check` 가 아니라) | — | 모델 검증자로는 이 조건을 볼 수 없다 | 코드 인용: `state.py::StateTransition._check` 는 `session` 을 갖지 않아 "미결 inspection 이 있는가"를 물을 수 없다. `close_inspection_reviews(session, project_id, global_id, transition)`(`state_machine.py:132`)가 그 사실을 아는 유일한 자리다 |
 | 술어를 `packages/core/models/review.py` 에 둔다 | — | 서비스 층에 두면 세 소유가 각자 복제한다 | 1-a 표: `rejected` 를 쓰는 세 자리가 progress-engine·api·sync-2d3d 로 소유가 전부 다르다. 공통 상위는 `packages/core` 뿐이다 |
 
@@ -771,7 +778,7 @@ rejection_reason_required: "반려하려면 사유를 입력해야 합니다. �
 | V4 | 5 kind × {`approved`,`on_hold`} × note 없음 | 200 — **30칸 전수** | 아니오. 조건을 넓힌 구현(모든 결정에 사유)이 여기서 죽는다 |
 | V5 | `INSPECTION_REQUESTED → IN_PROGRESS`(cm, note 없음) | 409 `rejection_reason_required` **+ 객체 상태가 `INSPECTION_REQUESTED` 로 남는다 + 요청이 `open` 으로 남는다**(셋을 함께 단언 — §6-2 4) | 아니오. 자리 A 만 고친 구현이 여기서 죽는다(HEAD 실측 201) |
 | V6 | `INSPECTION_REQUESTED → MISMATCH`(cm, note 없음) | V5 와 동일 | 아니오. `to_state` 로만 가른 구현(→IN_PROGRESS 만 막음)이 여기서 죽는다 |
-| V7 | **음성 대조군 두 축**(cm, note 없음): ⓐ `from_state == INSPECTION_REQUESTED` 인데 미결 inspection **0건**(큐에서 `on_hold` 로 닫은 뒤의 `reject_inspection`) ⓑ `MISMATCH → IN_PROGRESS`(=`accept_rework`) | 둘 다 201 | **예 — 그래서 V5·V6 과 쌍으로만 의미가 있다.** 그리고 **두 축은 서로를 대신하지 못한다**: 절제 실측(`404022d`, `and open_reviews` 만 제거) 결과 ⓑ 는 양쪽 다 201 이라 그 절제를 **잡지 못하고**(`from_state` 검사에서 먼저 돌아간다), ⓐ 만 409 로 뒤집혀 잡는다. ⓑ 가 잡는 것은 `from_state` 조건을 지운 구현이다 |
+| V7 | **음성 대조군 두 축**(cm, note 없음): ⓐ `from_state == INSPECTION_REQUESTED` 인데 미결 inspection **0건**(큐에서 `on_hold` 로 닫은 뒤의 `reject_inspection`) ⓑ `MISMATCH → IN_PROGRESS`(=`accept_rework`) | 둘 다 201 | **예 — 그래서 V5·V6 과 쌍으로만 의미가 있다.** 그리고 **두 축은 서로를 대신하지 못한다**: 절제 실측(`404022d`, `and open_reviews` 만 제거) 결과 ⓑ 는 양쪽 다 201 이라 그 절제를 **잡지 못하고**(`from_state` 검사에서 먼저 돌아간다), ⓐ 만 409 로 뒤집혀 잡는다. 그리고 **ⓑ 는 `from_state` 조건을 지운 구현도 잡지 못한다** — ⓑ 의 전제가 앞선 CM 전이로 그 요청을 이미 닫아 미결 inspection 이 0건이기 때문이다. 실측(2026-09-05, HEAD `41e5fe0`): 그 조건만 지운 트리 `.venv/bin/pytest -q` → **783 passed**(실패 0). **`from_state` 축은 현재 어떤 테스트도 지키지 않는다.** 그 축을 실제로 잡으려면 미결 inspection 이 **열린 채** MISMATCH 인 객체가 필요하고, 그 상태는 `INSPECTION_REQUESTED` 에서 **system** 스캔 판정(`ScanState.MISMATCH`)으로 내려오는 경로가 만든다(탐침 실측: 그 상태의 note 없는 `accept_rework` 가 조건 있음 **201** / 뺌 **`ReviewRejectionReasonRequiredError`**). 이 사이클은 그 축을 **무보호로 기록만 하고 닫는다** — 시나리오를 더하지 않는다 |
 | V8 | 화면: 객체 패널 `검측 반려(재작업)` 다이얼로그 | 사유 라벨에 "(필수)"가 붙고 사유가 비면 확인 버튼 `disabled` | 아니오. `REVOCATION_KINDS` 만 있는 지금 구현에서 `false`(실측) |
 | V9 | 화면: `ErrorBox` 가 `rejection_reason_required` 를 받았을 때 | **"새로고침"이라는 말이 없다** + "사유"라는 말이 있다(문장을 베끼지 않는다 — §6-4 3) | 아니오. `invalid_transition` 문구를 재사용한 구현이 죽는다 |
 | V10 | 화면: 큐 반려 다이얼로그(기존) | V8 과 같은 단언, 5 kind 전부 | 부분(기존 `ReviewsPage.test.tsx:362` 가 일부 덮는다). kind 축으로 넓힌다 |
