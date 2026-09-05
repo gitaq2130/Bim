@@ -24,7 +24,11 @@ from sqlalchemy.orm import Session
 from packages.core.models.evidence import Evidence
 from packages.core.models.orm import BimObjectRow, StateTransitionRow
 from packages.core.models.progress import DailyReport, DailyReportItem
-from packages.core.models.review import ReviewRequest
+from packages.core.models.review import (
+    ReviewRejectionReasonRequiredError,
+    ReviewRequest,
+    rejection_reason_missing,
+)
 from packages.core.models.scan import ScanState, ScanVerdict
 from packages.core.models.state import (
     ALLOWED_TRANSITIONS,
@@ -130,22 +134,53 @@ def ensure_inspection_review(session: Session, project_id: str, global_id: str, 
 
 
 def close_inspection_reviews(session: Session, project_id: str, global_id: str, transition: StateTransition) -> list[str]:
-    """cm 이 INSPECTION_REQUESTED 에서 CONFIRMED(approved) / IN_PROGRESS·MISMATCH(rejected) 로 전이하면 미결 inspection 요청을 닫는다."""
+    """cm 이 INSPECTION_REQUESTED 에서 CONFIRMED(approved) / IN_PROGRESS·MISMATCH(rejected) 로 전이하면 미결 inspection 요청을 닫는다.
+
+    ADR 0012 규칙 2(문 B): 이 함수는 **큐가 아닌 두 번째 문**이다 — `POST /api/objects/{gid}/transitions`
+    (`reject_inspection`·`flag_mismatch`)가 큐를 거치지 않고 여기로 내려와 inspection 요청을 `rejected`
+    로 닫는다. 그래서 사유 요건의 가드가 여기에도 선다. 가드를 `StateTransition._check`(모델 검증자)에
+    둘 수 없는 이유는 그 검증자가 `session` 을 갖지 않아 "미결 inspection 이 있는가"를 물을 수 없기
+    때문이고, 그 사실을 아는 자리가 이 함수다.
+    """
     if transition.actor != Actor.CM or transition.from_state != ObjectState.INSPECTION_REQUESTED:
         return []
     status = INSPECTION_DECISIONS.get(transition.to_state)
     if status is None:
         return []
+    open_reviews = db.open_reviews(session, project_id, [global_id], kind="inspection")
+    # 조건에 `open_reviews`(미결 inspection 이 있을 때)를 넣는다 — 닫는 것이 없으면 사유를 요구하지
+    # 않는다. `accept_rework`(MISMATCH → IN_PROGRESS)는 이 조건까지 오지도 못한다(위 from_state 검사에서
+    # 돌아간다); 이 조건이 실제로 가르는 것은 **from_state 가 INSPECTION_REQUESTED 인데 미결 inspection
+    # 요청이 하나도 없는** 전이다. 그 경우 이 함수는 아무것도 닫지 않으므로 사유를 요구할 근거가 없다.
+    if status == "rejected" and open_reviews and rejection_reason_missing(transition.evidence.note):
+        raise ReviewRejectionReasonRequiredError(
+            "inspection", [r.review_request_id for r in open_reviews], "state_transition")
     closed: list[str] = []
-    for review in db.open_reviews(session, project_id, [global_id], kind="inspection"):
+    for review in open_reviews:
         review.status = status
         review.resolved_by = transition.actor_id
         review.resolved_at = datetime.now(UTC)
-        review.resolution_note = (f"{transition.from_state.value} -> {transition.to_state.value} by cm"
-                                  f"{f' ({transition.actor_id})' if transition.actor_id else ''}; transition_id={transition.transition_id}")
+        review.resolution_note = _resolution_note(transition)
         closed.append(review.review_request_id)
     session.flush()
     return closed
+
+
+def _resolution_note(transition: StateTransition) -> str:
+    """검토요청 큐(`ReviewsPage.tsx` "처리 메모")에 보이는 값. **CM 이 적은 사유가 앞에 온다.**
+
+    계획 0005 §1-g 가 · ADR 0012 규칙 5 (가): 전에는 아래 기계 문자열만 적어서, 사유를 필수로 만든 바로
+    다음 화면이 그 사유 대신 `transition_id=…` 를 보여줬다(사유는 전이 `evidence.note` 에 남지만 CM 이
+    큐에서 읽는 자리에는 없었다). 둘 다 필요하다 — 사유는 사람용, 기계 문자열은 전이 추적용이라
+    사유를 앞에 붙이고 기계 문자열은 뒤에 남긴다.
+
+    사유가 없을 수 있는 것은 `approved` 경로다(승인은 사유를 요구하지 않는다 — ADR 0012 §Deferred 1).
+    그때는 예전과 **같은 문자열**이 나간다.
+    """
+    machine = (f"{transition.from_state.value} -> {transition.to_state.value} by cm"
+               f"{f' ({transition.actor_id})' if transition.actor_id else ''}; transition_id={transition.transition_id}")
+    note = (transition.evidence.note or "").strip()
+    return f"{note} | {machine}" if note else machine
 
 
 @dataclass
