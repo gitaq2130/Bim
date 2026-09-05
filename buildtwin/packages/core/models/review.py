@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Final, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
@@ -34,9 +34,9 @@ from .evidence import Evidence
 # 경위 **이름**도 마찬가지다: 개정 2 이전 이름 셋(`orphaned`/`merge_overwritten`/`merge_absorbed`)은
 # 관측과 어긋나 있었고(고아가 아닌 경로를 고아라 하고, `merged=0` 인 주 경로를 병합이라 했다),
 # 이름이 거짓이면 그 이름으로 갈린 문구·라벨도 함께 거짓이 된다(ADR 0009 §5-2 (마) 개명 표·§5-5).
-# 이 주석은 그 `cause` 문자열 정본이 적힌 **네 자리 중 하나**다(ADR 0009 §Deferred 5) — 값을 늘리거나
-# 바꾸는 변경은 여기까지 함께 고쳐야 한다. 실제로 개정 2 의 개명이 코드 세 자리만 고치고 이 주석을
-# 한 개정 동안 옛 이름에 남겨 두었다(주석은 어떤 테스트도 실패시키지 않는다).
+# 위 세 문자열의 **정본은 이 파일 아래의 `IDENTITY_DRIFT_CAUSES`** 다 — ADR 0009 §Deferred 5 가
+# "값을 `packages/core/models/` 로 올려 한 곳에서 정의한다"로 정한 자리이고, 이 문단은 그 정의에 붙은
+# 설명이지 별도의 정본이 아니다.
 #
 # 해소에 부수 효과가 없다 — `services/api/usecases.resolve_review` 의 공통 폴백이 status/note 만 기록한다
 # (document_mapping 처럼 매핑 행을 건드리는 분기를 추가하지 않는다). 사람이 "봤다"고 닫는 것이 목적이고,
@@ -45,6 +45,45 @@ from .evidence import Evidence
 # 답하는 보고 값이다).
 ReviewKind = Literal["mapping", "verification", "inspection", "document_mapping", "document_identity_drift"]
 ReviewStatus = Literal["open", "approved", "rejected", "on_hold"]
+
+# ── `document_identity_drift` 의 오염 경위(`conflicting_sources.lost_decisions[].cause`) 정본 ──────────
+# ADR 0009 §Deferred 5. 위 머리말이 각 값이 무엇을 뜻하는지, 그리고 개정 2 가 왜 이름을 바꿨는지 적는다.
+#
+# **이 정의가 닫는 것과 닫지 못하는 것.** 파이썬 생산자(`services/ingest/persistence`)와 소비자
+# (`services/progress/document_mapper`)가 이 이름을 import 하면 파이썬 안의 불일치는 mypy 와 pytest 가
+# 잡는다. 파이썬 밖의 선언은 같은 문자열을 따로 적는다 — `apps/web/src/api/types.ts` 의
+# `IdentityDriftCause`, `apps/web/src/domain/identityDrift.ts` 의 `IdentityDriftCauseKind`·
+# `SERVER_CAUSE_TO_LOCAL`·`IDENTITY_DRIFT_CAUSE_ORDER`/`_LABELS`/`_NOTES`,
+# `config/document_register.yaml:254,260,261` 의 경고 문구. **이 정의는 그 경계를 넘는 불일치를 잡지
+# 못한다** — 파이썬만 일관되게 개명해도 파이썬 검사는 전부 통과한다(실측 2026-09-05, 작업 트리:
+# `row_absorbed` → `row_relocated` 로 생산·소비·파이썬 테스트를 함께 고친 뒤 `pytest -q` → 738 passed,
+# TS·config 는 옛 이름 그대로). 그 상태의 제품에서는 서버가 보낸 값을
+# `classifyIdentityDriftCause`(`identityDrift.ts:48-51`)가 `SERVER_CAUSE_TO_LOCAL` 에서 찾지 못해
+# 모든 항목이 `"unspecified"`("경위 미상")로 떨어진다 — 예외 없음·테스트 통과·화면 정상.
+# 그 경계를 지키는 것은 이 파일이 아니라 값 집합을 언어 밖에서 대조하는 감사이고, **실측 2026-09-05
+# 기준 이 저장소에 그 감사가 없다**(`grep -rl "IDENTITY_DRIFT_CAUSES\|SERVER_CAUSE_TO_LOCAL" tests/`
+# → 히트 0). 계획 0005 §2-c 가 그 감사의 자리를 `tests/invariants/` 로 지정한다.
+IDENTITY_DRIFT_CAUSE_ROW_MOVED: Final = "row_moved"
+IDENTITY_DRIFT_CAUSE_ROW_REPLACED: Final = "row_replaced"
+IDENTITY_DRIFT_CAUSE_ROW_ABSORBED: Final = "row_absorbed"
+# `unspecified` 는 이 집합에 **들어가지 않는다.** 생산자가 실어 보낼 수 있는 값이 되면 "모른다"가 값이
+# 되고, 그것은 소비자가 모르는 값을 가장 흔한 경위로 떨어뜨리지 않기 위해 만든 자리표시자를 무의미하게
+# 만든다(`services/progress/document_mapper._CAUSE_UNSPECIFIED` 주석과 `identityDrift.ts:40-47` 이 같은
+# 규칙을 적는다).
+IDENTITY_DRIFT_CAUSES: Final[tuple[str, ...]] = (
+    IDENTITY_DRIFT_CAUSE_ROW_MOVED,
+    IDENTITY_DRIFT_CAUSE_ROW_REPLACED,
+    IDENTITY_DRIFT_CAUSE_ROW_ABSORBED,
+)
+IDENTITY_DRIFT_CAUSE_UNSPECIFIED: Final = "unspecified"   # 소비 전용 자리표시자 — 생산자는 쓰지 않는다
+
+# 저장된 과거 기록을 읽는 자리에는 이 Literal 을 쓰지 않는다. `lost_decisions[]` 는 이미 저장된 값을
+# 그대로 싣고 오고(옛 이름 `orphaned`·`merge_overwritten`·`merge_absorbed` 를 포함), 좁은 타입은 그런
+# 항목을 pydantic 검증에서 통째로 튕겨 적재 job 을 실패시키거나 사건을 삼킨다. 그래서
+# `services/progress/document_mapper.LostDecision` 의 `cause` 는 `str` 이다(실측 2026-09-05:
+# `typing.get_type_hints(LostDecision)["cause"]` → `<class 'str'>`) — 이 Literal 은 **생산 시점 계약**을
+# 적는 데에만 쓴다.
+IdentityDriftCause = Literal["row_moved", "row_replaced", "row_absorbed"]
 
 
 class ReviewRejectionReasonRequiredError(Exception):
