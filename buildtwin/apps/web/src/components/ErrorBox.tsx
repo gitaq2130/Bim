@@ -29,6 +29,16 @@ const CODE_MESSAGES: Record<KnownApiErrorCode, string> = {
   // 화면(ObjectDetailPanel 의 requireNote)이 보통 먼저 막으므로 이 문구는 API 직접 호출·화면 누락 시의
   // 최종 방어다 — 그런 자리일수록 안내가 정확해야 한다.
   revocation_reason_required: "확정을 되돌리려면 사유를 입력해야 합니다. 사유를 적은 뒤 다시 시도하세요.",
+  // ADR 0012 불변식 4: 검토요청을 `rejected` 로 닫는 두 문(큐 해소 / 객체 전이) 어느 쪽이든 사유가
+  // 비어 있을 때. 위 두 문구와 반드시 달라야 하는 것 셋 — 그래서 새로 가른 code 다(ADR 0012 규칙 4):
+  //  ① "새로고침"을 말하면 안 된다 — 서버 상태는 최신이고 새로고침해도 달라지지 않는다.
+  //     실측(2026-09-05): 사유 없는 reject_inspection 은 409 `rejection_reason_required` 이고
+  //     검토요청은 `open`, 객체 상태도 그대로다(부분 적용 없음) — 다시 읽어도 같은 값이다.
+  //  ② "수행할 수 없습니다"류 불가 선언도 안 된다 — 반려는 허용된 행위이고 빠진 것은 사유뿐이다.
+  //  ③ "확정을 되돌리려면"이라고 말하면 안 된다 — 이 code 는 5 kind 전부에서 나고, 그중 넷
+  //     (mapping·verification·document_mapping·document_identity_drift) 반려는 확정 무효화가 아니다.
+  // 남는 다음 행동은 하나뿐이므로 그것만 말한다: 사유를 적는다.
+  rejection_reason_required: "검토요청을 반려하려면 사유를 입력해야 합니다. 반려 사유를 적은 뒤 다시 시도하세요.",
   // 열린 검토요청이 있어 다른 전이가 막혔을 때.
   transition_blocked_by_review: "이 객체에 처리되지 않은 검토요청이 있어 전이할 수 없습니다. 먼저 검토요청 페이지에서 처리하세요.",
   // 다른 CM 이 이미 같은 검토요청을 처리했을 때.

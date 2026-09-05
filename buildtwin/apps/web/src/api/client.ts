@@ -19,6 +19,12 @@ export type KnownApiErrorCode =
   // ADR 0011: `invalid_transition` 에서 갈라 나온 409. 전이 자체는 허용 표에 있고 빠진 것은 사유뿐이라
   // 안내가 달라야 한다(glossary "오류 응답 code 어휘" 정본 참조).
   | "revocation_reason_required"
+  // ADR 0012: 검토요청을 `rejected` 로 닫는 두 문(큐 `POST /review-requests/{id}/resolve`,
+  // 객체 전이 `POST /objects/{gid}/transitions`)이 사유 없이 오면 내는 409. `revocation_reason_required`
+  // 와 갈라 둔 이유는 그 문구가 "확정을 되돌리려면"이라 5 kind 중 넷에서 거짓이기 때문이다
+  // (ADR 0012 규칙 4 의 후보 표). 부가 필드는 `review_kind`·`review_request_ids` 둘뿐이다 —
+  // 큐 경로에는 전이가 없어 `from_state`/`to_state`/`actor` 가 존재하지 않는다.
+  | "rejection_reason_required"
   | "transition_blocked_by_review"
   | "review_already_resolved"
   | "inspection_confirm_failed"

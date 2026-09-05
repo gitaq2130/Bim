@@ -294,15 +294,72 @@ const isConfirmAction = (a: NextAction) => a.kind === "confirm" || a.to_state ==
  *
  *   revoke_confirmation  CONFIRMED            -> MISMATCH      사유 필수 (서버가 거부)
  *   order_rework         CONFIRMED            -> IN_PROGRESS   사유 필수 (서버가 거부)
- *   reject_inspection    INSPECTION_REQUESTED -> IN_PROGRESS   사유 불필요 (검측 반려)
- *   flag_mismatch        INSPECTION_REQUESTED -> MISMATCH      사유 불필요
+ *   reject_inspection    INSPECTION_REQUESTED -> IN_PROGRESS   사유 필수 (ADR 0012 — 아래 참조)
+ *   flag_mismatch        INSPECTION_REQUESTED -> MISMATCH      사유 필수 (ADR 0012 — 아래 참조)
  *   accept_rework        MISMATCH             -> IN_PROGRESS   사유 불필요
  *
- * `_action_kind`(`services/progress/state_machine.py:311-319`)가 이 둘에만 고유 이름을 붙여 두었고,
- * 그 값이 `next_actions[].kind` 로 화면에 온다 — 특정할 수 있으면 요건을 걸 수 있다(ADR 0011 §4).
+ * (뒤의 두 줄은 ADR 0012 로 뒤집혔다. 이 주석이 "사유 불필요"라고 적고 있던 동안 서버는 이미 그 둘을
+ * 409 로 거부하고 있었다 — 서버에서 걷어낸 사실이 화면 주석에 남는 계열 (A) 재발을 여기서 닫는다.)
+ *
+ * `_action_kind`(`grep -n "def _action_kind" services/progress/state_machine.py`)가 이 넷에 고유 이름을
+ * 붙여 두었고, 그 값이 `next_actions[].kind` 로 화면에 온다 — 특정할 수 있으면 요건을 걸 수 있다(ADR 0011 §4).
  */
 const REVOCATION_KINDS: ReadonlySet<NextActionKind> = new Set(["revoke_confirmation", "order_rework"]);
+
+/**
+ * ADR 0012 불변식 4 / 규칙 2 — **검토요청을 `rejected` 로 닫는 두 번째 문**(큐가 아니다). 이 두 전이는
+ * `close_inspection_reviews`(`grep -n "def close_inspection_reviews" services/progress/state_machine.py`)
+ * 로 내려가 미결 inspection 검토요청을 `rejected` 로 닫으므로, 서버가 사유 없는 요청을
+ * 409 `rejection_reason_required` 로 거부한다. 이 집합은 CM 이 그 409 를 보기 전에 화면에서 먼저 막는 층이다.
+ *
+ * **여기서도 `to_state` 가 아니라 `kind` 로 가른다**(위 REVOCATION_KINDS 와 같은 이유). CM 이 받는 전이
+ * 행동 중 목적지가 `IN_PROGRESS`·`MISMATCH` 인 것은 다섯인데 서버가 사유를 요구하는 것은 넷이다 —
+ * `to_state` 기준이면 `accept_rework`(MISMATCH→IN_PROGRESS)까지 휩쓸고, 그것은 검토요청을 하나도
+ * 닫지 않는 CM 상시 업무다.
+ *
+ * **화면이 서버보다 넓게 잠근다 — 그 선택과 대가.** 서버 조건에는 한정어가 하나 더 있다:
+ * "**미결 inspection 검토요청이 있을 때**"(`grep -n "status == \"rejected\" and open_reviews" ...`).
+ * 화면은 그 사실을 알 수 **있다** — `ObjectDetail.next_actions` 안의 `resolve_review` 항목이
+ * `review_kind: "inspection"` 을 싣고 오고, `current_state.has_open_review` 도 있다(둘 다 실측).
+ * 그래도 여기서는 **kind 만으로** 잠근다:
+ *   ① `review_kind` 는 서버가 보내지만 `NextAction`(api/types.ts) 계약에 선언돼 있지 않고,
+ *      `has_open_review` 는 kind 를 가리지 않아(mapping·verification 도 true 로 만든다) 서버 조건과
+ *      정확히 같지 않다 — 둘 중 어느 것도 지금 계약으로 정확하지 않다.
+ *   ② 화면이 보는 것은 **로드 시점의 스냅샷**이다. 로드와 클릭 사이에 다른 CM 이 큐에서 그 검토요청을
+ *      열거나 닫으면 "정확한" 검사도 정확하지 않게 된다. 넓게 잠그는 쪽은 그 경합에서 **안전한 방향**으로
+ *      틀린다(사유 없는 반려를 통과시키지 않는다).
+ * **대가(실측, 2026-09-05).** CM 이 큐에서 inspection 검토요청을 `on_hold` 로 닫으면(200) 객체는
+ * `INSPECTION_REQUESTED` 에 남고 미결 inspection 은 0 이 된다(`has_open_review: false`). 그 상태에서
+ * 서버는 사유 없는 `reject_inspection` 을 **201** 로 받아 준다. 화면은 그때도 사유 칸을 필수로 잠근다 —
+ * CM 이 한 칸을 더 채워야 하고, 막히는 행동은 없다. 아래 다이얼로그 문구가 그 경우에도 거짓이 되지
+ * 않도록 "미결 검측 검토요청이 있으면"이라는 조건을 문장에 담는다(CLAUDE.md §6-4).
+ */
+const REVIEW_REJECTING_KINDS: ReadonlySet<NextActionKind> = new Set(["reject_inspection", "flag_mismatch"]);
+
 const requiresRevocationReason = (a: NextAction | null) => !!a && REVOCATION_KINDS.has(a.kind);
+const rejectsReviewRequest = (a: NextAction | null) => !!a && REVIEW_REJECTING_KINDS.has(a.kind);
+/** 화면이 사유 칸을 필수로 잠그는 전이 전수 — 서버가 사유 없이 거부하는 두 code 에 각각 대응한다. */
+const requiresReason = (a: NextAction | null) => requiresRevocationReason(a) || rejectsReviewRequest(a);
+
+/** ConfirmDialog 본문 — "이 결정이 실제로 무엇을 바꾸는가". kind 마다 다르고, 지키지 못할 약속을 하지 않는다. */
+function dialogMessage(a: NextAction | null): string | undefined {
+  if (!a) return undefined;
+  if (isConfirmAction(a))
+    // ADR 0011 규칙 3 **3단계**: 같은 줄을 두 번 고치는 그 두 번째다. 1단계(00f87cd)는 거짓인
+    // 사유 요건을 지우고 그때 참이던 것(이탈 actor 가 cm)만 남겼다. 이제 요건이 실제로 섰으므로
+    // (a16f434 의 모델 불변식 + 위 REVOCATION_KINDS 의 화면 강제) 새 사실로 갱신했다.
+    // 두 절 모두 지금 참이다 — 실측: CONFIRMED 이탈 2개 전이만 note 없이 거부되고,
+    // `leaving CONFIRMED requires actor=cm` 도 그대로다(packages/core/models/state.py).
+    return "이 객체를 '확정(CONFIRMED)' 상태로 전이합니다. CM 승인 행위로 기록되며, 되돌리는 것도 CM 만 할 수 있고 그때는 사유를 남겨야 합니다.";
+  if (!a.to_state) return undefined;
+  const to = STATE_LABELS_KO[a.to_state];
+  if (rejectsReviewRequest(a))
+    // ADR 0012 규칙 5 (나) / 계획 0005 §1-g 나: 이 전이가 **검토요청을 반려로 닫는다**는 사실을 말한다.
+    // 마지막 절은 장식이 아니라 정확도다 — 미결 inspection 이 0 인 채로 이 전이를 하는 경로가 실제로
+    // 있고(큐에서 `on_hold` 로 닫은 뒤), 그때는 닫히는 요청이 없다(실측 201).
+    return `이 객체의 미결 검측 검토요청을 '반려'로 닫고 '${to}' 상태로 전이합니다. 여기 적는 사유가 검토요청 목록의 처리 메모에 남습니다. 미결 검측 검토요청이 없으면 상태만 바뀝니다.`;
+  return `'${to}' 상태로 전이를 요청합니다.`;
+}
 
 /** 화면에서 직접 누른 전이의 근거. 확정(cm)은 cm_action, 그 외 수동 입력은 user_input. userId 없으면 호출하지 않는다. */
 function evidenceFor(role: ProjectRole, userId: string, action: NextAction, note: string): Evidence {
@@ -401,20 +458,9 @@ function ActionsTab({ d, projectId }: { d: ObjectDetail; projectId?: string }) {
       <ConfirmDialog
         open={pending !== null}
         title={pending?.label ?? ""}
-        message={
-          pending && isConfirmAction(pending)
-            ? // ADR 0011 규칙 3 **3단계**: 같은 줄을 두 번 고치는 그 두 번째다. 1단계(00f87cd)는 거짓인
-              // 사유 요건을 지우고 그때 참이던 것(이탈 actor 가 cm)만 남겼다. 이제 요건이 실제로 섰으므로
-              // (a16f434 의 모델 불변식 + 아래 REVOCATION_KINDS 의 화면 강제) 새 사실로 갱신한다.
-              // 두 절 모두 지금 참이다 — 실측: CONFIRMED 이탈 2개 전이만 note 없이 거부되고,
-              // `leaving CONFIRMED requires actor=cm` 도 그대로다(packages/core/models/state.py:151).
-              "이 객체를 '확정(CONFIRMED)' 상태로 전이합니다. CM 승인 행위로 기록되며, 되돌리는 것도 CM 만 할 수 있고 그때는 사유를 남겨야 합니다."
-            : pending?.to_state
-              ? `'${STATE_LABELS_KO[pending.to_state]}' 상태로 전이를 요청합니다.`
-              : undefined
-        }
+        message={dialogMessage(pending)}
         confirmLabel={pending?.label ?? "확인"}
-        requireNote={requiresRevocationReason(pending)}
+        requireNote={requiresReason(pending)}
         busy={transition.isPending}
         onCancel={() => setPending(null)}
         onConfirm={(note) => pending && run(pending, note)}

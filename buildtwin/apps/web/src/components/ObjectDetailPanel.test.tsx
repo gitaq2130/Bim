@@ -280,26 +280,33 @@ describe("확정 다이얼로그 문구 ↔ 되돌리기의 사유 요건 (ADR 0
  * `MISMATCH`·`IN_PROGRESS` 이고 `to_state` 기준도 그 둘을 잡기 때문이다. 갈리게 하려면 **같은 목적지를
  * 가진 다른 `kind`** 가 표 안에 있어야 한다. 아래 5행은 서버가 CM 에게 실제로 주는 전이 행동 전수이며
  * (`allowed_targets` × `services/progress/state_machine.py::_action_kind`, 2026-09-04 실행), 그중
- * 목적지가 `MISMATCH`/`IN_PROGRESS` 인 것이 5개, 사유가 실제로 필요한 것은 2개다:
+ * 목적지가 `MISMATCH`/`IN_PROGRESS` 인 것이 5개, 사유가 실제로 필요한 것은 4개다:
  *
- *   revoke_confirmation  CONFIRMED            -> MISMATCH      서버: note 없으면 거부
- *   order_rework         CONFIRMED            -> IN_PROGRESS   서버: note 없으면 거부
- *   reject_inspection    INSPECTION_REQUESTED -> IN_PROGRESS   서버: note 없어도 통과
- *   flag_mismatch        INSPECTION_REQUESTED -> MISMATCH      서버: note 없어도 통과
+ *   revoke_confirmation  CONFIRMED            -> MISMATCH      서버: note 없으면 거부 (ADR 0011)
+ *   order_rework         CONFIRMED            -> IN_PROGRESS   서버: note 없으면 거부 (ADR 0011)
+ *   reject_inspection    INSPECTION_REQUESTED -> IN_PROGRESS   서버: note 없으면 거부 (ADR 0012)
+ *   flag_mismatch        INSPECTION_REQUESTED -> MISMATCH      서버: note 없으면 거부 (ADR 0012)
  *   accept_rework        MISMATCH             -> IN_PROGRESS   서버: note 없어도 통과
  *
- * 즉 아래 표는 화면의 게이트를 **서버 불변식과 나란히** 고정한다. `to_state` 로 가른 구현은 뒤 3행이
- * `true` 로 뒤집혀 죽고, `requireNote` 를 아예 빼면 앞 2행이 `false` 로 뒤집혀 죽는다.
+ * **뒤 두 행은 ADR 0012 로 뒤집혔다** — 이 표는 2026-09-04 에 "서버: note 없어도 통과"로 그 둘을
+ * 고정하고 있었고, 서버 가드가 선 뒤에도 그 문장이 그대로 남아 있었다(계열 (A)). 실측(2026-09-05,
+ * `POST /api/objects/{gid}/transitions`): `reject_inspection`·`flag_mismatch` 를 사유 없이 보내면
+ * **409 `rejection_reason_required`** 이고 객체 상태·검토요청 모두 그대로다.
+ *
+ * 즉 아래 표는 화면의 게이트를 **서버 불변식과 나란히** 고정한다. **표가 여전히 `kind` 축과 `to_state`
+ * 축을 가르는가 — 그것이 이 표의 존재 이유다.** 가른다: `to_state` 로 가른 구현은 `accept_rework`
+ * (MISMATCH→IN_PROGRESS)가 `true` 로 뒤집혀 죽고(→IN_PROGRESS 인 다른 두 행은 `true` 이므로 목적지만
+ * 보면 구별되지 않는다), `requireNote` 를 아예 빼면 앞 4행이 `false` 로 뒤집혀 죽는다.
  */
 const CM_ACTION_MATRIX = [
   { pid: "pConfirmed", state: "CONFIRMED", kind: "revoke_confirmation", label: "확정 취소", to_state: "MISMATCH", 사유필수: true },
   { pid: "pConfirmed", state: "CONFIRMED", kind: "order_rework", label: "재시공 지시", to_state: "IN_PROGRESS", 사유필수: true },
-  { pid: "pInsp", state: "INSPECTION_REQUESTED", kind: "reject_inspection", label: "검측 반려(재작업)", to_state: "IN_PROGRESS", 사유필수: false },
-  { pid: "pInsp", state: "INSPECTION_REQUESTED", kind: "flag_mismatch", label: "불일치 판정", to_state: "MISMATCH", 사유필수: false },
+  { pid: "pInsp", state: "INSPECTION_REQUESTED", kind: "reject_inspection", label: "검측 반려(재작업)", to_state: "IN_PROGRESS", 사유필수: true },
+  { pid: "pInsp", state: "INSPECTION_REQUESTED", kind: "flag_mismatch", label: "불일치 판정", to_state: "MISMATCH", 사유필수: true },
   { pid: "pMismatch", state: "MISMATCH", kind: "accept_rework", label: "재작업 인정", to_state: "IN_PROGRESS", 사유필수: false },
 ] as const;
 
-describe("되돌리기 사유 요건은 to_state 가 아니라 kind 로 갈린다 (ADR 0011 규칙 2)", () => {
+describe("사유 요건은 to_state 가 아니라 kind 로 갈린다 (ADR 0011 규칙 2 · ADR 0012 규칙 2)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     resetStore();
@@ -347,7 +354,7 @@ describe("되돌리기 사유 요건은 to_state 가 아니라 kind 로 갈린�
     return marked && locked;
   }
 
-  it("CM 이 받는 전이 행동 전수에서, 사유가 강제되는 것은 CONFIRMED 이탈 두 개뿐이다", async () => {
+  it("CM 이 받는 전이 행동 전수에서, 사유가 강제되는 것은 CONFIRMED 이탈 둘 + 검측 반려 둘이다", async () => {
     resetStore();
     loginAs("cm");
     const user = userEvent.setup();
