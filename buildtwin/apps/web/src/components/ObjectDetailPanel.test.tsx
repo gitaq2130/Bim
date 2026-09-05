@@ -408,4 +408,76 @@ describe("사유 요건은 to_state 가 아니라 kind 로 갈린다 (ADR 0011 �
       되돌리기가_사유를_강제한다: await opensRequiringNote(panels.get("pConfirmed")!, "확정 취소", user),
     }).toEqual({ 확정문구가_사유요건을_말한다: true, 되돌리기가_사유를_강제한다: true });
   });
+
+  /**
+   * "여기 적는 사유가 어딘가에 남는다"고 말하는가. `NOTE_REQUIRED_CLAIM`(요건을 말하는가)과 **다른 축**이다 —
+   * 확정 문구는 요건을 말하고, 반려 문구는 사유의 **행선지**를 말한다. 아래 자기검증 한 쌍이 이 정규식이
+   * 문구 전반에 늘 참인 것이 아님을 고정한다.
+   */
+  const REASON_IS_RECORDED = /사유[^.]*(남|기록|메모)/;
+
+  it("REASON_IS_RECORDED 자기검증 — 사유의 행선지를 말하는 문장만 잡는다", () => {
+    expect(REASON_IS_RECORDED.test("여기 적는 사유가 검토요청 목록의 처리 메모에 남습니다.")).toBe(true);
+    expect(REASON_IS_RECORDED.test("'시공중' 상태로 전이를 요청합니다.")).toBe(false);
+    expect(REASON_IS_RECORDED.test("되돌리는 것도 CM 만 할 수 있고 그때는 사유를 남겨야 합니다.")).toBe(true);
+  });
+
+  /** 다이얼로그를 열고 본문 문구만 읽은 뒤 닫는다. */
+  async function messageOf(root: HTMLElement, label: string, user: ReturnType<typeof userEvent.setup>) {
+    await within(root).findByText("C-12", { selector: "strong" });
+    await user.click(within(root).getByRole("tab", { name: "다음행동" }));
+    await user.click(await within(root).findByRole("button", { name: label }));
+    const dialog = within(root).getByRole("dialog");
+    const text = (within(dialog).getByTestId("confirm-message").textContent ?? "").trim();
+    await user.click(within(dialog).getByRole("button", { name: "취소" }));
+    return text;
+  }
+
+  /**
+   * ADR 0012 규칙 5 (나) / 계획 0005 V8 — **검측 반려 다이얼로그가 "이 결정이 실제로 무엇을 바꾸는가"를
+   * 말한다.** 이 전이는 미결 검측 검토요청을 `rejected` 로 닫고, 거기 적는 사유가 큐의 "처리 메모"에
+   * 남는다(서버 `_resolution_note`). 그 전에는 일반 문구(`'…' 상태로 전이를 요청합니다.`)뿐이라 그
+   * 사실을 말하지 않았다.
+   *
+   * **문장을 통째로 베끼지 않는다**(CLAUDE.md §6-4 3). 여기 거는 것은 두 가지다:
+   *  ① 반려 kind 의 문구는 "검토요청을 반려로 닫는다"와 "사유가 남는다"를 말한다.
+   *  ② **같은 목적지를 가진 다른 kind**(`accept_rework`, MISMATCH→IN_PROGRESS)의 문구는 그 말을 하지
+   *     않는다 — 그 전이는 어떤 검토요청도 닫지 않으므로 그 말이 거기서는 **거짓**이다.
+   *
+   * ②가 없으면 "모든 전이 문구에 '반려·검토요청·사유'를 넣는" 구현이 통과하고, ①이 없으면 일반 문구로
+   * 되돌리는 회귀가 통과한다 — 실측(2026-09-05): 반려 분기를 지워 일반 문구로 되돌려도 vitest 262 전원
+   * 통과였다. 그 자리를 이 쌍이 메운다(§6-2 3).
+   *
+   * **그리고 문구와 화면 동작을 함께 본다**(§6-2 4): 문구가 "사유가 남는다"고 말하면 같은 화면이 실제로
+   * 사유를 강제해야 한다. 한쪽만 고정하면 다른 쪽이 사라져도 초록이다.
+   */
+  it("검측 반려 문구는 '검토요청을 반려로 닫는다'를 말하고, 같은 목적지의 대조군 전이는 그 말을 하지 않는다", async () => {
+    resetStore();
+    loginAs("cm");
+    const user = userEvent.setup();
+    const panels = mountMatrix();
+
+    const rejectMessage = await messageOf(panels.get("pInsp")!, "검측 반려(재작업)", user);
+    const mismatchMessage = await messageOf(panels.get("pInsp")!, "불일치 판정", user);
+    // 대조군 — 목적지가 같은(IN_PROGRESS) CM 전이인데 검토요청을 하나도 닫지 않는다.
+    const acceptMessage = await messageOf(panels.get("pMismatch")!, "재작업 인정", user);
+
+    const saysRejectsAReview = (m: string) => /반려/.test(m) && /검토요청/.test(m);
+    expect({
+      "reject_inspection: 검토요청 반려를 말한다": saysRejectsAReview(rejectMessage),
+      "reject_inspection: 사유가 남는다고 말한다": REASON_IS_RECORDED.test(rejectMessage),
+      "flag_mismatch: 검토요청 반려를 말한다": saysRejectsAReview(mismatchMessage),
+      "accept_rework(대조군): 검토요청 반려를 말한다": saysRejectsAReview(acceptMessage),
+      "accept_rework(대조군): 사유가 남는다고 말한다": REASON_IS_RECORDED.test(acceptMessage),
+    }).toEqual({
+      "reject_inspection: 검토요청 반려를 말한다": true,
+      "reject_inspection: 사유가 남는다고 말한다": true,
+      "flag_mismatch: 검토요청 반려를 말한다": true,
+      "accept_rework(대조군): 검토요청 반려를 말한다": false,
+      "accept_rework(대조군): 사유가 남는다고 말한다": false,
+    });
+
+    // 문구가 사유를 약속하면 같은 화면이 그것을 강제한다(§6-2 4).
+    expect(await opensRequiringNote(panels.get("pInsp")!, "검측 반려(재작업)", user)).toBe(true);
+  });
 });

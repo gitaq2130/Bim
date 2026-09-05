@@ -65,6 +65,49 @@ describe("errorText", () => {
     expect(errorText(apiError(409, "invalid transition", "invalid_transition"))).toContain("새로고침");
   });
 
+  /**
+   * ADR 0012 규칙 4·5 (다) / 계획 0005 V9 — `rejection_reason_required`(409)는 **새로 가른** code 다.
+   * 가른 근거가 문구이므로(ADR 0012 규칙 4 의 후보 표: 세 후보를 그 code 의 **지금 화면 문구**를 읽고
+   * 기각했다), 여기서 볼 것은 "문구가 있다"가 아니라 **"그 상황에서 참일 수 없는 말이 없다"**
+   * (CLAUDE.md §6-4 3 — 문장을 통째로 베끼면 거짓 문구가 계약이 된다).
+   *
+   * 참일 수 없는 말 셋(ADR 0012 규칙 5 (다) + `ErrorBox.tsx` 의 ①②③ 주석):
+   *  ① "새로고침" — 서버 상태는 최신이고, 실측상 검토요청은 `open`·객체 상태도 그대로라 다시 읽어도 같다.
+   *  ② "수행할 수 없습니다"류 불가 선언 — 반려는 허용된 행위이고 빠진 것은 사유뿐이다.
+   *  ③ "확정을 되돌리려면" — 이 code 는 5 kind 전부에서 나고, 그중 넷(mapping·verification·
+   *     document_mapping·document_identity_drift) 반려는 확정 무효화가 **아니다**.
+   *
+   * **부재 단언만으로는 부족하다**(§6-2 1). `KnownApiErrorCode` 유니온과 `CODE_MESSAGES` 행을 **함께**
+   * 지우면(= frontend 작업을 통째로 되돌리면) `tsc` 도 통과하고 `errorText` 는 서버 `detail` 폴백으로
+   * 조용히 떨어지는데, 그 영어 detail 에는 ①②③ 중 어느 것도 없다 — 즉 부재 단언만 있으면 그 회귀가
+   * 그대로 통과한다(실측: 그 조합에서 `tsc` 0 · vitest 262 전원 통과). 그래서 "다음 행동(사유)을
+   * 말한다"와 "detail 폴백이 아니다"를 함께 단언한다.
+   */
+  it("rejection_reason_required 는 다음 행동(사유 입력)을 말하고, 이 자리에서 참일 수 없는 말을 하지 않는다", () => {
+    const detail = 'rejecting review request rr-1 (kind=mapping) requires a non-empty reason';
+    const msg = errorText(apiError(409, detail, "rejection_reason_required"));
+
+    // 다음 행동이 문장 안에 있다 + detail 폴백이 아니다(유니온/표를 함께 지운 회귀가 여기서 죽는다)
+    expect(msg).toContain("사유");
+    expect(msg).not.toContain(detail);
+    expect(msg).not.toContain("(409)");
+
+    // ①②③ — 이 상황에서 참일 수 없는 말
+    expect(msg).not.toContain("새로고침");
+    expect(msg).not.toContain("수행할 수 없습니다");
+    expect(msg).not.toContain("확정을 되돌리");
+
+    // 두 이웃 code 의 문구를 그대로 빌려 쓰지 않았다 — 갈라 놓은 code 의 존재 이유가 그것이다.
+    expect(msg).not.toBe(errorText(apiError(409, detail, "invalid_transition")));
+    expect(msg).not.toBe(errorText(apiError(409, detail, "revocation_reason_required")));
+  });
+
+  it("대조군: revocation_reason_required 는 여전히 '확정을 되돌리'는 일을 말한다", () => {
+    // 위 ③(부재)이 문구 전반의 성질이 아님을 고정한다 — 이 문장이 없으면 "확정" 이야기를 어디서도
+    // 하지 않는 구현(= ADR 0011 의 문구를 통째로 지우는 회귀)이 초록이다(§6-2 3).
+    expect(errorText(apiError(409, "x", "revocation_reason_required"))).toContain("확정을 되돌리");
+  });
+
   it("transition_blocked_by_review 는 열린 검토요청 문구를 반환한다", () => {
     const msg = errorText(apiError(409, "blocked by open review", "transition_blocked_by_review"));
     expect(msg).toContain("검토요청");

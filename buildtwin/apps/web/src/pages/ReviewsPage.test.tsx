@@ -1053,3 +1053,97 @@ describe("ReviewsPage — document_identity_drift (ADR 0009 §5-3)", () => {
     }
   });
 });
+
+/**
+ * ADR 0012 불변식 4 / 계획 0005 V10 — **큐 반려의 사유 요건은 `kind` 를 가리지 않는다.**
+ *
+ * 서버 가드는 `usecases.resolve_review` 의 **프롤로그**에 있어 5 kind × 3 decision 전부가 그 줄을
+ * 지나고, 막히는 것은 `decision === "rejected"` 뿐이다(ADR 0012 규칙 1). 화면도 같은 축이어야 한다 —
+ * `ReviewsPage.tsx` 의 `requireNote={pending?.decision === "rejected"}` 가 `kind` 를 보지 않는 것이
+ * 그 뜻이다. 서버와 화면의 축이 어긋나면 어느 kind 에서는 화면이 통과시키고 서버가 409 로 되받는다.
+ *
+ * **왜 이 표 모양인가**(CLAUDE.md §6-1: 관계를 세는 목록은 곱으로, §6-2 3: 음성 대조군을 한 축에 몰지
+ * 않는다). 기존 테스트는 `document_mapping` **한 kind 의 반려 한 칸**만 태웠다 — 그 한 칸이면
+ * "이 kind 에서만 요구하는" 구현도, "모든 결정에 요구하는" 구현도 통과한다. 여기서는 **5 × 3 = 15칸**을
+ * 곱으로 세워 두 방향을 함께 막는다: 반려 5칸은 `true`, 승인·보류 10칸은 `false`.
+ */
+const QUEUE_DECISION_MATRIX = (["mapping", "verification", "inspection", "document_mapping", "document_identity_drift"] as const).flatMap(
+  (kind) => (["승인", "반려", "보류"] as const).map((label) => ({ kind, label, 사유필수: label === "반려" })),
+);
+
+describe("큐 반려의 사유 요건은 kind 를 가리지 않는다 (ADR 0012 규칙 1)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetStore();
+  });
+
+  function reviewOfKind(kind: ReviewRequest["kind"]): ReviewRequest {
+    return {
+      ...MAPPING_REVIEW,
+      review_request_id: `rr-${kind}`,
+      kind,
+      title: `${kind} 검토요청`,
+      // document_identity_drift 카드는 conflicting_sources 에서 지문·lost_decisions 를 읽는다.
+      conflicting_sources: kind === "document_identity_drift" ? { lost_decisions: [] } : {},
+    };
+  }
+
+  /** 그 kind 의 검토요청 하나만 있는 큐를 띄우고, 지정한 결정 버튼의 다이얼로그가 사유를 강제하는지 읽는다. */
+  async function opensRequiringNote(kind: ReviewRequest["kind"], label: string) {
+    resetStore();
+    loginAs("cm");
+    mockFetch((url) => {
+      if (url.includes("/api/documents/")) return { body: docDetail(confirmedMapping()) };
+      if (url.includes("/api/projects/p1/review-requests")) return { body: [reviewOfKind(kind)] };
+      if (url.endsWith("/api/projects/p1")) return { body: { project_id: "p1", name: "P", my_role: "cm" } };
+      return undefined;
+    });
+    renderPage();
+    const user = userEvent.setup();
+
+    await screen.findByText(`${kind} 검토요청`);
+    await user.click(screen.getByRole("button", { name: label }));
+    const dialog = screen.getByRole("dialog");
+    const marked = /필수/.test(within(dialog).getByText(/사유 \/ 메모/).textContent ?? "");
+    const locked = (within(dialog).getByRole("button", { name: label }) as HTMLButtonElement).disabled;
+    // 표기와 잠김이 어긋나면 어느 쪽도 신뢰할 수 없다(ObjectDetailPanel 의 같은 헬퍼와 같은 근거).
+    expect(marked).toBe(locked);
+    vi.unstubAllGlobals();
+    cleanup();
+    return marked && locked;
+  }
+
+  it("5 kind × 3 결정 = 15칸에서 사유가 강제되는 것은 '반려' 다섯 칸뿐이다", async () => {
+    const observed: Record<string, boolean> = {};
+    for (const row of QUEUE_DECISION_MATRIX)
+      observed[`${row.kind} × ${row.label}`] = await opensRequiringNote(row.kind, row.label);
+
+    const expected: Record<string, boolean> = {};
+    for (const row of QUEUE_DECISION_MATRIX) expected[`${row.kind} × ${row.label}`] = row.사유필수;
+    expect(observed).toEqual(expected);
+  });
+
+  it("사유를 채우면 반려 확인 버튼이 열린다 — 요건은 잠금이지 차단이 아니다(공백만은 잠긴 채)", async () => {
+    resetStore();
+    loginAs("cm");
+    mockFetch((url) => {
+      if (url.includes("/api/documents/")) return { body: docDetail(confirmedMapping()) };
+      if (url.includes("/api/projects/p1/review-requests")) return { body: [reviewOfKind("verification")] };
+      if (url.endsWith("/api/projects/p1")) return { body: { project_id: "p1", name: "P", my_role: "cm" } };
+      return undefined;
+    });
+    renderPage();
+    const user = userEvent.setup();
+
+    await screen.findByText("verification 검토요청");
+    await user.click(screen.getByRole("button", { name: "반려" }));
+    const dialog = screen.getByRole("dialog");
+    const confirm = within(dialog).getByRole("button", { name: "반려" }) as HTMLButtonElement;
+
+    expect(confirm.disabled).toBe(true);
+    await user.type(within(dialog).getByRole("textbox"), "   "); // 공백만 — 서버 `.strip()` 과 같은 판정
+    expect(confirm.disabled).toBe(true);
+    await user.type(within(dialog).getByRole("textbox"), "현장 재확인 결과 불일치");
+    expect(confirm.disabled).toBe(false);
+  });
+});
