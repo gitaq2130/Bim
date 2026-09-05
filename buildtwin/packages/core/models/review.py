@@ -56,17 +56,26 @@ ReviewStatus = Literal["open", "approved", "rejected", "on_hold"]
 # 불일치를 이 정의는 잡지 못한다.
 #
 # **그 자리들을 여기 열거하지 않는다.** 열거는 `tests/invariants/test_identity_drift_cause_contract.py`
-# 가 이 정본을 import 해 기계로 하고, `apps/web/src` 전수를 훑어 `cause` 리터럴 비교 자리가 그 감사의
-# 목록과 어긋나면 파일 이름을 대고 실패한다. ADR 0009 §Deferred 5 개정 3 이 그 감사가 잡는 것과 놓치는
-# 것을 적는다(가장 큰 구멍: 값 집합만 비교하므로 두 이름을 서로 맞바꾸는 개명은 통과한다).
+# 가 이 정본을 import 해 기계로 하고, `apps/web/src` 전수를 **두 축으로** 훑는다. 두 축은 서로의 한계를
+# 메우므로 둘 다 남는다 — 축마다 무엇이 밖인지가 곧 그 축의 정의다:
+#   · **비교 자리 목록** — `cause` 와 문자열 리터럴이 한 줄에서 **등호로 마주 보는 모양** 하나만 본다.
+#     그 모양 밖으로 값을 소비하는 새 화면은 이 칸에서 **이름조차 불리지 않는다**. 대신 얻는 것이 조기
+#     경보다: 그 모양으로 정본 **안** 값만 쓰는 새 화면도 개명이 일어나기 **전에** 이름으로 부른다.
+#   · **값 토큰 == 정본** — 모양을 묻지 않고 비테스트 웹 소스의 `row_` 토큰을 정본과 등호로 비교한다.
+#     모양 축 밖의 소비도 여기서 죽지만, `row_` 로 시작하지 않는 새 이름은 이 축 밖이다.
+# ADR 0009 §Deferred 5 개정 3 이 두 축이 잡는 것과 놓치는 것을 실행값과 함께 적는다(가장 큰 구멍: 값
+# 집합만 비교하므로 두 이름을 서로 맞바꾸는 개명은 두 축을 모두 통과한다).
 #
-# 그 감사 밖에는 이 경계를 보는 검사가 **없다**. 실측 둘(2026-09-05, 작업 트리):
-#   · `row_absorbed` → `row_relocated` 를 생산·소비·파이썬 테스트에 일관 적용하고 TS·config 를 두면
-#     감사 제외 pytest 전량 746 passed · vitest 전량 268 passed 로 실패 0 이고, 감사만 7건 실패한다.
-#     그 제품에서는 서버가 보낸 값을 `classifyIdentityDriftCause` 가 `SERVER_CAUSE_TO_LOCAL` 에서 찾지
-#     못해 모든 항목이 `"unspecified"`("경위 미상")로 떨어진다 — 예외 없음·테스트 통과·화면 정상.
+# 그 감사 밖에는 이 경계를 보는 검사가 **없다**. 이 단정이 기대는 것은 실패 **개수**가 아니라 감사 밖의
+# **부재**이므로 개수를 적지 않는다(CLAUDE.md §6-1) — 그 자리에서 도는 재현 명령만 적고 값은 태워서 읽는다:
+#   · 파이썬 전 계층만 개명하고(`packages/core/models/review.py` + `tests/integration/`·`tests/unit/` 의
+#     그 값을 적은 테스트) TS·config 를 두면 — `.venv/bin/pytest -q --ignore=tests/invariants/`
+#     `test_identity_drift_cause_contract.py` 실패 **0**, `(cd apps/web && npx vitest run)` 실패 **0**,
+#     실패는 **전부 그 감사 파일 안**이다. 그 제품에서는 서버가 보낸 값을 `classifyIdentityDriftCause` 가
+#     `SERVER_CAUSE_TO_LOCAL` 에서 찾지 못해 모든 항목이 `"unspecified"`("경위 미상")로 떨어진다
+#     — 예외 없음·테스트 통과·화면 정상.
 #   · 별칭 하나를 정본에서 떼어 같은 값 리터럴로 재선언하면(`_CAUSE_ROW_ABSORBED = "row_absorbed"`)
-#     감사 제외 pytest 전량 746 passed 로 초록이고, 감사가 그 재선언을 잡는다.
+#     감사 밖 실패 **0** 이고, 감사가 그 재선언을 잡는다.
 IDENTITY_DRIFT_CAUSE_ROW_MOVED: Final = "row_moved"
 IDENTITY_DRIFT_CAUSE_ROW_REPLACED: Final = "row_replaced"
 IDENTITY_DRIFT_CAUSE_ROW_ABSORBED: Final = "row_absorbed"
