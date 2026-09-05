@@ -1,0 +1,57 @@
+# 구조 공종 판단 규칙. 담당: knowledge. 조건식은 services/common/safe_expr 허용 문법만.
+# 컨텍스트 이름: scan / object / activity / readiness / report / logic
+- id: RULE-STR-001
+  version: 1
+  source: expert
+  source_ref: "구조기술사 인터뷰, 2026-08"
+  reliability: 0.85
+  scope: { discipline: structure, object_types: [IfcColumn, IfcBeam] }
+  when: "scan.state == 'MISMATCH' and scan.evidence.offset_vector.norm > 0.05"
+  then:
+    risk_level: HIGH
+    action: "해당 부재 시공 중지 후 측량 재확인, 구조 검토 요청"
+    required_evidence: [survey_report, structural_review]
+  tags: [alignment, structure, column]
+  description: "기둥·보 위치가 계획 대비 50mm 초과 이탈"
+
+- id: RULE-STR-002
+  version: 1
+  source: standard
+  source_ref: "건축공사 표준시방서 허용오차(기둥 위치 ±25mm 준용)"
+  reliability: 0.7
+  scope: { discipline: structure, object_types: [IfcColumn, IfcBeam, IfcWall, IfcSlab] }
+  when: "scan.state == 'MISMATCH' and scan.evidence.offset_vector.norm > 0.025 and scan.evidence.offset_vector.norm <= 0.05"
+  then:
+    risk_level: MEDIUM
+    action: "재측량으로 오차 확인, 허용오차 초과 시 시공사 시정 지시"
+    required_evidence: [survey_report]
+  tags: [alignment, structure, tolerance]
+  description: "허용오차(25mm) 초과 ~ 50mm 이하 위치 이탈"
+
+- id: RULE-STR-003
+  version: 1
+  source: expert
+  source_ref: "CM 감리단 운영 기준(완료 신고 검증)"
+  reliability: 0.9
+  scope: { discipline: structure }
+  when: "report.claimed_state == 'completed' and scan.state == 'NOT_BUILT'"
+  then:
+    risk_level: CRITICAL
+    action: "완료 신고 반려, 현장 확인 후 허위 신고 여부 검토. 자동 확정 금지"
+    required_evidence: [site_photo, cm_inspection_report, scan_snapshot]
+  tags: [verification, report, structure]
+  description: "구조 부재 완료 신고 vs 스캔 미시공"
+
+- id: RULE-STR-004
+  version: 1
+  source: expert
+  source_ref: "구조기술사 인터뷰, 2026-08"
+  reliability: 0.8
+  scope: { discipline: structure, object_types: [IfcSlab, IfcBeam] }
+  when: "scan.state == 'ESTIMATED_DONE' and logic.predecessor_confirmed_ratio is not None and logic.predecessor_confirmed_ratio < 1.0"
+  then:
+    risk_level: HIGH
+    action: "하부 기둥·벽 검측 확정 전 슬래브/보 완료 확정 보류. 선행 부재 검측 우선 처리"
+    required_evidence: [predecessor_inspection_report, pour_record]
+  tags: [sequence, structure, inspection]
+  description: "선행 부재 미확정 상태에서 상부 부재 완료 추정"

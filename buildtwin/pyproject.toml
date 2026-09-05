@@ -1,0 +1,48 @@
+[project]
+name = "buildtwin"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi", "uvicorn[standard]", "sqlalchemy>=2.0", "pydantic>=2", "pydantic-settings",
+  "python-multipart", "python-jose[cryptography]", "passlib[bcrypt]", "pyyaml",
+  "celery", "redis", "ortools", "numpy", "scipy", "shapely",
+  "ifcopenshell", "ezdxf", "open3d", "laspy", "plyfile", "httpx", "openpyxl",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff", "mypy", "httpx"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["packages*", "services*"]
+exclude = ["apps*", "rules*", "config*", "tests*", "docs*", "scripts*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+exclude = [".venv", "apps", "storage"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501", "B008", "B904", "UP007", "UP035", "UP006", "UP045", "UP042", "B905"]
+
+[tool.ruff.lint.per-file-ignores]
+"packages/core/models/__init__.py" = ["F401"]
+"services/*/__init__.py" = ["F401"]
+"tests/**/conftest.py" = ["F401"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+explicit_package_bases = true
+namespace_packages = true
+check_untyped_defs = true
+exclude = ["apps", ".venv", "storage"]

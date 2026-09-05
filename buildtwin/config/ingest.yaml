@@ -1,0 +1,5 @@
+# 도면 인식(ingest) 설정. 담당: bim-ingest. 코드에 숫자 리터럴로 두지 않고 여기서 읽는다.
+dxf:
+  # ARC/SPLINE 등 곡선을 폴리라인으로 평탄화할 때의 허용 오차(m).
+  # 도면 단위 허용치 = flatten_distance_m / ($INSUNITS→m 스케일) 이므로 mm 도면과 m 도면이 같은 정밀도로 평탄화된다.
+  flatten_distance_m: 0.0005

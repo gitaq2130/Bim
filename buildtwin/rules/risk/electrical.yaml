@@ -1,0 +1,28 @@
+# 전기(electrical) 공종 판단 규칙. 담당: knowledge.
+- id: RULE-ELE-001
+  version: 1
+  source: expert
+  source_ref: "전기 시공관리자 인터뷰, 2026-08"
+  reliability: 0.75
+  scope: { discipline: electrical, object_types: [IfcCableCarrierSegment] }
+  when: "scan.state == 'MISMATCH' and scan.evidence.offset_vector.norm > 0.03"
+  then:
+    risk_level: MEDIUM
+    action: "케이블트레이 설치 위치·이격 확인, 덕트·배관과 간섭 검토 후 재설치 여부 결정"
+    required_evidence: [clash_report, shop_drawing, survey_report]
+  tags: [alignment, electrical, clash]
+  description: "케이블트레이 위치 이탈 30mm 초과"
+
+- id: RULE-ELE-002
+  version: 1
+  source: expert
+  source_ref: "CM 감리단 운영 기준(천장 내 설비 검측)"
+  reliability: 0.85
+  scope: { discipline: electrical, object_types: [IfcCableCarrierSegment] }
+  when: "report.claimed_state == 'completed' and logic.inspection_passed is not True"
+  then:
+    risk_level: HIGH
+    action: "천장 마감 전 트레이·접지 검측 실시. 검측 통과 전 후속 마감 착수 금지"
+    required_evidence: [inspection_request, inspection_photo]
+  tags: [inspection, electrical, sequence]
+  description: "천장 내 케이블트레이 완료 신고됐으나 검측 미통과"

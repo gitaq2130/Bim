@@ -1,0 +1,20 @@
+- case_id: CASE-0003
+  project_type: logistics_center
+  discipline: architecture
+  situation: "외장 샌드위치패널 납품이 착수 예정일 기준 3주 지연, 반입률 30%"
+  early_signals:
+    - "착수 2주 전 자재 반입률 50% 미만"
+    - "제작업체 생산 일정 회신 지연"
+  direct_impact: "외장 패널 설치 착수 3주 지연"
+  cascading_impacts:
+    - "창호·실링 공정 순연"
+    - "동절기 내부 마감 착수 지연"
+  recommended_actions:
+    - "납품 일정 주간 확인 및 반입률 모니터링"
+    - "부분 반입분으로 착수 구간 재편성"
+    - "후속 공정 일정 조정 및 발주처 보고"
+  outcome: "구간 분할 착수로 지연 1주로 축소"
+  source_ref: "공정회의록 2026-03"
+  reliability: 0.7
+  created_by: "knowledge"
+  created_at: "2026-08-20T00:00:00Z"
