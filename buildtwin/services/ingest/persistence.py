@@ -32,6 +32,11 @@ from sqlalchemy.orm import Session
 
 from packages.core.models import BimObjectDraft, Document, DrawingEntityDraft, IngestResult
 from packages.core.models.orm import BimObjectRow, DocumentRow, DrawingEntityRow, DrawingRow, ModelRow
+from packages.core.models.review import (
+    IDENTITY_DRIFT_CAUSE_ROW_ABSORBED,
+    IDENTITY_DRIFT_CAUSE_ROW_MOVED,
+    IDENTITY_DRIFT_CAUSE_ROW_REPLACED,
+)
 from packages.core.models.state import ObjectState
 from services.progress import persistence as progress_db
 from services.progress.config_loader import load_config
@@ -48,6 +53,12 @@ _DECISION_CONFIRMED: Final = "confirmed"
 _DECISION_REJECTED: Final = "rejected"
 # 사람의 판단이 오염된 **경위**. `IdentityDriftReport.lost_decisions` 항목의 `cause` 값이며, 소비자
 # (`services/progress/document_mapper._identity_drift_review_title`)가 CM 에게 보일 문구를 이 값으로 가른다.
+# **값의 정본은 `packages/core/models/review.IDENTITY_DRIFT_CAUSES` 하나뿐이고**(ADR 0009 §Deferred 5,
+# 계획 0005 §과제 2), 아래 `_CAUSE_ROW_*` 는 그 정본의 **별칭**이다 — 생산자인 이 모듈도 값을 다시 적지
+# 않는다. 이 파일이 기대는 **부재**는 **주석 밖에서 경위 값을 문자열로 적는 코드 줄이 이 파일에 하나도
+# 없다**는 것이고(기대 히트 0), 실행으로 확인하는 명령은 아래다 — 주석은 옛 이름과 개명 근거를 의도적으로
+# 인용하므로 `^[^#]*` 로 주석 줄을 뺀다.
+#     grep -nE '^[^#]*= *"row_' services/ingest/persistence.py
 # 세 값이 필요한 이유는 셋의 "지금 그 판단이 무엇을 가리키고 있는가"가 서로 다르기 때문이다 —
 # 문구가 사실과 다르면 그 자체가 결함이므로(이 저장소가 세 번 겪었다) 추측으로 합치지 않는다.
 #
@@ -55,9 +66,9 @@ _DECISION_REJECTED: Final = "rejected"
 # 변경 경로에서 `is_orphaned=False` 인 행에 붙었고(실측 P3 — `moved=8` 인데 고아 0건), `merge_*` 두 개는
 # 새 조건이 잡는 주된 경로에 **병합이 없다**(실측 R1·P9·P11: `merged=0`). 이름이 경위를 거짓으로 말하면
 # 그것을 읽는 문구도 거짓이 된다(CLAUDE.md §6-4 규칙 2).
-_CAUSE_ROW_MOVED = "row_moved"        # 대장 행은 그대로인데 우리 식별 규칙이 그 행을 다른 doc_id 로 옮겼다
-_CAUSE_ROW_REPLACED = "row_replaced"  # 이 doc_id 가 담고 있는 **대장 행 자체**가 바뀌었다(행도 판단도 살아 있다)
-_CAUSE_ROW_ABSORBED = "row_absorbed"  # 판단이 가리키던 대장 행이 **다른 doc_id 아래로** 갔다
+_CAUSE_ROW_MOVED = IDENTITY_DRIFT_CAUSE_ROW_MOVED        # 대장 행은 그대로인데 우리 식별 규칙이 그 행을 다른 doc_id 로 옮겼다
+_CAUSE_ROW_REPLACED = IDENTITY_DRIFT_CAUSE_ROW_REPLACED  # 이 doc_id 가 담고 있는 **대장 행 자체**가 바뀌었다(행도 판단도 살아 있다)
+_CAUSE_ROW_ABSORBED = IDENTITY_DRIFT_CAUSE_ROW_ABSORBED  # 판단이 가리키던 대장 행이 **다른 doc_id 아래로** 갔다
 # 행-정체(`_row_identity`)를 이루는 대장 **원문** 필드. `lost_decisions[].changed_fields` 가 이 이름을 쓴다.
 _ROW_IDENTITY_FIELDS = ("sender", "doc_number", "seq_raw", "title")
 
