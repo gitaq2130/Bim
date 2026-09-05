@@ -7,8 +7,24 @@
 `apps/web/src/api/types.ts` · `apps/web/src/domain/identityDrift.ts` · `apps/web/src/pages/ReviewsPage.tsx` ·
 `config/document_register.yaml` 은 같은 문자열을 **따로** 적고, **TS 는 파이썬 상수를 import 할 수 없다.**
 
-실측(2026-09-05, 작업 트리): `row_absorbed` → `row_relocated` 를 파이썬 전 계층(생산·소비·파이썬 테스트)에
-일관 적용하고 TS·yaml 을 그대로 두면 **`pytest -q` 738 passed · `vitest run` 262 passed** — 전원 통과다.
+실측 — **값이 아니라 재현 명령을 정본으로 읽는다.** 이 파일은 계속 편집되는 자리라 못박을 트리가 없고
+(`.claude/agents/architect.md` §핵심 설계 원칙 7), 전량 숫자는 여기에 단언을 더할 때마다 움직인다.
+그러므로 아래 명령을 적고, 값은 **이 줄을 쓴 커밋에서 잰 것**으로 읽는다:
+
+    sed -i 's/row_absorbed/row_relocated/g' packages/core/models/review.py \
+        tests/integration/test_17_document_identity_drift.py \
+        tests/unit/progress/test_identity_drift_review_title.py     # 파이썬 전 계층만 개명, TS·yaml 은 그대로
+    .venv/bin/pytest -q                  # 2026-09-05: 9 failed, 774 passed — 실패는 **전부 이 파일**
+                                         #   (= 이 감사를 뺀 전량 746 passed, 감사 밖 실패 0)
+    (cd apps/web && npx vitest run)      # 268 passed — TS 를 건드리지 않았으므로 기준선과 같다
+
+9 건 중 하나(`test_web_source_scan_sees_the_shapes_the_comparison_axis_misses`)는 결함이 아니라 **이 명령이
+고른 새 이름이 하필 아래 `SEED_TO` 와 같아서** 죽는 것이다(씨앗이 정본 안으로 들어오면 seeded divergence 가
+divergence 가 아니다). 같은 명령의 새 이름만 `row_shifted` 로 바꾸면 **8 failed, 775 passed** 다(실측).
+
+즉 **감사 제외 pytest 746 passed · vitest 268 passed 로 전원 통과**다(앞선 판에 적혀 있던 738·262 는
+작업 8 시점의 값이고, 위 명령으로 지금 다시 재면 746·268 이다 — ADR 0009 §Deferred 5 개정 3·
+`packages/core/models/review.py` 가 싣는 숫자와 같게 맞췄다).
 그 상태의 제품은 서버가 `row_relocated` 를 실어 보내고, `classifyIdentityDriftCause` 가
 `SERVER_CAUSE_TO_LOCAL` 에서 찾지 못해 **모든 항목을 `unspecified`("경위 미상")** 로 떨어뜨리고,
 `config/document_register.yaml` 의 경고 문구가 **존재하지 않는 이름**을 CM 에게 읽어 준다.
@@ -30,13 +46,49 @@
 ## 이 감사가 놓치는 것 (CLAUDE.md §6-1 ②)
 
 ① **값 집합만 비교하고 의미는 비교하지 않는다** — 두 이름을 서로 맞바꾸는 개명은 모든 칸을 통과한다.
-② `config` 스캔의 축이 `row_` **접두사**라, `row_` 로 시작하지 않는 새 경위 이름은 그 칸에서 보이지 않는다.
+② **`row_` 접두사 축**(`config` 스캔 · 아래 웹 트리 값 스캔)은 `row_` 로 시작하지 않는 새 경위 이름을
+   그 칸에서 보지 못한다.
 ③ 옛 이름 유출은 **구조적으로 추출한 집합 안에서만** 본다. 저장소 전체 grep 으로 넓힐 수 없다 —
    `orphaned` 는 살아 있는 **무관한** 개념이다(`is_orphaned`, `orphaned_global_ids`, `DocumentsPage.tsx`).
 ④ `docs/`(ADR·계획·glossary)는 대상이 아니다. 그 문서들은 옛 이름을 **의도적으로 보존**하며
    (ADR 0009 §5-2 (마) 개명 표, glossary "옛 이름 셋 … 번역하지 않는다"), 개명이 일어나도 그 문장들은
    참인 채로 남아야 한다. 감사에 넣으면 감사가 정본을 거짓으로 만든다.
 ⑤ **아직 존재하지 않는 네 번째 경위 이름**은 원리상 이 축 밖이다.
+⑥ **비교 자리 전수 칸(`test_web_source_tree_has_no_unaudited_cause_literal`)의 축은
+   `cause [!=]== "리터럴"` 한 모양뿐이다.** `switch (item.cause) { case "…": }` · `[…].includes(cause)` ·
+   `new Set([…]).has(cause)` · **역순 피연산자**(`"row_replaced" === g.cause`)는 전부 그 축 밖이고, 그런
+   새 화면은 **이름조차 불리지 않는다**. 실측 — 모양마다 **하나씩 따로** 심고
+   `apps/web/src/pages/__A0aProbe.tsx` 한 파일로 태웠다(명령 `.venv/bin/pytest -q tests/invariants`,
+   각 심기 앞뒤로 저장소 루트 `git status --porcelain` 이 빈 출력임을 확인. 2026-09-05).
+   **넓히기 전(비교 축만, 기준선 102) ↔ 넓힌 뒤(값 축 추가, 기준선 104)를 나란히 적는다**
+   (CLAUDE.md §6-3: 새 조건이 잡는 것만이 아니라 **옛 조건이 잡던 것**도 함께 본다):
+
+     | 심은 모양 | 넓히기 전 | 넓힌 뒤 |
+     |---|---|---|
+     | `switch (item.cause) { case "row_moved": … case "row_vanished": … }` | **102 passed**(통과) | **1 failed, 103 passed** — 값 칸이 `{'apps/web/src/pages/__A0aProbe.tsx': ['row_vanished']}` |
+     | `RISKY.includes(item.cause)` (배열 리터럴은 다른 줄) | **102 passed** | **1 failed, 103 passed** — 값 칸 |
+     | `RISKY_SET.has(item.cause)` | **102 passed** | **1 failed, 103 passed** — 값 칸 |
+     | `"row_vanished" === g.cause` (역순 피연산자) | **102 passed** | **1 failed, 103 passed** — 값 칸 |
+     | `item.cause === "row_vanished"` (대조군 — 옛 조건이 잡던 것) | **1 failed, 101 passed** — 비교 칸이 `트리에만(감사 밖): ['apps/web/src/pages/__A0aProbe.tsx']` | **2 failed, 102 passed** — 비교 칸 + 값 칸(옛 조건이 잡던 것을 그대로 잡는다) |
+     | `switch` 에 `case "row_moved"`·`case "row_replaced"` 만 (정본 안 값만 쓰는 새 파일) | **102 passed** | **104 passed** — 아래 ⓓ 가 이 칸이다 |
+
+   **그래서 축을 넓혔다 — 비교 *모양* 이 아니라 *값* 으로**
+   (`test_web_source_tree_declares_no_cause_value_outside_canon`): `apps/web/src` 의 **비테스트** 소스에서
+   `\\brow_[a-z_]+\\b` 토큰을 모아 정본과 등호로 비교한다. 위 네 모양이 전부 여기서 죽는다.
+   *모양을 열거해 넓히지 않은 이유(§6-1 그대로).* 모양 열거는 **그 열거가 곧 한계**라 다음 모양이
+   다시 밖으로 나가고, `includes`/`Set.has` 는 리터럴이 애초에 `cause` 옆에 있지 않아(선언과 사용이 다른 줄)
+   정규식이 닿지 못한다. 값 축은 모양과 무관하게 같은 harm 을 본다.
+   *역방향 확인 — 값 축이 넓히면서 미는 것.*
+     ⓐ `row_` 로 시작하지 않는 새 이름은 못 본다(위 ②).
+     ⓑ 비테스트 웹 소스의 **주석**이 개명 전 이름을 보존하면 이 칸이 죽는다. `docs/`(④)와 달리 코드
+        트리에는 그 보존을 허용하지 않는 결정이다 — 주석에 남은 옛 이름과 "개명이 닿지 않은 코드"를
+        이 축은 구별할 수 없고, 후자가 훨씬 비싸다. (실측: 지금 비테스트 웹 소스의 `row_` 토큰 집합은
+        정본과 정확히 같다 — 유예할 자리가 하나도 없다.)
+     ⓒ **테스트 파일은 제외한다** — `unspecified` 폴백을 태우려면 정본 밖 값을 일부러 심어야 한다.
+     ⓓ 값이 정본 안이기만 하면 **새 파일은 여전히 이름 불리지 않는다**(`case "row_moved"` 만 쓰는 새 화면).
+        다만 개명이 실제로 일어나는 순간 그 파일에 옛 이름이 남으므로 이 칸이 그때 파일 이름을 댄다 —
+        값 축은 경보를 **harm 시점으로 늦출 뿐 harm 을 놓치지는 않는다**. 비교 자리 전수 칸은 그 경보를
+        앞당기는 조기 경보로 남긴다(그래서 넓히면서도 지우지 않았다).
 """
 from __future__ import annotations
 
@@ -79,6 +131,7 @@ TS_TYPES = ROOT / "apps/web/src/api/types.ts"
 TS_DOMAIN = ROOT / "apps/web/src/domain/identityDrift.ts"
 TS_PAGE = ROOT / "apps/web/src/pages/ReviewsPage.tsx"
 YAML_CONFIG = ROOT / "config/document_register.yaml"
+WEB_SRC = ROOT / "apps/web/src"          # 두 전수 칸(비교 자리 목록 · 값 토큰)이 같이 훑는 트리
 
 PY_ALIAS_SITES = (PY_CONSUMER, PY_PRODUCER)
 # 화면에서 `cause` 값을 **런타임 리터럴로 비교**하는 자리 전수(비-테스트). 아래
@@ -260,13 +313,27 @@ def ts_cause_comparison_literals(text: str) -> set[str]:
     }
 
 
-_YAML_ROW_TOKEN = re.compile(r"\brow_[a-z_]+\b")
+_ROW_TOKEN = re.compile(r"\brow_[a-z_]+\b")
 
 
-def yaml_row_tokens(text: str) -> set[str]:
-    """config 의 `row_…` 토큰 전수. **단어 경계가 필수다** — `\\b` 가 없으면
-    `header_row_search_range`·`blank_row_stop_streak`·`header_row_not_found`(실측 3종)까지 끌려온다."""
-    return set(_YAML_ROW_TOKEN.findall(text))
+def row_prefixed_tokens(text: str) -> set[str]:
+    """`row_…` 토큰 전수. **단어 경계가 필수다** — `\\b` 가 없으면
+    `header_row_search_range`·`blank_row_stop_streak`·`header_row_not_found`(실측 3종)까지 끌려온다.
+
+    config 칸과 웹 트리 값 칸이 **같은 축**을 쓴다(머리말 ⑥). 축을 두 벌 적으면 한쪽만 고쳐지는 날
+    두 칸이 다른 것을 보게 되고, 그 어긋남은 어느 칸에서도 보이지 않는다.
+    """
+    return set(_ROW_TOKEN.findall(text))
+
+
+def web_source_files(root: Path) -> list[Path]:
+    """`root` 아래 감사 대상 웹 소스 전수 — `.ts`/`.tsx` 중 **테스트가 아닌 것**.
+
+    전수 칸 둘(비교 자리 목록 · 값 토큰)이 **같은 수집 축**을 쓰도록 한 자리에 둔다. 인자로 root 를
+    받는 이유는 아래 자기검증이 임시 트리로 이 함수를 태우기 위해서다(수집 축 자신이 무보호가 되지
+    않게 한다 — 실제 트리로만 부르면 "새 파일을 실제로 집는가"를 물을 방법이 없다).
+    """
+    return [p for p in sorted(root.rglob("*")) if p.suffix in (".ts", ".tsx") and ".test." not in p.name]
 
 
 # =============================================================================== 정본 자신 (음성 단언)
@@ -470,19 +537,86 @@ def test_web_source_tree_has_no_unaudited_cause_literal():
     위 칸들은 파일 목록을 손으로 적는다. 그 목록이 트리와 어긋나면(새 화면이 `cause` 를 리터럴로 비교하기
     시작하면) 그 자리는 영원히 감사 밖이다. 여기서 `apps/web/src` **전수**를 훑어 비교 자리가
     `TS_COMPARISON_SITES` 와 정확히 같은지 확인한다 — 새 자리가 생기면 이 테스트가 그것을 이름으로 알린다.
+
+    **이 칸이 훑는 것은 파일 전수이고 보는 것은 `cause [!=]== "리터럴"` **한 모양뿐**이다**(머리말 ⑥).
+    `switch`/`case`·`includes`·`Set.has`·역순 피연산자는 이 칸에서 이름조차 불리지 않는다(실측:
+    `switch` 심기 → `tests/invariants` **102 passed**, `===` 대조군 → **1 failed**). 그 구멍은 아래
+    `test_web_source_tree_declares_no_cause_value_outside_canon` 이 **값 축으로** 덮는다 — 이 칸은
+    지우지 않는다. 값이 아직 정본 안인 새 자리를 **개명 전에** 이름으로 부르는 조기 경보가 여기뿐이다.
     """
-    web_src = ROOT / "apps/web/src"
-    found: set[Path] = set()
-    for path in sorted(web_src.rglob("*")):
-        if path.suffix not in (".ts", ".tsx") or ".test." in path.name:
-            continue
-        if ts_cause_comparison_literals(path.read_text(encoding="utf-8")):
-            found.add(path)
+    found = {p for p in web_source_files(WEB_SRC) if ts_cause_comparison_literals(p.read_text(encoding="utf-8"))}
     assert found == set(TS_COMPARISON_SITES), (
         "cause 리터럴 비교 자리 전수가 감사 목록과 어긋난다.\n"
         f"  감사 목록에만: {sorted(p.relative_to(ROOT).as_posix() for p in set(TS_COMPARISON_SITES) - found)}\n"
         f"  트리에만(감사 밖): {sorted(p.relative_to(ROOT).as_posix() for p in found - set(TS_COMPARISON_SITES))}"
     )
+
+
+def test_web_source_tree_declares_no_cause_value_outside_canon():
+    """**비교 *모양* 이 아니라 *값* 으로 훑는 전수 칸**(머리말 ⑥ — 리뷰어 A0-a 가 연 구멍).
+
+    위 칸의 축이 `cause [!=]== "리터럴"` 하나라 `switch (item.cause) { case "row_vanished": … }` 같은
+    새 화면이 **이름조차 불리지 않은 채** 통과한다(실측 102 passed). 여기서는 `apps/web/src` 의
+    비테스트 소스에서 `\\brow_[a-z_]+\\b` 토큰을 모아 **정본과 등호로** 비교한다 — 값이 어떤 모양으로
+    쓰이는지 묻지 않으므로 `switch`/`case`·`includes`·`Set.has`·역순 피연산자가 전부 여기서 죽는다.
+
+    등호인 이유: ⊆ 면 "새 경위가 생겼는데 화면이 그 이름을 한 번도 부르지 않는" 결함을 통과시킨다.
+    그 방향은 `api/types.ts` 유니온 칸이 이미 잡지만, 이 칸이 ⊆ 로 완화되면 **웹 트리 전체가 정본 값
+    하나만 언급해도 통과**하게 되어 전수 칸의 뜻이 사라진다.
+
+    **놓치는 것과 대가는 머리말 ⑥ ⓐ~ⓓ 에 적혀 있다**(`row_` 접두사가 아닌 새 이름 / 비테스트 소스
+    주석의 옛 이름 보존 금지 / 테스트 파일 제외 / 정본 안 값만 쓰는 새 파일은 개명 시점에 잡힌다).
+    """
+    per_file = {p: row_prefixed_tokens(p.read_text(encoding="utf-8")) for p in web_source_files(WEB_SRC)}
+    seen: set[str] = set().union(*per_file.values()) if per_file else set()
+    assert seen, "apps/web/src 비테스트 소스에서 `row_…` 토큰이 하나도 안 나온다 — 이 칸이 아무것도 단언하지 못한다"
+    outside = {
+        p.relative_to(ROOT).as_posix(): sorted(tokens - CANON)
+        for p, tokens in per_file.items()
+        if tokens - CANON
+    }
+    assert not outside, f"정본에 없는 경위 값이 웹 소스에 있다(비교 모양과 무관하게 본다): {outside}"
+    assert seen == CANON, f"웹 소스가 부르는 경위 값 {sorted(seen)} != 정본 {sorted(CANON)}"
+
+
+def test_web_source_scan_sees_the_shapes_the_comparison_axis_misses(tmp_path: Path):
+    """**역방향 확인 — 넓힌 축이 실제로 A0-a 의 네 모양을 보는가**(그리고 비교 축은 여전히 못 보는가).
+
+    수집 축(`web_source_files`)과 값 축(`row_prefixed_tokens`)을 **임시 트리**로 태운다. 실제
+    `apps/web/src` 로만 부르면 "새 파일을 실제로 집는가"를 물을 방법이 없다 — 지금 그 트리에는 이 네
+    모양이 하나도 없으므로 위 칸은 **어느 것도 태우지 않은 채** 초록이다.
+
+    각 모양마다 함께 단언한다:
+      ① 값 축이 심은 이름을 본다(= 그 모양이 넓힌 축 안이다).
+      ② **비교 축은 못 본다**(= 머리말 ⑥ 의 서술이 지금도 참이다. 언젠가 비교 축이 넓어지면 이 줄이
+         먼저 죽어 ⑥ 을 고치라고 알린다).
+    그리고 음성 대조군 둘: 정본 값만 쓰는 파일은 걸리지 않고, `.test.` 파일은 수집되지 않는다.
+    """
+    victim = sorted(CANON)[0]
+    shapes = {
+        "SwitchCase.tsx": f'switch (item.cause) {{ case "{victim}": break; case "{SEED_TO}": break; }}',
+        "Includes.ts": f'const R = ["{SEED_TO}"];\nexport const f = (c: string) => R.includes(c);\n',
+        "SetHas.ts": f'const S = new Set(["{SEED_TO}"]);\nexport const f = (c: string) => S.has(c);\n',
+        "Reversed.tsx": f'export const f = (g: {{ cause: string }}) => "{SEED_TO}" === g.cause;\n',
+    }
+    for name, body in shapes.items():
+        root = tmp_path / name.replace(".", "_") / "src"
+        root.mkdir(parents=True)
+        (root / name).write_text(body, encoding="utf-8")
+        collected = web_source_files(root)
+        assert [p.name for p in collected] == [name], (name, collected)
+        assert row_prefixed_tokens(body) - CANON == {SEED_TO}, f"{name}: 값 축이 이 모양을 보지 못한다"
+        assert SEED_TO not in ts_cause_comparison_literals(body), (
+            f"{name}: 비교 축이 이 모양을 본다 — 머리말 ⑥ 의 '한 모양뿐'이 낡았다"
+        )
+
+    control = tmp_path / "control" / "src"
+    control.mkdir(parents=True)
+    (control / "Fine.tsx").write_text(f'switch (c) {{ case "{victim}": break; }}\n', encoding="utf-8")
+    (control / "Seeded.test.tsx").write_text(f'const c = "{SEED_TO}";\n', encoding="utf-8")
+    collected = web_source_files(control)
+    assert [p.name for p in collected] == ["Fine.tsx"], collected
+    assert not (row_prefixed_tokens(collected[0].read_text(encoding="utf-8")) - CANON)
 
 
 # =============================================================================== config 쪽 칸
@@ -496,7 +630,7 @@ def test_config_warning_text_names_exactly_the_canonical_causes():
     (CLAUDE.md §6-4: 문구는 장식이 아니라 CM 이 다음 행동을 고르는 입력이다).
     지금 트리에서 등호가 성립한다(실측: `{row_absorbed, row_moved, row_replaced}`).
     """
-    got = yaml_row_tokens(_read(YAML_CONFIG))
+    got = row_prefixed_tokens(_read(YAML_CONFIG))
     assert got == CANON, f"config 경고 문구의 경위 이름 {sorted(got)} != 정본 {sorted(CANON)}"
 
 
@@ -509,7 +643,7 @@ def test_config_row_token_axis_excludes_unrelated_row_prefixed_keys():
     text = _read(YAML_CONFIG)
     for key in ("header_row_search_range", "blank_row_stop_streak", "header_row_not_found"):
         assert key in text, f"config 에 {key} 가 없다 — 이 칸의 전제(무관한 row_ 키가 있다)가 낡았다"
-    assert not (yaml_row_tokens(text) & {"header_row_search_range", "blank_row_stop_streak", "header_row_not_found"})
+    assert not (row_prefixed_tokens(text) & {"header_row_search_range", "blank_row_stop_streak", "header_row_not_found"})
 
 
 # =============================================================================== 옛 이름 유출
@@ -531,7 +665,7 @@ def test_no_legacy_cause_name_leaks_into_any_audited_set():
         "IDENTITY_DRIFT_CAUSE_ORDER": set(ts_array_strings(domain, "IDENTITY_DRIFT_CAUSE_ORDER")),
         "IDENTITY_DRIFT_CAUSE_LABELS": ts_record_keys(domain, "IDENTITY_DRIFT_CAUSE_LABELS"),
         "IDENTITY_DRIFT_CAUSE_NOTES": ts_record_keys(domain, "IDENTITY_DRIFT_CAUSE_NOTES"),
-        "config yaml": yaml_row_tokens(_read(YAML_CONFIG)),
+        "config yaml": row_prefixed_tokens(_read(YAML_CONFIG)),
     }
     for site in TS_COMPARISON_SITES:
         audited[f"{site.name} comparisons"] = ts_cause_comparison_literals(_read(site))
@@ -555,7 +689,7 @@ _EXTRACTORS: tuple[tuple[str, Path, object], ...] = (
     ("IDENTITY_DRIFT_CAUSE_NOTES", TS_DOMAIN, lambda t: ts_record_keys(t, "IDENTITY_DRIFT_CAUSE_NOTES")),
     ("identityDrift.ts cause comparisons", TS_DOMAIN, ts_cause_comparison_literals),
     ("ReviewsPage.tsx cause comparisons", TS_PAGE, ts_cause_comparison_literals),
-    ("config yaml row tokens", YAML_CONFIG, yaml_row_tokens),
+    ("config yaml row tokens", YAML_CONFIG, row_prefixed_tokens),
 )
 
 

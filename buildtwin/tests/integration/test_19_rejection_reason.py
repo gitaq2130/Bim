@@ -17,6 +17,7 @@ ADR 0012 §Consequences 가 스스로 적었다: **"넣자마자 무보호다."*
 | `rejection_reason_missing` 본문 → `return False` | 위 전부 |
 | 예외 부가 필드(`review_kind`·`review_request_ids`) 이름·포맷 변경 | 위 둘의 부가 필드 단언 |
 | `_resolution_note` 가 CM 사유를 함께 싣는 것 되돌림 | `test_cm_reason_reaches_the_queue_...`(V12) |
+| `_resolution_note` 반환 순서 뒤집기(`f"{machine} \| {note}"`) | 같은 V12 의 **순서 단언**. 그 전에는 무보호였다 — 2026-09-05 실측: 그 단언 한 줄만 뺀 트리에서 뒤집어도 **783 passed**(실패 0) |
 | 예외를 `InvalidTransitionError` 하위 타입으로 | `test_error_is_not_a_subtype_...`(V11) — **HTTP 로는 관측되지 않는다**, 아래 그 이유 |
 
 ## 왜 `code` 를 보는가 (ADR 0011 이 실측한 것)
@@ -386,6 +387,21 @@ def test_cm_reason_reaches_the_queue_note_together_with_the_machine_string(clien
     (transition_id · from_state · to_state)이 메모 안에 있는지로 본다. 어순·구두점을 바꾸는 정당한
     개정은 여기서 죽지 않고, 값을 잃는 개정만 죽는다.
 
+    **그리고 순서까지 본다 — 사유가 기계 문자열보다 먼저 읽힌다.** 지금까지 그 자리
+    (`state_machine._resolution_note` docstring "CM 이 적은 사유가 **앞에 온다**")는 무보호였다:
+    반환을 `f"{machine} | {note}"` 로 뒤집어도 실패 0 이었다(2026-09-05 실측: 이 단언 한 줄만 뺀
+    트리에서 **783 passed**). 큐 화면은 이 값을
+    `처리 메모:` 로 **그대로** 찍으므로, 뒤집히면 CM 이 먼저 보는 것이 `transition_id=…` 가 된다.
+
+    **역방향 확인 — 무엇을 고정하고 무엇을 고정하지 않는가.** 단언은 "사유가 `transition_id` **값**보다
+    앞에 있다" 하나다. 구분자(` | ` → 다른 것)·기계 문자열 내부 어순·사유 앞에 붙는 라벨·줄바꿈은
+    전부 통과한다. 죽는 것은 **기계 문자열이 사유 앞으로 나가는 개정** 하나다. 기준을 `from_state`/
+    `to_state` 가 아니라 `transition_id` 로 잡은 것도 그래서다 — 상태 이름은 사람이 읽는 머리말
+    ("MISMATCH 로 전이: …")에 정당하게 먼저 나올 수 있지만, UUID 는 그럴 자리가 없다.
+
+    순서는 **문 B 에서만** 태운다. 두 문이 같은 `_resolution_note` 하나를 부르므로 순서 계약은 그
+    함수의 것이고, 문이 그 함수를 부르기는 하는가(= 사유가 남는가)는 위아래에서 두 문 모두 태운다.
+
     두 문을 모두 태운다 — 문 B 만 고치면 큐 반려가, 큐만 고치면 객체 패널 반려가 낡은 값을 남긴다.
     """
     # 문 A(큐)
@@ -404,6 +420,7 @@ def test_cm_reason_reaches_the_queue_note_together_with_the_machine_string(clien
     assert REASON in note_b, note_b
     for value in (transition["transition_id"], transition["from_state"], transition["to_state"]):
         assert value in note_b, (value, note_b)
+    assert note_b.index(REASON) < note_b.index(transition["transition_id"]), note_b
 
     # 음성 대조군: 사유를 요구하지 않는 승인 경로에서는 기계 문자열만 남는다 — 접두사가 무조건 붙는
     # (그래서 사유가 없어도 있는 척하는) 구현이 여기서 죽는다.
