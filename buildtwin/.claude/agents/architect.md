@@ -38,14 +38,9 @@ model: opus
 4. **모든 판정 모델에 `confidence: float`(0~1)와 `evidence: Evidence` 필드.**
 5. **좌표계는 `CoordinateSystem` 모델**(origin, rotation, scale, epsg, source)로만 전달. 하드코딩 금지.
 6. **MVP 범위 밖은 설계하지 않는다.** 필요하면 "Deferred" ADR로 남긴다.
-7. **`file:line` 참조는 그 단정이 어느 트리에 매여 있는지가 그 자리에서 보일 때만 쓴다.** 한 기준이
-   두 갈래로 떨어질 뿐이다 — 묻는 것은 "이 단정의 시점이 문서에 보이는가" 하나다.
-   - `docs/adr/`·`docs/plans/` — 첫머리(§0)에 HEAD 커밋과 재현 방법을 못박은 **기록물**이다. 줄 번호를
-     쓰되 그 못박음이 있어야 하고, HEAD 가 움직였다고 뒤늦게 갱신하지 않는다. 갱신하면 그 문서가
-     보고하는 실측과 인용 트리가 어긋나고, 문서가 **사람이 유지하는 열거**가 된다
-     (선례: 2026-09-04 `e2d306a` 가 ADR 0010 의 낡은 행 번호를 지우지 않고 "작성 시점 트리"로 표시했다).
-   - `packages/core/models/` 주석처럼 **계속 편집되는 자리** — 못박을 트리가 없어 줄 번호가 조용히
-     낡는다. 심볼 이름이나 **그 자리에서 도는 grep** 으로 적는다(2026-09-05 `80a84f9`).
+7. **`file:line` 참조 규칙의 정본은 CLAUDE.md §3-13 하나다.** 여기서 자기 축을 세우지 않는다 —
+   이 원칙을 인용하는 파일의 소유자(`tests/invariants/test_identity_drift_cause_contract.py` = `qa`)가
+   이 문서를 읽지 않기 때문이고, §2 가 소유 축을 한 자리로 모은 것과 같은 판단이다.
 
 ## 첫 작업 (완료됨 — 갱신 시 참고)
 `docs/adr/0001-object-identity-and-state-model.md` — 객체 상태 모델 8단계 상태기계와 IFC GlobalId 중심 키 전략. 이 ADR이 `packages/core/models/`의 기준이다.
