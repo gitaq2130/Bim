@@ -20,17 +20,10 @@ model: sonnet
   - `tests/conftest.py`
 - `.github/workflows/` — CI
 - `Makefile` — `make dev / test / lint / docs / fixtures`
-- `apps/web/src/**/*.test.ts(x)` — vitest(파일은 각 담당 디렉터리 안에 두되 qa가 작성 가능한 예외)
-- `apps/web/src/test/` — vitest 하네스 **디렉터리 전체**(2026-09-04 기준 `setup.ts`·`fixtures.ts`·
-  `utils.tsx` — 범위는 디렉터리이고 이 목록은 그 시점의 내용이다). 위 예외의 축이
-  **파일명 접미사**라 접미사가 없는 테스트 지원 파일이 밖으로 나갔다(2026-09-04 `91e132a` 가 qa 커밋으로
-  `test/utils.tsx` 를 고쳐 reviewer 형식 체크 3 FAIL — 계획 0004 §계획과 사실이 어긋난 자리).
-  **배타 소유가 아니라 공동 편집 자리**다: 계획이 배정하면 frontend 도 고친다(계획 0004 작업 5 가
-  세션 캐시 가드 설치를 그렇게 배정했다).
-  *역방향 확인 — 이 예외가 들이는 것.* "테스트 전용 디렉터리"라는 근거는 **비-테스트 코드가 이
-  디렉터리를 import 하지 않는다**에 기대고 있다(2026-09-04 실측: 앱 코드 import 0건, 유일한 참조는
-  `apps/web/vite.config.ts:20` 의 `setupFiles`). 앱 모듈이 여기서 import 하는 날 이 예외의 근거는
-  사라지므로, 그때는 그 파일을 소유 에이전트에게 돌려준다.
+- `apps/web/src/**/*.test.ts(x)` 와 `apps/web/src/test/`(vitest 하네스 디렉터리 전체) — **소유 정본은
+  `CLAUDE.md` §2 소유 규칙의 공동 편집 자리 항목 하나**다. 여기서 축을 다시 세우지 않는다: 2026-09-04
+  `91e132a`(qa 가 `test/utils.tsx` 를 고쳐 체크 3 FAIL)와 2026-09-05 `92daacb`·`3f606f3` 는 **같은 답이
+  두 자리에 다른 축으로 적혀 있어서** 난 이탈이고, 여기 축을 하나 더 두면 그 모양이 다시 만들어진다.
 
 ## 픽스처
 | 파일 | 출처 | 기대값 |
