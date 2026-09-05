@@ -76,6 +76,14 @@
     (`changedFieldsUnknown`, 구현은 `frontend` — §5-6 5번). ④ 커밋 소유 분리 관례(`packages/core/models/`
     는 architect 단독 커밋)를 **CLAUDE.md §2** 에, §6-1 새 규칙 둘의 역방향 확인을 **CLAUDE.md §6-1** 에
     적었다.
+  - **개정 3**(2026-09-05, 계획 0005 작업 10 — **문서만 고친다. 결정도 동작도 바뀌지 않는다**):
+    **§Deferred 5 를 닫는다.** 계획 0005 작업 2·7 이 `cause` 정본을
+    `packages/core/models/review.IDENTITY_DRIFT_CAUSE_*` 로 올렸고, 파이썬 생산·소비 자리는 그것을
+    가리키는 별칭이 됐다. 파이썬 밖(TS·config)은 정의로 묶이지 않으므로 작업 8 이
+    `tests/invariants/test_identity_drift_cause_contract.py` 로 덮는다. **§Deferred 5 의 자리 목록은
+    다시 세지 않고 감사에게 넘긴다** — 그 목록은 한 사이클 안에서 두 번 늘었고(계획 0005 §2-a 가 둘,
+    §6-1 로 축을 넓힌 재계수가 `ReviewsPage.tsx` 를 더했다), 이 항목의 결론은 자리의 개수에 기대지
+    않는다. 감사가 잡는 것·놓치는 것과 그 실측값을 §Deferred 5 개정 3 블록에 적었다.
 - 작성: architect
 - 날짜: 2026-09-04
 - 관련: ADR 0007 §2-1(미해결 위험으로 기록됨 — **이 ADR 이 그것을 닫는다**), §2-2 규칙 2·4(재업로드·고아·rename),
@@ -1415,7 +1423,11 @@ blocker 와 데이터 모양·결과가 같다 — 행도 `reviewed_by` 도 살�
    이 ADR 은 "정체성이 흔들려 확정이 무효가 되는" 경로만 다루고, "CM 이 확정을 취소하고 싶다"는 다루지 않는다.
 4. **식별 표면 지문의 사람이 읽을 수 있는 diff.** §5-2 는 지문이 달라졌다는 사실까지만 보고한다.
    "어느 키가 어떻게 바뀌었는가"를 보여 주는 것은 운영 편의이지 안전 장치가 아니므로 뒤로 미룬다.
-5. **(개정 1 / 개정 2에서 무게가 커졌다) `cause` 값의 정본이 **네 곳**에 복제돼 있다.** 지금
+5. **[닫힘 — 개정 3, 2026-09-05] `cause` 값의 정본이 여러 자리에 복제돼 있다.** 닫은 기록은 이 항목
+   끝의 **개정 3** 블록에 있다. 아래 본문은 **닫히기 전의 기록으로 그대로 둔다**(항목을 지우지 않는다) —
+   다만 목록만은 지금 거짓이므로 그 사실을 개정 3 이 적는다.
+
+   ~~(개정 1 / 개정 2에서 무게가 커졌다) `cause` 값의 정본이 **네 곳**에 복제돼 있다.~~ 지금
    `row_moved`/`row_replaced`/`row_absorbed`(개정 2 이전 이름: `orphaned`/`merge_overwritten`/
    `merge_absorbed`) 문자열은 다음 네 자리에 적혀 있다 —
 
@@ -1442,3 +1454,62 @@ blocker 와 데이터 모양·결과가 같다 — 행도 `reviewed_by` 도 살�
    `document_mapper._CAUSE_UNSPECIFIED` 와 화면 `classifyIdentityDriftCause` 이고, 제목이 그 값을 어떻게
    적는지는 §5-3-a 끝에 있다. 새 경위를 추가하거나 이름을 바꾸는 변경은 **네 자리를 함께** 고쳐야 하며,
    그 사실을 여기 적어 둔 것이 지금의 유일한 강제 장치다(계획 0003 §12-f 체크 3 이 리뷰어에게 같은 목록을 요구한다).
+
+   ---
+
+   ### 개정 3 — 이 항목을 닫는다 (2026-09-05, 계획 0005 작업 2·7·8)
+
+   **정본은 `packages/core/models/review.py` 의 `IDENTITY_DRIFT_CAUSE_*` 다.** 같은 파일이
+   `IDENTITY_DRIFT_CAUSES`(튜플)와 `IdentityDriftCause`(Literal)를 함께 갖고,
+   `IDENTITY_DRIFT_CAUSE_UNSPECIFIED` 는 그 집합 **밖**의 소비 전용 자리표시자다. 파이썬 생산자
+   (`services/ingest/persistence`)와 소비자(`services/progress/document_mapper`)의 `_CAUSE_ROW_*` 는
+   그 정본을 가리키는 **별칭**이고 값을 다시 적지 않는다(커밋 `568f012` 정의 · `7ae4e34` 소비 ·
+   `248a061` 생산). 위 표 1번의 "(**정본**)" 표시는 그래서 지금 거짓이다.
+
+   **위 표를 다섯으로도 여섯으로도 고치지 않는다 — 열거를 문서가 유지하지 않기 때문이다.** 이 항목이
+   "네 곳"이라 적은 목록은 한 사이클 안에서 두 번 늘었다: 계획 0005 §2-a 가 저장소 루트에서 값 셋을
+   다시 훑어 `apps/web/src/api/types.ts` 와 `config/document_register.yaml` 을 더했고, 그 뒤 §6-1 대로
+   축을 넓혀(값 셋 **+ 정본 심볼 이름**) 다시 세자 `apps/web/src/pages/ReviewsPage.tsx` 가 나왔다 —
+   거기서 `g.cause === "row_replaced"` 가 `notice strong` 과 "가장 먼저 확인" 배지를 켜므로, 개명이
+   거기 닿지 않으면 **가장 위험한 경위의 강조가 조용히 꺼진다**. 목록이 두 번 틀렸다는 사실이 이 항목의
+   결론을 바꾸지는 않는다 — 결론은 "정본이 한 자리이고 나머지는 그것을 가리킨다"이지 **자리의 개수가
+   아니다**. 바뀌는 것은 **누가 열거를 유지하는가**이고, 답은 사람이 아니다.
+
+   **열거를 대신하는 것: `tests/invariants/test_identity_drift_cause_contract.py`**(계획 0005 작업 8, qa).
+   그 파일은 값을 다시 적지 않고 정본을 import 해 비교하며, `apps/web/src` **전수**를 훑어
+   `cause === "…"` 비교 자리가 감사 목록과 어긋나면 그 파일 이름을 대고 실패한다
+   (`test_web_source_tree_has_no_unaudited_cause_literal`). 새 경위를 추가하거나 이름을 바꾸는 변경이
+   함께 고쳐야 할 자리를 **이 항목이 아니라 그 테스트가** 말한다.
+
+   **감사가 무엇을 잡는가 — 심어 보고 잰 값**(2026-09-05, 작업 트리 `/home/user/Bim/buildtwin`,
+   전량 기준선 `781 passed`. 각 심기 뒤 저장소 루트 `git status --porcelain` 이 빈 출력임을 확인했다):
+
+   | 심은 결함 | 감사 밖 | 감사 |
+   |---|---|---|
+   | 파이썬만 일관 개명(`row_absorbed` → `row_relocated`; 생산·소비·파이썬 테스트 전부, TS·yaml 그대로) | 감사 제외 pytest 전량 **746 passed** · vitest 전량 **268 passed** | **7 failed** |
+   | 정본에서 뗀 같은 값 재선언(`_CAUSE_ROW_ABSORBED = "row_absorbed"`) | 감사 제외 pytest 전량 **746 passed**(값이 같으므로 어떤 단언도 달라지지 않는다. 감사 도입 전 전량은 **738 passed**) | **2 failed** — `test_python_alias_sites_declare_no_literal_of_their_own[persistence.py]`, `test_python_alias_values_equal_canon_at_runtime` |
+
+   첫 행이 이 항목이 존재한 이유다: 파이썬 안에서 일관되기만 하면 파이썬 검사도 웹 검사도 전부 초록인데,
+   그 제품은 서버가 보낸 값을 `SERVER_CAUSE_TO_LOCAL` 이 찾지 못해 **모든 항목을 "경위 미상"으로**
+   보내고 `config/document_register.yaml` 의 경고 문구는 존재하지 않는 이름을 CM 에게 읽어 준다.
+
+   **이 감사의 생성 기준과 블라인드 스팟(§6-1 ①②).** 기준은 **"정본 값 집합과 대조할 수 있게 구조적으로
+   추출되는 선언·비교 자리"** 다. 그 기준이 놓치는 것 —
+
+   ① **표기 변종.** 축이 값의 문자 그대로라 `row-moved` 같은 표기는 밖이다. 실측(저장소 루트,
+      `grep -rniE "row[- ]moved|row[- ]replaced|row[- ]absorbed" . | grep -v "row_"` + node_modules·.git 제외):
+      히트 **1건**이고 그것은 계획 0005 가 이 블라인드 스팟을 서술하며 그 패턴을 인용한 줄이다.
+      한국어로 값을 적는 자리는 **0건**이다(`행 교체` 히트 2건은 값이 아니라 개념을 설명하는 산문 —
+      `document_mapper.py:765`, `tests/integration/test_17_*.py:1888`).
+   ② **값 이름을 쓰지 않고 `cause` 를 소비하는 자리.** 실측(비테스트 런타임 트리에서 `\bcause\b`):
+      나오는 파일은 감사가 이미 보는 자리들뿐이고 **추가 0건**이다.
+   ③ **아직 존재하지 않는 네 번째 경위 이름**은 원리상 이 축 밖이다. 그리고 config 칸의 축은
+      `\brow_` 접두사라, `row_` 로 시작하지 않는 새 이름은 그 칸에서 보이지 않는다.
+   ④ **`docs/` 는 대상이 아니다.** ADR·계획·glossary 는 옛 이름을 **의도적으로 보존**하고(§5-2 (마)
+      개명 표, glossary "옛 이름 셋 … 번역하지 않는다") 개명 뒤에도 참인 채로 남아야 한다 —
+      감사에 넣으면 감사가 정본을 거짓으로 만든다.
+   ⑤ **값 집합만 비교하고 의미는 비교하지 않는다.** 두 이름을 서로 맞바꾸는 개명은 **모든 칸을 통과한다.**
+      이것이 이 감사의 가장 큰 구멍이고, 값 대조로는 닫히지 않는다.
+   ⑥ 파일 목록의 자동 유지는 **`apps/web/src` 의 비교 자리에만** 있다. 파이썬 별칭 자리와
+      `config/document_register.yaml` 은 감사가 경로를 손으로 적고, 그 경로에 없는 **새 파일**은 밖이다
+      (파일이 옮겨지면 추출이 공집합이 되는 대신 그 자리에서 죽도록 존재 단언이 앞에 있다).
