@@ -50,26 +50,30 @@ ReviewStatus = Literal["open", "approved", "rejected", "on_hold"]
 # ADR 0009 §Deferred 5. 위 머리말이 각 값이 무엇을 뜻하는지, 그리고 개정 2 가 왜 이름을 바꿨는지 적는다.
 #
 # **이 정의가 닫는 것과 닫지 못하는 것.** 파이썬 생산자(`services/ingest/persistence`)와 소비자
-# (`services/progress/document_mapper`)가 이 이름을 import 하면 파이썬 안의 불일치는 mypy 와 pytest 가
-# 잡는다. 파이썬 밖의 선언은 같은 문자열을 따로 적는다 — `apps/web/src/api/types.ts` 의
-# `IdentityDriftCause`, `apps/web/src/domain/identityDrift.ts` 의 `IdentityDriftCauseKind`·
-# `SERVER_CAUSE_TO_LOCAL`·`IDENTITY_DRIFT_CAUSE_ORDER`/`_LABELS`/`_NOTES`,
-# `config/document_register.yaml:254,260,261` 의 경고 문구. **이 정의는 그 경계를 넘는 불일치를 잡지
-# 못한다** — 파이썬만 일관되게 개명해도 파이썬 검사는 전부 통과한다(실측 2026-09-05, 작업 트리:
-# `row_absorbed` → `row_relocated` 로 생산·소비·파이썬 테스트를 함께 고친 뒤 `pytest -q` → 738 passed,
-# TS·config 는 옛 이름 그대로). 그 상태의 제품에서는 서버가 보낸 값을
-# `classifyIdentityDriftCause`(`identityDrift.ts:48-51`)가 `SERVER_CAUSE_TO_LOCAL` 에서 찾지 못해
-# 모든 항목이 `"unspecified"`("경위 미상")로 떨어진다 — 예외 없음·테스트 통과·화면 정상.
-# 그 경계를 지키는 것은 이 파일이 아니라 값 집합을 언어 밖에서 대조하는 감사이고, **실측 2026-09-05
-# 기준 이 저장소에 그 감사가 없다**(`grep -rl "IDENTITY_DRIFT_CAUSES\|SERVER_CAUSE_TO_LOCAL" tests/`
-# → 히트 0). 계획 0005 §2-c 가 그 감사의 자리를 `tests/invariants/` 로 지정한다.
+# (`services/progress/document_mapper`)가 이 이름을 import 하므로 파이썬 안의 불일치는 mypy 와 pytest 가
+# 잡는다. 파이썬 밖의 선언(`apps/web/src` 의 타입·표·화면 분기와 `config/document_register.yaml` 의
+# 경고 문구)은 같은 문자열을 따로 적고 **TS 는 파이썬 상수를 import 할 수 없다** — 그 경계를 넘는
+# 불일치를 이 정의는 잡지 못한다.
+#
+# **그 자리들을 여기 열거하지 않는다.** 열거는 `tests/invariants/test_identity_drift_cause_contract.py`
+# 가 이 정본을 import 해 기계로 하고, `apps/web/src` 전수를 훑어 `cause` 리터럴 비교 자리가 그 감사의
+# 목록과 어긋나면 파일 이름을 대고 실패한다. ADR 0009 §Deferred 5 개정 3 이 그 감사가 잡는 것과 놓치는
+# 것을 적는다(가장 큰 구멍: 값 집합만 비교하므로 두 이름을 서로 맞바꾸는 개명은 통과한다).
+#
+# 그 감사 밖에는 이 경계를 보는 검사가 **없다**. 실측 둘(2026-09-05, 작업 트리):
+#   · `row_absorbed` → `row_relocated` 를 생산·소비·파이썬 테스트에 일관 적용하고 TS·config 를 두면
+#     감사 제외 pytest 전량 746 passed · vitest 전량 268 passed 로 실패 0 이고, 감사만 7건 실패한다.
+#     그 제품에서는 서버가 보낸 값을 `classifyIdentityDriftCause` 가 `SERVER_CAUSE_TO_LOCAL` 에서 찾지
+#     못해 모든 항목이 `"unspecified"`("경위 미상")로 떨어진다 — 예외 없음·테스트 통과·화면 정상.
+#   · 별칭 하나를 정본에서 떼어 같은 값 리터럴로 재선언하면(`_CAUSE_ROW_ABSORBED = "row_absorbed"`)
+#     감사 제외 pytest 전량 746 passed 로 초록이고, 감사가 그 재선언을 잡는다.
 IDENTITY_DRIFT_CAUSE_ROW_MOVED: Final = "row_moved"
 IDENTITY_DRIFT_CAUSE_ROW_REPLACED: Final = "row_replaced"
 IDENTITY_DRIFT_CAUSE_ROW_ABSORBED: Final = "row_absorbed"
 # `unspecified` 는 이 집합에 **들어가지 않는다.** 생산자가 실어 보낼 수 있는 값이 되면 "모른다"가 값이
 # 되고, 그것은 소비자가 모르는 값을 가장 흔한 경위로 떨어뜨리지 않기 위해 만든 자리표시자를 무의미하게
-# 만든다(`services/progress/document_mapper._CAUSE_UNSPECIFIED` 주석과 `identityDrift.ts:40-47` 이 같은
-# 규칙을 적는다).
+# 만든다(`services/progress/document_mapper._CAUSE_UNSPECIFIED` 주석과 `identityDrift.ts` 의
+# `classifyIdentityDriftCause` 가 같은 규칙을 적는다).
 IDENTITY_DRIFT_CAUSES: Final[tuple[str, ...]] = (
     IDENTITY_DRIFT_CAUSE_ROW_MOVED,
     IDENTITY_DRIFT_CAUSE_ROW_REPLACED,
