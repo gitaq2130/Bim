@@ -7,24 +7,24 @@
 `apps/web/src/api/types.ts` · `apps/web/src/domain/identityDrift.ts` · `apps/web/src/pages/ReviewsPage.tsx` ·
 `config/document_register.yaml` 은 같은 문자열을 **따로** 적고, **TS 는 파이썬 상수를 import 할 수 없다.**
 
-실측 — **값이 아니라 재현 명령을 정본으로 읽는다.** 이 파일은 계속 편집되는 자리라 못박을 트리가 없고
-(`.claude/agents/architect.md` §핵심 설계 원칙 7), 전량 숫자는 여기에 단언을 더할 때마다 움직인다.
-그러므로 아래 명령을 적고, 값은 **이 줄을 쓴 커밋에서 잰 것**으로 읽는다:
+실측 — **개수가 아니라 재현 명령을 정본으로 읽는다.** 이 파일은 계속 편집되는 자리라 못박을 트리가
+없다(CLAUDE.md §3-13 둘째 갈래). 그리고 아래 결론이 기대는 것은 실패 **개수**가 아니라 **감사 밖의
+부재**이므로 개수를 적지 않는다(CLAUDE.md §6-1) — 전량 수는 이 파일에 단언을 하나 더할 때마다 움직여
+조용히 낡는다. 그 자리에서 도는 명령만 적고 값은 태워서 읽는다(개수가 못박힌 판은 ADR 0009
+§Deferred 5 개정 3 이 HEAD `788223f` 와 함께 싣는다 — 그것은 못박힌 기록물이고 여기는 아니다):
 
     sed -i 's/row_absorbed/row_relocated/g' packages/core/models/review.py \
         tests/integration/test_17_document_identity_drift.py \
         tests/unit/progress/test_identity_drift_review_title.py     # 파이썬 전 계층만 개명, TS·yaml 은 그대로
-    .venv/bin/pytest -q                  # 2026-09-05: 9 failed, 774 passed — 실패는 **전부 이 파일**
-                                         #   (= 이 감사를 뺀 전량 746 passed, 감사 밖 실패 0)
-    (cd apps/web && npx vitest run)      # 268 passed — TS 를 건드리지 않았으므로 기준선과 같다
+    .venv/bin/pytest -q --tb=no -rf      # `FAILED` 줄이 **전부 이 파일** — 감사 밖 실패 **0건**
+    (cd apps/web && npx vitest run)      # 실패 **0건** — TS 를 건드리지 않았으므로 기준선 그대로
 
-9 건 중 하나(`test_web_source_scan_sees_the_shapes_the_comparison_axis_misses`)는 결함이 아니라 **이 명령이
-고른 새 이름이 하필 아래 `SEED_TO` 와 같아서** 죽는 것이다(씨앗이 정본 안으로 들어오면 seeded divergence 가
-divergence 가 아니다). 같은 명령의 새 이름만 `row_shifted` 로 바꾸면 **8 failed, 775 passed** 다(실측).
+그 실패 목록에 드는 것 하나(`test_web_source_scan_sees_the_shapes_the_comparison_axis_misses`)는 결함이
+아니라 **이 명령이 고른 새 이름이 하필 아래 `SEED_TO` 와 같아서** 죽는 것이다(씨앗이 정본 안으로
+들어오면 seeded divergence 가 divergence 가 아니다). 같은 명령의 새 이름만 `row_shifted` 로 바꾸면
+**그 칸 하나만 목록에서 빠지고 나머지 실패 목록은 같다**(실측).
 
-즉 **감사 제외 pytest 746 passed · vitest 268 passed 로 전원 통과**다(앞선 판에 적혀 있던 738·262 는
-작업 8 시점의 값이고, 위 명령으로 지금 다시 재면 746·268 이다 — ADR 0009 §Deferred 5 개정 3·
-`packages/core/models/review.py` 가 싣는 숫자와 같게 맞췄다).
+즉 **감사 밖은 pytest·vitest 모두 실패 0** 이다.
 그 상태의 제품은 서버가 `row_relocated` 를 실어 보내고, `classifyIdentityDriftCause` 가
 `SERVER_CAUSE_TO_LOCAL` 에서 찾지 못해 **모든 항목을 `unspecified`("경위 미상")** 로 떨어뜨리고,
 `config/document_register.yaml` 의 경고 문구가 **존재하지 않는 이름**을 CM 에게 읽어 준다.
@@ -58,19 +58,29 @@ divergence 가 아니다). 같은 명령의 새 이름만 `row_shifted` 로 바�
    `cause [!=]== "리터럴"` 한 모양뿐이다.** `switch (item.cause) { case "…": }` · `[…].includes(cause)` ·
    `new Set([…]).has(cause)` · **역순 피연산자**(`"row_replaced" === g.cause`)는 전부 그 축 밖이고, 그런
    새 화면은 **이름조차 불리지 않는다**. 실측 — 모양마다 **하나씩 따로** 심고
-   `apps/web/src/pages/__A0aProbe.tsx` 한 파일로 태웠다(명령 `.venv/bin/pytest -q tests/invariants`,
-   각 심기 앞뒤로 저장소 루트 `git status --porcelain` 이 빈 출력임을 확인. 2026-09-05).
-   **넓히기 전(비교 축만, 기준선 102) ↔ 넓힌 뒤(값 축 추가, 기준선 104)를 나란히 적는다**
-   (CLAUDE.md §6-3: 새 조건이 잡는 것만이 아니라 **옛 조건이 잡던 것**도 함께 본다):
+   `apps/web/src/pages/__A0aProbe.tsx` 한 파일로 태웠다(2026-09-05. 각 심기 앞뒤로 저장소 루트
+   `/home/user/Bim` 에서 `git status --porcelain` 이 빈 출력임을 확인). 두 열은 **같은 심기에 대한
+   두 번의 실행**이다 — "넓히기 전"은 값 칸을 뺀 실행,
+
+       CELL=tests/invariants/test_identity_drift_cause_contract.py
+       .venv/bin/pytest -q --tb=no -rf tests/invariants \
+           --deselect $CELL::test_web_source_tree_declares_no_cause_value_outside_canon   # "넓히기 전"
+       .venv/bin/pytest -q --tb=no -rf tests/invariants                                   # "넓힌 뒤"
+
+   **넓히기 전(비교 축만) ↔ 넓힌 뒤(값 축 추가)를 나란히 적는다**
+   (CLAUDE.md §6-3: 새 조건이 잡는 것만이 아니라 **옛 조건이 잡던 것**도 함께 본다).
+   **칸은 전량 수가 아니라 "어느 칸이 죽는가"로 적는다** — 전량 수는 이 파일에 단언을 더할 때마다
+   움직이고, 이 표의 결론이 기대는 것은 수가 아니라 **그 모양을 본 칸이 있었는가**다(위 실측 문단과
+   같은 판단, CLAUDE.md §6-1):
 
      | 심은 모양 | 넓히기 전 | 넓힌 뒤 |
      |---|---|---|
-     | `switch (item.cause) { case "row_moved": … case "row_vanished": … }` | **102 passed**(통과) | **1 failed, 103 passed** — 값 칸이 `{'apps/web/src/pages/__A0aProbe.tsx': ['row_vanished']}` |
-     | `RISKY.includes(item.cause)` (배열 리터럴은 다른 줄) | **102 passed** | **1 failed, 103 passed** — 값 칸 |
-     | `RISKY_SET.has(item.cause)` | **102 passed** | **1 failed, 103 passed** — 값 칸 |
-     | `"row_vanished" === g.cause` (역순 피연산자) | **102 passed** | **1 failed, 103 passed** — 값 칸 |
-     | `item.cause === "row_vanished"` (대조군 — 옛 조건이 잡던 것) | **1 failed, 101 passed** — 비교 칸이 `트리에만(감사 밖): ['apps/web/src/pages/__A0aProbe.tsx']` | **2 failed, 102 passed** — 비교 칸 + 값 칸(옛 조건이 잡던 것을 그대로 잡는다) |
-     | `switch` 에 `case "row_moved"`·`case "row_replaced"` 만 (정본 안 값만 쓰는 새 파일) | **102 passed** | **104 passed** — 아래 ⓓ 가 이 칸이다 |
+     | `switch (item.cause) { case "row_moved": … case "row_vanished": … }` | **죽는 칸 없음** | **값 칸만** — `{'apps/web/src/pages/__A0aProbe.tsx': ['row_vanished']}` |
+     | `RISKY.includes(item.cause)` (배열 리터럴은 다른 줄) | **죽는 칸 없음** | **값 칸만** |
+     | `RISKY_SET.has(item.cause)` | **죽는 칸 없음** | **값 칸만** |
+     | `"row_vanished" === g.cause` (역순 피연산자) | **죽는 칸 없음** | **값 칸만** |
+     | `item.cause === "row_vanished"` (대조군 — 옛 조건이 잡던 것) | **비교 칸** — `트리에만(감사 밖): ['apps/web/src/pages/__A0aProbe.tsx']` | **비교 칸 + 값 칸**(옛 조건이 잡던 것을 그대로 잡는다) |
+     | `switch` 에 `case "row_moved"`·`case "row_replaced"` 만 (정본 안 값만 쓰는 새 파일) | **죽는 칸 없음** | **죽는 칸 없음** — 아래 ⓓ 가 이 칸이다 |
 
    **그래서 축을 넓혔다 — 비교 *모양* 이 아니라 *값* 으로**
    (`test_web_source_tree_declares_no_cause_value_outside_canon`): `apps/web/src` 의 **비테스트** 소스에서
@@ -153,10 +163,10 @@ _HEAD_COMMENT_CAUSE = re.compile(r"^#\s+`(row_[a-z_]+)`\s+—", re.MULTILINE)
 def head_comment_causes(text: str) -> set[str]:
     """`packages/core/models/review.py` 머리 주석이 **뜻을 적어 둔** 경위 이름 전수.
 
-    축은 "주석 안의 `row_` 토큰 전부"가 **아니다**. 그 축이면 이 파일 안의 서술용 언급
-    (예: 실측 서사가 인용하는 `row_relocated`)까지 들어와 등호가 성립하지 않는다 — 계획 0005 §2-c 표의
-    마지막 칸이 그렇게 적혀 있었고, 지금 트리에서 이미 거짓이다(실측: 이 파일의 `row_` 토큰 집합은
-    `{row_absorbed, row_moved, row_relocated, row_replaced}`).
+    축은 "주석 안의 `row_` 토큰 전부"가 **아니다**. 그 축은 이 파일의 **서술용 언급**(개명 서사가
+    인용하는 정본 밖 이름) 하나에 깨지고, 그런 언급은 주석을 고치는 아무 커밋에서나 들어왔다 나간다 —
+    계획 0005 §2-c 표의 마지막 칸이 그 축이었다. **지금 그 축이 성립하는지는 근거가 아니다**:
+    성립해도 다음 주석 한 줄이 깨뜨린다.
     축은 **열거 항목의 모양**(`#   \\`이름\\`      — 설명`)이다. 그래서 이 칸은 "각 정본 값에 설명이 붙어
     있고, 설명이 붙은 이름 중 정본이 아닌 것이 없다"를 단언한다.
     """
@@ -540,7 +550,8 @@ def test_web_source_tree_has_no_unaudited_cause_literal():
 
     **이 칸이 훑는 것은 파일 전수이고 보는 것은 `cause [!=]== "리터럴"` **한 모양뿐**이다**(머리말 ⑥).
     `switch`/`case`·`includes`·`Set.has`·역순 피연산자는 이 칸에서 이름조차 불리지 않는다(실측:
-    `switch` 심기 → `tests/invariants` **102 passed**, `===` 대조군 → **1 failed**). 그 구멍은 아래
+    `switch` 심기 → **이 칸은 통과**, `item.cause === "…"` 대조군 → **이 칸이 실패**. 머리말 ⑥ 표
+    1행·5행과 같은 실행이다). 그 구멍은 아래
     `test_web_source_tree_declares_no_cause_value_outside_canon` 이 **값 축으로** 덮는다 — 이 칸은
     지우지 않는다. 값이 아직 정본 안인 새 자리를 **개명 전에** 이름으로 부르는 조기 경보가 여기뿐이다.
     """
@@ -556,7 +567,8 @@ def test_web_source_tree_declares_no_cause_value_outside_canon():
     """**비교 *모양* 이 아니라 *값* 으로 훑는 전수 칸**(머리말 ⑥ — 리뷰어 A0-a 가 연 구멍).
 
     위 칸의 축이 `cause [!=]== "리터럴"` 하나라 `switch (item.cause) { case "row_vanished": … }` 같은
-    새 화면이 **이름조차 불리지 않은 채** 통과한다(실측 102 passed). 여기서는 `apps/web/src` 의
+    새 화면이 **이름조차 불리지 않은 채** 통과한다(실측: 그 심기에서 **이 칸을 빼면 죽는 칸이 하나도
+    없다** — 머리말 ⑥ 표 1행의 "넓히기 전"). 여기서는 `apps/web/src` 의
     비테스트 소스에서 `\\brow_[a-z_]+\\b` 토큰을 모아 **정본과 등호로** 비교한다 — 값이 어떤 모양으로
     쓰이는지 묻지 않으므로 `switch`/`case`·`includes`·`Set.has`·역순 피연산자가 전부 여기서 죽는다.
 
