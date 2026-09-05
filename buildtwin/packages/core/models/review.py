@@ -102,17 +102,23 @@ class ReviewRejectionReasonRequiredError(Exception):
     하위 타입 → **200 · 응답에 `code` 없음 · 요청은 `rejected` 로 닫힘**, `Exception` 직속 → 전파.
     ADR 0011 §Decision 규칙 1-a 표 3행이 그 사실을 조건 ③ 으로 싣는다.
 
-    **이 타입이 기대는 부재(2026-09-05 실측).**
+    **이 타입이 기대는 부재.** 둘 다 **부재가 시제 표현의 변장인지 먼저 확인하고** 적는다(§6-1) —
+    ADR 0012 와 계획 0005 가 적은 핸들러는 이 타입 **전용** 하나뿐이고, 넓은 `except` 나 상위 핸들러를
+    두는 항목은 두 문서 어디에도 없다.
     ① `services/api/usecases.py`·`services/api/routers/review_requests.py`·
        `services/progress/state_machine.py` 에 `except Exception`·bare `except` 가 **없다**
        (`grep -n "except Exception\\|except BaseException\\|except:"` → 히트 0). 넓은 `except` 가
        그 경로에 생기면 상속을 끊어 둔 것이 무의미해진다.
-    ② `services/api/errors.py::install_handlers` 가 등록한 핸들러 중 `Exception` 자체(또는 이 타입의
-       상위)를 받는 것이 **없다**(`grep -n "@app.exception_handler" services/api/errors.py` 의 인자는
-       `ApiError`·`HTTPException`·`InvalidTransitionError`·`RevocationReasonRequiredError`·
-       `TransitionBlockedByReviewError`·`ObjectNotFoundError`). 상속으로 얻는 HTTP 폴백이 없다는 것이
-       `Exception` 직속의 값이자 대가다 — 이 예외를 409 `rejection_reason_required` 로 내보내는 일은
-       전용 핸들러가 한다(ADR 0012 규칙 4).
+    ② `Exception` 자체(또는 이 타입의 상위)를 받는 핸들러가 **없다**
+       (`grep -rn "exception_handler(Exception\\|exception_handler(BaseException" --include=*.py .`
+       → 히트 0). 상속으로 얻는 HTTP 폴백이 없다는 것이 `Exception` 직속의 값이자 대가다 —
+       이 예외를 409 `rejection_reason_required` 로 내보내는 일은 전용 핸들러가 한다(ADR 0012 규칙 4).
+       *여기 있던 등록 핸들러 열거를 지웠다.* 그 목록은 이 문장이 기대는 **부재**가 아니라 **현황**
+       이라 핸들러가 하나 늘 때마다 조용히 거짓이 되고, 실제로 이 타입 전용 핸들러가 빠진 채 커밋됐다
+       — 열거는 길이가 곧 개수이므로 §6-1 의 "세지 않는다"에 그대로 걸린다. **지워서 잃는 것**:
+       독자가 "무엇이 전용 핸들러를 갖는가"를 이 주석만 읽고 알던 일. 그 답은 위 grep 의 자매 명령
+       `grep -n "@app.exception_handler" services/api/errors.py` 가 그 자리에서 돌려주므로, 잃는 것은
+       답이 아니라 **한 번의 실행**이다.
 
     부가 필드는 `review_kind` 와 `review_request_ids` 다. 응답이 그 둘만 싣는 이유는 raise 자리들의
     공통 분모가 그것뿐이기 때문이다 — 큐 경로에는 전이가 없어 `from_state`/`to_state`/`actor` 가
