@@ -119,8 +119,10 @@ class ReviewRejectionReasonRequiredError(Exception):
        (`grep -n "except Exception\\|except BaseException\\|except:"` → 히트 0). 넓은 `except` 가
        그 경로에 생기면 상속을 끊어 둔 것이 무의미해진다.
     ② `Exception` 자체(또는 이 타입의 상위)를 받는 핸들러가 **없다**
-       (`grep -rn "exception_handler(Exception\\|exception_handler(BaseException" --include=*.py .`
-       → 히트 0). 상속으로 얻는 HTTP 폴백이 없다는 것이 `Exception` 직속의 값이자 대가다 —
+       (`grep -rnE "exception_handler\\((Exception|BaseException)[,)]" --include=*.py .` → 히트 0.
+       **이 문장 자신을 잡지 않는 형태로 적었다** — 앞선 판의 `grep -rn "exception_handler(Exception\\|…"`
+       는 이 줄에 그대로 적힌 자기 패턴을 잡아 히트가 1 이었고, 그래서 "히트 0" 이 거짓이었다).
+       상속으로 얻는 HTTP 폴백이 없다는 것이 `Exception` 직속의 값이자 대가다 —
        이 예외를 409 `rejection_reason_required` 로 내보내는 일은 전용 핸들러가 한다(ADR 0012 규칙 4).
        *여기 있던 등록 핸들러 열거를 지웠다.* 그 목록은 이 문장이 기대는 **부재**가 아니라 **현황**
        이라 핸들러가 하나 늘 때마다 조용히 거짓이 되고, 실제로 이 타입 전용 핸들러가 빠진 채 커밋됐다
@@ -152,8 +154,9 @@ def rejection_reason_missing(note: str | None) -> bool:
 
     `.strip()` 을 쓰는 이유는 공백만인 사유가 실제로 저장되기 때문이다 — 실측(2026-09-05, 작업 트리
     HEAD `9989288`): `POST /api/review-requests/{id}/resolve {"decision":"on_hold","note":"   "}` →
-    200 이고 `resolution_note` 에 `"   "` 가 그대로 남는다. 화면은 `ConfirmDialog.tsx:44` 의
-    `!note.trim()` 으로 잠그지만 API 직접 호출에는 그 방어가 없다.
+    200 이고 `resolution_note` 에 `"   "` 가 그대로 남는다. 화면은 `ConfirmDialog` 의 `!note.trim()`
+    (`grep -n "note.trim()" apps/web/src/components/ConfirmDialog.tsx`)으로 잠그지만 API 직접 호출에는
+    그 방어가 없다.
     """
     return not (note or "").strip()
 

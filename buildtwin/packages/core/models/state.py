@@ -90,7 +90,8 @@ class RevocationReasonRequiredError(InvalidTransitionError):
     ② `InvalidTransitionError` 를 상속하므로 Starlette 이 MRO 로 기존 핸들러를 찾아
        **409 + `code="invalid_transition"` + from_state/to_state/actor** 로 나간다. 500 은 나지 않는다.
     ③ 그런데 `invalid_transition` 의 화면 문구는 "현재 상태에서는 이 작업을 수행할 수 없습니다.
-       화면을 새로고침해 최신 상태를 확인하세요."(`apps/web/src/components/ErrorBox.tsx:23`)다. 이 경우엔
+       화면을 새로고침해 최신 상태를 확인하세요."다
+       (`grep -n "invalid_transition:" apps/web/src/components/ErrorBox.tsx`). 이 경우엔
        **거짓**이다 — 전이는 허용 표에 있고, 새로고침해도 달라지지 않으며, CM 이 할 일은 사유를 적는
        것이다. 그래서 타입을 나눴고, `services/api/errors.py` 가 **`packages/core/models/` 를 건드리지
        않고** 전용 핸들러를 붙였다(`_revocation_reason_required`, 커밋 `3f358db`). **지금 나가는 것은
@@ -103,17 +104,21 @@ class RevocationReasonRequiredError(InvalidTransitionError):
     저장소 루트에서 다시 셌더니(`grep -rn "InvalidTransitionError\|RevocationReasonRequiredError" .` —
     소유·계층으로 좁히지 않았다, CLAUDE.md §6-1) `except` 로 같은 타입을 받는 자리가 둘 더 있다.
 
-      - `services/api/usecases.py:217`(`transition_object`) — 롤백 후 **그대로 re-raise** 한다. 하위
-        타입도 그대로 올라가 전용 핸들러가 받는다. **안전.**
-      - `services/api/usecases.py:442`(`resolve_review`, `kind == "inspection"`) — `decision == "approved"`
+      - `services/api/usecases.py::transition_object` 의 `except InvalidTransitionError`
+        (`grep -n "def transition_object" -A 30 services/api/usecases.py`) — 롤백 후 **그대로 re-raise**
+        한다. 하위 타입도 그대로 올라가 전용 핸들러가 받는다. **안전.**
+      - `services/api/usecases.py::resolve_review` 의 `kind == "inspection"` 분기
+        (`grep -n "inspection rejected but no rework transition" services/api/usecases.py`) — `decision == "approved"`
         면 `Conflict(code="inspection_confirm_failed")` 로 감싸고, `decision == "rejected"` 면
         `log.info` 로 **조용히 삼킨다.** 이 예외가 그 분기로 오면 사유 요건이 로그 한 줄로 사라진다 —
         이 저장소의 지배적 실패 모드 그대로다. **오늘은 도달 불가이고, 그것을 실행으로 확인했다**
         (2026-09-04): 이 경로가 태우는 전이는 `<현재 상태> -> IN_PROGRESS` 이므로 `from_state ==
         CONFIRMED` 이려면 **CONFIRMED 객체에 미결 inspection 요청**이 있어야 하는데 둘은 공존할 수 없다.
         CONFIRMED 진입은 위 표에서 `(INSPECTION_REQUESTED, CONFIRMED)` **하나뿐**이고, 그 전이가
-        `close_inspection_reviews`(`services/progress/state_machine.py:132`)로 미결 inspection 을 전부
-        닫으며, 생성은 `ensure_inspection_review`(`:111`)가 `INSPECTION_REQUESTED` **진입에서만** 한다.
+        `close_inspection_reviews`(`grep -n "def close_inspection_reviews" services/progress/state_machine.py`)
+        로 미결 inspection 을 전부 닫으며, 생성은 `ensure_inspection_review`(같은 파일,
+        `grep -n "def ensure_inspection_review" services/progress/state_machine.py`)가
+        `INSPECTION_REQUESTED` **진입에서만** 한다.
         실측: 확정 직후 그 객체의 `open_reviews(kind="inspection")` = **0건**.
         **도달 가능해지는 조건**(이 칸이 언제 거짓이 되는가) = ① CONFIRMED 로 가는 전이가 표에 하나라도
         더 생기거나 ② `INSPECTION_REQUESTED` 진입 밖에서 inspection 요청을 만드는 경로가 생길 때.
@@ -191,7 +196,7 @@ class StateTransition(BaseModel):
         # 같은 자리·같은 형태의 선례다.
         #
         # 왜 `validate_transition` 이 아닌가. 그 함수는 `evidence` 를 받지 않고, `allowed_targets` 를 통해
-        # `next_actions` 생성에도 쓰이며(`state_machine.py:296`) `tests/invariants` 가 3인자로 부른다.
+        # `next_actions` 생성에도 쓰이며(`state_machine.py::next_actions`) `tests/invariants` 가 3인자로 부른다.
         # 근거를 들고 있지 않은 함수에 근거 요건을 넣는 것은 자리가 틀렸다 — 시그니처를 바꾸지 않는다.
         #
         # 한정어 셋의 근거(ADR 0011 §Decision 역방향 확인 표):
