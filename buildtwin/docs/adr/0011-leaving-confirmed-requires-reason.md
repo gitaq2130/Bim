@@ -8,6 +8,8 @@
   CLAUDE.md §3 규칙 7·8, `docs/plans/0001-mvp-build.md` 백로그
 - 대체하지 않음: ADR 0001 의 상태·전이 표는 그대로다. 전이 **집합**은 바뀌지 않고, 그중 두 전이에
   **근거 요건**이 추가된다.
+- 갱신됨: **ADR 0012**(2026-09-05)가 아래 §Decision 규칙 1-a 표 3행에 조건 ③ 을 덧붙였다.
+  그 ADR 은 §Deferred 2(검토요청 반려의 `requireNote` 비대칭)를 닫는다.
 
 ---
 
@@ -162,6 +164,26 @@ inspection 을 전부 닫으며, 생성은 `ensure_inspection_review`(`:111`)가
 **진입에서만** 한다. **이 칸이 거짓이 되는 조건**: ① CONFIRMED 로 가는 전이가 표에 하나라도 더 생기거나
 ② `INSPECTION_REQUESTED` 진입 밖에서 inspection 요청을 만드는 경로가 생길 때. 둘 중 하나를 하는 사이클은
 이 `log.info` 를 함께 본다 — 그때부터 그것은 침묵 경로다.
+
+**추가 — 조건 ③ (ADR 0012, 2026-09-05).** 위 ①② 는 `RevocationReasonRequiredError` 가 이 칸에
+**도달**하는 조건이다. 도달 여부와 무관하게 이 `log.info` 를 침묵 경로로 만드는 세 번째 조건이 있다:
+③ **`resolve_review` 의 inspection 분기가 던지는 새 예외가 `InvalidTransitionError` 하위 타입이면.**
+그 분기 안에서 새로 던져지는 예외는 타입만으로 이 `except` 에 걸리고, `decision == "rejected"` 이면
+그대로 `log.info` 로 사라진다 — 그 예외가 무엇을 막으려던 것이든.
+
+실측(작업 트리 `/home/user/Bim/buildtwin`, HEAD `9989288`, `tests/integration/` 의 임시 탐침으로
+`usecases.ObjectStateMachine.transition_with_effects` 를 monkeypatch 해 각각을 던지게 하고
+`POST /api/review-requests/{id}/resolve {"decision":"rejected"}` 를 태운 뒤 파일을 지웠다):
+
+```
+[SUBTYPE] 200 rejected None      ← InvalidTransitionError 하위 타입: 삼켜지고 요청이 rejected 로 닫힌다.
+                                   응답에 code 없음
+[DIRECT]  propagated out of resolve_review (not swallowed)      ← Exception 직속
+```
+
+그래서 ADR 0012 의 `ReviewRejectionReasonRequiredError` 는 `RevocationReasonRequiredError` 와 달리
+**`Exception` 직속**이다(ADR 0012 규칙 3). 이 `except` 안으로 새 예외를 들이는 사이클은 그 선택을
+함께 본다 — 상속 관계 하나가 방어를 통째로 침묵시킨다.
 
 ### 규칙 1-b — 이 거부의 `detail` 은 부모(`InvalidTransitionError`)의 포맷을 쓰지 않는다
 
