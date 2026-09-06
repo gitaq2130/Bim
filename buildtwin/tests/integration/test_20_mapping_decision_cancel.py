@@ -17,6 +17,7 @@ ADR 0013 §"이 불변식을 지금 무엇이 붙들어 주는가"가 스스로 
 | `errors.py` 의 전용 핸들러 둘 삭제 | 409 응답의 `code` 단언(예외가 `Exception` 직속이라 핸들러가 없으면 **500 + code 없음**) |
 | 취소 이력 append → 덮어쓰기 | `test_v9_...`(2회 취소 후 길이 2) |
 | 검사 순서 맞바꿈(사유 검사를 앞으로) | `test_v7_...` 의 **두 요건 동시 위반** 칸(취소할 결정이 없는 CM 에게 "적을 수 없는 사유"를 요구하면 죽는다) |
+| `usecases.py::cancel_document_mapping_review` 의 `record_expert_review(...)` 세 줄 삭제 | `test_cancelling_leaves_a_durable_expert_review_log_row_...`(계획 0006 §후속 5 로 이 사이클에 추가 — 그 전에는 **803 passed**, 즉 감사의 정본이 무보호였다) |
 
 **반려 방향을 값(`drawing_approval`·`score`)으로 단언하지 않는다.** 실측상 반려 전후가 0.5/0.625 로
 같아서 결함 코드와 정상 코드가 구별되지 않는다(ADR 0013 §Context 3 (2)). 그 방향에서 갈리는 관측값은
@@ -34,7 +35,8 @@ ADR 0013 §"이 불변식을 지금 무엇이 붙들어 주는가"가 스스로 
 | `A400` | 반려 → 취소(V2) — 값 축이 **안** 움직이는 방향 |
 | `A300` | 사유 요건(V5) → 무제한 취소(V9) |
 | `A200` | 취소할 결정이 없는 대조군(V7) · 인가(V6) · 404 |
-| `A110` | 재확인으로 **이미 열린 요청**이 있는 상태의 취소(중복 방지) — 이 파일 마지막 |
+| `A110` | 재확인으로 **이미 열린 요청**이 있는 상태의 취소(중복 방지) |
+| `A120` | 취소의 **내구 감사**(`expert_review_logs` 행) — 재계산을 한 번 더 부르므로 이 파일 마지막 |
 
 **테스트 순서가 계약의 일부다**(test_15 와 같은 모양): 같은 프로젝트를 순서대로 공유하고, 대장·공정표
 재업로드처럼 프로젝트 전체를 재계산하는 시나리오는 **맨 뒤**에 둔다. 재계산은 미확정(=취소된) 매핑의
@@ -44,11 +46,13 @@ V8 이 관측값으로 적는다).
 from __future__ import annotations
 
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
+from sqlalchemy import select
 
 from packages.core.db import session_scope
-from packages.core.models.orm import ActivityDocumentMappingRow
+from packages.core.models.orm import ActivityDocumentMappingRow, ExpertReviewLogRow
 from services.progress.config_loader import load_readiness_config
 from services.progress.document_mapper import confirmed_required_documents
 
@@ -59,7 +63,13 @@ A_REJECT = "A400"      # 반려 → 취소
 A_REASON = "A300"      # 사유 요건 → 무제한 취소
 A_PENDING = "A200"     # 취소할 결정이 없는 대조군
 A_REOPENED = "A110"    # 재확인 요청이 열린 채인 확정의 취소
+A_AUDIT = "A120"       # 취소의 내구 감사(expert_review_logs) — 이 파일에서 이 Activity 만 쓴다
 EXPECTED_MAPPING_COUNT = 6
+
+# 취소가 남기는 `expert_review_logs` 행을 확정이 남기는 행과 가르는 키(ADR 0013 개정 1 — `final` 에 이
+# 키가 있는 행이 취소다). 확정도 **같은** `entity_type`·`entity_id` 로 한 행을 남기므로
+# (`services/api/usecases.py::_confirm_document_mapping_row`) 그냥 세면 확정 축까지 죽는 단언이 된다.
+CANCEL_LOG_KEY = "cancelled_review_opened"
 
 # 취소가 지워야 하는 반려 표시(`services/progress/document_mapper._REJECTION_MARKER_KEYS` 와 같은 넷).
 # 여기 다시 적는 이유는 **테스트가 구현 상수를 import 하면 그 상수가 비어도 초록**이기 때문이다.
@@ -165,6 +175,30 @@ def _confirm(client, auth, project_id: str, activity_id: str, doc_id: str, note:
 
 def _history(mapping: dict) -> list[dict]:
     return list(mapping["evidence"]["extra"].get(CANCELLED_REVIEWS_KEY) or [])
+
+
+class _Log(NamedTuple):
+    log_id: str
+    entity_type: str
+    reviewer: str
+    proposal: dict
+    final: dict
+
+
+def _cancel_logs(activity_id: str, doc_id: str) -> list[_Log]:
+    """그 쌍의 `expert_review_logs` 행 중 **취소가 남긴 것만**, 오래된 순서로.
+
+    읽는 라우트가 없어서(`grep -rn "expert" services/api/routers/` → 히트 0) 행을 직접 읽는다.
+    `entity_id` 로만 거르고 `entity_type` 은 **거르지 않고 단언한다** — 걸러 버리면 그 값이 바뀐 구현이
+    "행이 0" 으로 죽어 무엇이 틀렸는지 실패 메시지에 남지 않는다.
+    """
+    with session_scope() as session:
+        rows = list(session.scalars(
+            select(ExpertReviewLogRow)
+            .where(ExpertReviewLogRow.entity_id == f"{activity_id}:{doc_id}")
+            .order_by(ExpertReviewLogRow.reviewed_at)))
+        return [_Log(r.log_id, r.entity_type, r.reviewer, dict(r.proposal), dict(r.final))
+                for r in rows if CANCEL_LOG_KEY in r.final]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -485,10 +519,18 @@ def test_v8_recompute_and_register_reupload_neither_revive_the_decision_nor_dupl
 
     **관측하고 단언하지 않는 것(정직하게 적는다).** 재계산은 미확정 매핑의 `evidence` 를 새 후보로
     덮어쓰므로 `extra.cancelled_mapping_reviews` **이력이 사라진다**(실측: 재계산 직후 길이 1 → 0).
-    ADR 0013 규칙 3 은 그 이력을 append-only 로 설계했는데 재계산이 그것을 지운다 — 감사 자체는 닫힌
-    요청 행에 남으므로 "결정에 이유가 남는다"는 축은 유지되지만, **이력의 수명은 다음 재계산까지**다.
+    ADR 0013 규칙 3 은 그 이력을 append-only 로 설계했는데 재계산이 그것을 지운다 — 그래도 "결정에
+    이유가 남는다"는 축은 유지되지만, **이력의 수명은 그 쌍이 후보로 다시 산출되는 다음 재계산까지**다.
     이 파일은 그 현재 동작을 계약으로 고정하지 않는다(어느 방향이 옳은지는 이 사이클이 정하지 않았다) —
     없어진다는 사실만 보고한다.
+
+    **감사가 남는 자리를 초판은 "닫힌 요청 행"이라고 적었는데 그것은 거짓이다**(ADR 0013 **개정 1**,
+    계획 0006 §후속 5). 그 문장은 이 배역(`A100` — 닫힌 행이 있다)에서만 참이고 일반 명제로는 성립하지
+    않는다: 재확인이 열린 확정을 취소하는 경로에는 닫힌 행이 **하나도 없다**
+    (`test_cancelling_while_a_reopened_request_is_already_open_...` 가 그 경로를 태우고
+    `cancelled_review_request_id is None` 을 단언한다). 정본은 ① `expert_review_logs` 행과 ② 취소가
+    열거나 갱신한 요청 행의 `conflicting_sources` 이고, 매핑 행의 이력은 그 둘의 **사본**이다.
+    ①을 붙드는 것은 `test_cancelling_leaves_a_durable_expert_review_log_row_...` 다.
     """
     pid = cancel_project
     doc_id = _doc_id_for(client, auth, pid, A_CONFIRM)
@@ -563,3 +605,110 @@ def test_cancelling_while_a_reopened_request_is_already_open_does_not_create_a_s
     assert sources["cancel_note"] == "재확인 중 확정을 취소한다"
     assert sources["cancelled_review_request_id"] is None          # 닫힌 결정이 없다 — 지어내지 않는다
     assert _row_fields(pid, A_REOPENED, doc_id) == (True, None)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 계획 0006 §후속 5 — 취소의 **내구 감사**: `expert_review_logs` 행
+# ═══════════════════════════════════════════════════════════════════════════
+def test_cancelling_leaves_a_durable_expert_review_log_row_that_survives_recompute(
+        client, auth, cancel_project, user_ids):
+    """취소는 `expert_review_logs` 에 행을 남기고, 그 행은 매핑 행의 이력보다 오래 산다.
+
+    ADR 0013 **개정 1** 이 감사의 정본을 다시 지목했다: 취소 한 건의 내구 기록은 ① 이 로그 행과
+    ② 취소가 열거나 갱신한 요청 행의 `conflicting_sources` 이고, 매핑 행의
+    `extra.cancelled_mapping_reviews` 는 그 **사본**이다(수명은 그 쌍이 후보로 다시 산출되는 다음
+    재계산까지). 그런데 ①을 **아무 테스트도 붙들지 않았다** — 실측(계획 0006 §M-3):
+    `usecases.py::cancel_document_mapping_review` 의 `record_expert_review(...)` 세 줄을 지워도
+    `.venv/bin/pytest -q` 가 **803 passed**, `grep -rn "activity_document_mapping" tests/` 히트 **0**.
+    이 테스트가 그 자리다.
+
+    **넷을 함께 단언한다**(CLAUDE.md §6-2 4 — 하나만 보면 통과하는 결함 코드가 각각 있다):
+
+    | 단언 | 하나만 보면 통과하는 구현 |
+    |---|---|
+    | 행이 **생긴다**(`entity_type`·`entity_id`·`reviewer`) | 로그를 아예 안 남기는 구현만 잡는다 |
+    | 그 행의 `proposal` 이 취소가 **지운 반려 표시**를 담는다 | 취소 **뒤** 상태만 싣는 구현(`proposal`=`final`)이 통과한다 — 그러면 "매핑 행 이력이 사라져도 감사는 남는다"의 근거가 사라진다 |
+    | **재계산 뒤에도 그 행이 그대로** | 감사를 매핑 행에만 두는 구현이 통과한다(그 이력은 재계산이 지운다) |
+    | 반복 취소가 행을 **append** 한다 | 같은 행을 덮어쓰는 구현이 통과한다 — 규칙 7("무제한")의 관측 가능성이 사라진다 |
+
+    **음성 대조군(이 단언이 취소 축만 잡는가).** 확정도 **같은** `entity_type`·`entity_id` 로 한 행을
+    남긴다(`_confirm_document_mapping_row`). 그래서 행을 그냥 세면 확정 축이 죽어도 이 테스트가
+    죽는다 — "취소가 감사를 남긴다"를 잡는 것이 아니게 된다. `final` 의 `cancelled_review_opened` 로
+    취소 행만 고른다(`_cancel_logs`).
+
+    그 대조군을 **실행으로 태웠다**(적어 두는 것은 커버리지가 아니다 — CLAUDE.md §6-1):
+    `_confirm_document_mapping_row` 의 `record_expert_review(...)` 를 지우고 `.venv/bin/pytest -q` →
+    **804 passed**(이 테스트를 포함해 하나도 죽지 않는다). 즉 이 단언들은 취소 축만 잡는다. 같은 실측이
+    확정 축의 로그도 무보호임을 말하는데, 이 파일은 그 축을 고정하지 않는다 — §후속 5 가 넘긴 것은
+    취소의 감사이고, 축을 넓히면 "취소만" 잡는 것이 아니게 된다.
+
+    **관측하고 단언하지 않는 것.** 재계산 뒤 사라지는 사본의 정체는 `extra.cancelled_mapping_reviews`
+    키 자신이다(실측: 재계산 직후 그 키가 **키째** 없다 — ADR 0013 개정 1 `[P1-*]`). 그 수명을 계약으로
+    고정할지는 이 사이클이 정하지 않았으므로(V8 과 같은 판단) 키를 직접 단언하지 않고, **재계산이 그
+    매핑 행을 실제로 덮었다**는 것만 `evidence` 전체의 변화로 확인한다 — 이 확인이 없으면 "재계산 뒤에도
+    그대로"가 재계산이 그 행을 건드리지 않은 덕분일 수 있다(무동작 단언).
+    """
+    pid = cancel_project
+    doc_id = _doc_id_for(client, auth, pid, A_AUDIT)
+    assert _cancel_logs(A_AUDIT, doc_id) == []          # 이 쌍에는 아직 취소가 없다
+
+    # ── 반려한다: 취소가 지울 표시를 만든다(확정 방향이 아니라 반려 방향을 쓰는 이유는 `proposal` 이
+    #    "지워진 것"을 담는지가 이 테스트의 둘째 단언이기 때문이다).
+    review = _reviews(client, auth, pid, A_AUDIT)
+    assert [r["status"] for r in review] == ["open"], review
+    reject_note = "이 문서는 이 작업과 무관하다"
+    rr = client.post(f"/api/review-requests/{review[0]['review_request_id']}/resolve", headers=auth("cm"),
+                     json={"decision": "rejected", "note": reject_note})
+    assert rr.status_code == 200, rr.text
+    assert _mapping(client, auth, pid, doc_id, A_AUDIT)["evidence"]["extra"]["mapping_review_decision"] == "rejected"
+
+    # ── 취소한다.
+    first_note = "반려가 오조작이었다 — 되돌린다"
+    r = _cancel(client, auth, pid, A_AUDIT, doc_id, note=first_note)
+    assert r.status_code == 200, r.text
+    opened = _open_reviews(client, auth, pid, A_AUDIT)
+    assert len(opened) == 1, opened
+
+    # ① 행이 생긴다.
+    logs = _cancel_logs(A_AUDIT, doc_id)
+    assert len(logs) == 1, logs
+    first = logs[0]
+    assert first.entity_type == "activity_document_mapping"
+    assert first.reviewer == user_ids["cm"]
+    assert first.final[CANCEL_LOG_KEY] == opened[0]["review_request_id"]
+
+    # ② 그 행의 `proposal` 은 취소 **직전**의 매핑이다 — 취소가 매핑 행에서 지운 반려 표시 넷이 여기
+    #    그대로 있다. 같은 시점 매핑 행에 그 넷이 **없다**는 것과 함께 단언한다(§6-2 4): 둘 중 하나만
+    #    보면 "지우지 않는 구현"과 "감사를 남기지 않는 구현"이 각각 살아남는다.
+    proposal_extra = first.proposal["evidence"]["extra"]
+    for key in REJECTION_MARKER_KEYS:
+        assert key in proposal_extra, (key, proposal_extra)
+    assert proposal_extra["rejected_by"] == user_ids["cm"]
+    assert proposal_extra["rejection_note"] == reject_note
+    assert first.proposal["reviewed_by"] == user_ids["cm"]
+    served_extra = _mapping(client, auth, pid, doc_id, A_AUDIT)["evidence"]["extra"]
+    for key in REJECTION_MARKER_KEYS:
+        assert key not in served_extra, (key, served_extra)
+
+    # ③ 재계산 뒤에도 그대로. 먼저 재계산이 이 매핑 행을 실제로 덮었는지 확인한다(무동작 단언 방지).
+    before_evidence = _mapping(client, auth, pid, doc_id, A_AUDIT)["evidence"]
+    rc = client.post(f"/api/projects/{pid}/documents/mappings", headers=auth("cm"))
+    assert rc.status_code == 200, rc.text
+    after_evidence = _mapping(client, auth, pid, doc_id, A_AUDIT)["evidence"]
+    assert after_evidence != before_evidence, after_evidence
+    assert _cancel_logs(A_AUDIT, doc_id) == [first]
+
+    # ④ 반복 취소는 행을 append 한다(덮어쓰지 않는다). 첫 행의 `proposal` 이 그대로인 것까지 본다 —
+    #    길이만 보면 "덮어쓰고 하나 더 만드는" 구현이 통과한다.
+    _confirm(client, auth, pid, A_AUDIT, doc_id, "재확정")
+    second_note = "둘째 취소"
+    r2 = _cancel(client, auth, pid, A_AUDIT, doc_id, note=second_note)
+    assert r2.status_code == 200, r2.text
+
+    logs2 = _cancel_logs(A_AUDIT, doc_id)
+    assert len(logs2) == 2, logs2
+    assert logs2[0] == first
+    assert logs2[1].log_id != first.log_id
+    assert logs2[1].entity_type == "activity_document_mapping" and logs2[1].reviewer == user_ids["cm"]
+    assert [x.final["evidence"]["note"] for x in logs2] == [first_note, second_note]
+    assert [x.proposal["reviewed_by"] for x in logs2] == [user_ids["cm"], user_ids["cm"]]
