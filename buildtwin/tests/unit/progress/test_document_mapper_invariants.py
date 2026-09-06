@@ -39,6 +39,33 @@ def test_needs_review_only_false_when_reviewed_by_is_set() -> None:
     assert reverted.needs_review is True
 
 
+@pytest.mark.parametrize("requested_needs_review", [True, False, None], ids=["true", "false", "omitted"])
+@pytest.mark.parametrize("reviewed_by", ["cm-1", None], ids=["reviewed", "unreviewed"])
+def test_model_cannot_express_half_cancelled_mapping(reviewed_by, requested_needs_review) -> None:
+    """**반쪽 취소는 모델을 거치는 한 구조적으로 표현되지 않는다**(ADR 0013 규칙 1 · 계획 0006 §1-c 2행).
+
+    가장 위험한 착지점은 "반려 표시만 지우고 `reviewed_by` 는 남긴" 행이다 — 그 행은
+    `confirmed_required_documents` 의 두 필터(`not needs_review` · `not is_rejected_mapping`)를 **둘 다**
+    통과해 CM 이 확정 액션을 한 적이 없는데 `drawing_approval` 이 1.0 이 된다(CLAUDE.md §0 위반).
+    그것을 막는 것은 취소 구현의 성실함이 아니라 `_always_needs_review` 검증자다: `needs_review` 를
+    **무엇으로 보내든** `reviewed_by is None` 으로 다시 계산된다.
+
+    `needs_review` 를 명시적으로 넣는 두 칸이 이 테스트의 핵심이다. 검증자를 지우면
+    `(reviewed_by="cm-1", needs_review=True)` 가 그대로 저장돼 반쪽 상태가 **표현 가능해지고**, 그때
+    이 두 칸이 죽는다. (행에 직접 쓰는 경로까지 막지는 못한다 — 그쪽은 저장된 행을 읽는
+    `tests/integration/test_20_mapping_decision_cancel.py` 가 본다. 여기서 고정하는 것은 "모델을 거치면
+    갈라질 수 없다"는 성질 하나다.)
+    """
+    fields = {"activity_id": "A100", "doc_id": "doc-1", "confidence": 0.99, "evidence": _EV,
+              "reviewed_by": reviewed_by}
+    if requested_needs_review is not None:
+        fields["needs_review"] = requested_needs_review
+    m = ActivityDocumentMapping(**fields)
+    assert m.needs_review is (reviewed_by is None)
+    # 직렬화 → 재검증(저장·응답 왕복)에서도 같다 — 한쪽 방향만 강제하면 왕복에서 갈라진다.
+    assert ActivityDocumentMapping.model_validate(m.model_dump()).needs_review is (reviewed_by is None)
+
+
 def test_pipeline_output_always_has_needs_review_true(document_docs, schedule_activities) -> None:
     """map_documents_to_activities 가 만드는 실제 후보들도 예외 없이 needs_review=True 다."""
     mappings = map_documents_to_activities(document_docs, schedule_activities)

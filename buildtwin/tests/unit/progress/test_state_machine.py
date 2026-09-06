@@ -193,6 +193,36 @@ def test_system_mismatch_from_inspection_keeps_review_open(session, obj):
     assert "align_scan" in {a["kind"] for a in sm.next_actions(session, PID, GID, "cm")}
 
 
+def test_accept_rework_from_mismatch_closes_nothing_and_needs_no_reason(session, obj):
+    """계획 0006 V11(단위 층) — `close_inspection_reviews` 의 `from_state` 조건이 가르는 자리.
+
+    미결 inspection 이 **열린 채** MISMATCH 인 상태(system 스캔 판정이 만드는 실제 상태 —
+    바로 위 `test_system_mismatch_from_inspection_keeps_review_open`)에서 cm 의 `accept_rework`
+    (MISMATCH → IN_PROGRESS)는 **사유 없이 통과**하고 아무 요청도 닫지 않는다.
+
+    `from_state` 조건을 지우면 이 전이가 `ReviewRejectionReasonRequiredError` 로 막힌다(계획 0006 §2-a
+    실측: HTTP 로는 409 `rejection_reason_required`). 그 409 는 거짓말이다 — 아래 단언대로 이 전이는
+    아무것도 반려하지 않는다. 음성 대조군은 같은 파일의 `test_inspection_review_lifecycle`(사유 있는
+    cm 반려가 요청을 `rejected` 로 닫는다)과 통합 층의 V12 다.
+    """
+    sm = ObjectStateMachine()
+    blank = Evidence(source_type="cm_action", source_id="user-cm-1")   # note 없음
+    sm.transition(session, PID, GID, ObjectState.REPORTED, Actor.CONTRACTOR, EV, actor_id="c1")
+    created = sm.transition_with_effects(session, PID, GID, ObjectState.INSPECTION_REQUESTED, Actor.CONTRACTOR,
+                                         EV, actor_id="c1")
+    rid = created.created_review_ids[0]
+    mismatch = sm.transition_with_effects(session, PID, GID, ObjectState.MISMATCH, Actor.SYSTEM, SCAN_EV,
+                                          confidence=0.9)
+    assert mismatch.closed_review_ids == [] and session.get(ReviewRequestRow, rid).status == "open"
+
+    accepted = sm.transition_with_effects(session, PID, GID, ObjectState.IN_PROGRESS, Actor.CM, blank,
+                                          actor_id="cm-1")
+    assert accepted.transition.to_state == ObjectState.IN_PROGRESS
+    assert accepted.closed_review_ids == []          # 이 전이가 닫는 것은 없다 — 그래서 사유를 요구하지 않는다
+    review = session.get(ReviewRequestRow, rid)
+    assert (review.status, review.resolved_by, review.resolution_note) == ("open", None, None)
+
+
 def test_transition_is_scoped_to_project(session):
     """ADR 0005: 같은 global_id 라도 프로젝트가 다르면 완전히 별개 객체다.
 

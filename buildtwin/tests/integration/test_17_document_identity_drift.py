@@ -242,9 +242,15 @@ def test_v2_confirmed_mapping_survives_the_tuning(client, auth, user_ids, matchi
                 if r["activity_id"] == ACTIVITY_CONFIRM]
 
 
-def test_v2_rejection_stays_permanent(client, auth, matching_tuned) -> None:
-    """ADR 0007 §4-2 규칙 6 ⑥(반려의 영구성). 결함 상태에서는 제목이 글자까지 같은 문서가 "반려된 것"과
-    "새로 검토해 달라는 것"으로 **동시에** 존재했다."""
+def test_v2_rejection_stays_permanent_against_recompute(client, auth, matching_tuned) -> None:
+    """ADR 0007 §4-2 규칙 6 ⑥ — **재계산 축의** 영구성. 결함 상태에서는 제목이 글자까지 같은 문서가
+    "반려된 것"과 "새로 검토해 달라는 것"으로 **동시에** 존재했다.
+
+    한정어를 붙여 적는 이유(CLAUDE.md §6-4): ADR 0013 규칙 8 이 그 "영구"의 **주어를 좁혔다** — 반려는
+    시스템 재계산(대장 재업로드·매칭 config 튜닝)에 대해서만 영구하고, **CM 의 명시적 취소**
+    (`POST /api/documents/mappings/{activity_id}/{doc_id}/cancel-review`)로는 풀린다. 이 테스트가 재는
+    축은 앞쪽 하나이고 그 축은 그대로 참이다(`_drop_already_confirmed` 무변경). 한정어가 없으면 이
+    docstring 이 "취소 경로가 없다"는 뜻으로 읽혀 다음 사람이 잘못된 일반화를 물려받는다."""
     project_id, doc_id = matching_tuned["project_id"], matching_tuned["rejected_doc_id"]
     mappings = _mapping(client, auth, project_id, doc_id, ACTIVITY_REJECT)
     assert len(mappings) == 1, mappings

@@ -312,7 +312,12 @@ def test_confirming_a_rejected_mapping_is_refused_with_409(client, auth, dm_proj
     (`confirmed_required_documents` 가 반려 표시로 계속 걸러내므로). 이번 사이클에서 네 번째로 나온
     "응답은 성공인데 아무 효과가 없다"이다.
 
-    ADR 0007 §4-2 규칙 6 ⑥ 이 반려를 영구로 설계했으므로 설계대로 거절한다 — 반려 취소는 별개 기능이다.
+    ADR 0007 §4-2 규칙 6 ⑥ 이 반려를 **재계산에 대해** 영구로 설계했으므로 설계대로 거절한다. 이 409 는
+    "영원히 불가"가 아니라 **"먼저 취소하라"** 다 — ADR 0013 이 CM 의 명시적 취소 경로
+    (`POST …/cancel-review`)를 만들었고, 취소가 반려 표시를 지우므로(`is_rejected_mapping` 이 그 뒤
+    `False`) 그 다음 확정은 이 방어에 걸리지 않는다. 그 경로가 실제로 열려 있다는 것은
+    `tests/integration/test_20_mapping_decision_cancel.py::test_confirming_after_cancelling_a_rejection_works`
+    가 잰다 — 여기서 잴 수 없는 이유는 이 파일이 A400 을 **반려된 채** 뒤 테스트에 넘기기 때문이다.
     A400 은 앞선 테스트에서 이미 반려됐다(이 파일은 모듈 스코프 프로젝트를 순서대로 공유한다)."""
     review = _review_for_activity(_all_document_mapping_reviews(client, auth, dm_project), ACTIVITY_REJECT)
     assert review["status"] == "rejected"
