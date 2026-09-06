@@ -14,7 +14,12 @@ from packages.core.models.orm import DocumentRow
 
 from .. import usecases
 from ..deps import CurrentUser, ProjectContext, get_current_user, get_session, project_role, require_project_role
-from ..schemas.documents import ConfirmDocumentMappingRequest, DocumentDetail, DocumentList
+from ..schemas.documents import (
+    CancelDocumentMappingReviewRequest,
+    ConfirmDocumentMappingRequest,
+    DocumentDetail,
+    DocumentList,
+)
 
 router = APIRouter(tags=["documents"])
 
@@ -77,3 +82,24 @@ def confirm_document_mapping(activity_id: str, doc_id: str, project_id: str = Qu
     — ADR 0006 규칙 2·6). 본체는 usecases.confirm_document_mapping."""
     return usecases.confirm_document_mapping(session, project_id, activity_id, doc_id, user,
                                              body.note if body else None)
+
+
+@router.post("/documents/mappings/{activity_id}/{doc_id}/cancel-review", response_model=ActivityDocumentMapping)
+def cancel_document_mapping_review(activity_id: str, doc_id: str, project_id: str = Query(...),
+                                   body: CancelDocumentMappingReviewRequest | None = None,
+                                   session: Session = Depends(get_session),
+                                   user: CurrentUser = Depends(get_current_user)) -> ActivityDocumentMapping:
+    """이 쌍에 서 있는 CM 결정(확정 또는 반려)의 취소 — cm 만(ADR 0013 불변식 5). 응답은 되돌려진 매핑
+    (`needs_review=true`, `reviewed_by=null`)이다.
+
+    **확정 라우트와 같은 축**에 둔다(요청 단위 `/review-requests/{id}/cancel` 이 아니다): 취소의 대상은
+    검토요청 하나가 아니라 그 `(activity_id, doc_id)` 쌍에 서 있는 결정이고, 한 쌍은 생애 동안 여러 요청
+    행을 갖는다(ADR 0007 §4-2 규칙 6 ⑤ 의 복귀·재오픈). `project_id` 쿼리 필수도 확정 라우트와 같다
+    (ADR 0008 §5 대리키 라우트).
+
+    오류(순서가 계약 — ADR 0013 규칙 6): 비멤버 404 `project_not_found` · cm 아니면 403 `forbidden_role` ·
+    매핑 없음 404 `document_mapping_target_not_found` · 취소할 결정 없음 409
+    `mapping_decision_not_cancellable` · 사유 없음(본문 미전송·`""`·공백만) 409 `cancel_reason_required`.
+    본체는 usecases.cancel_document_mapping_review."""
+    return usecases.cancel_document_mapping_review(session, project_id, activity_id, doc_id,
+                                                   body.note if body else None, user)

@@ -41,6 +41,9 @@ from packages.core.models.state import Actor, InvalidTransitionError, ObjectStat
 from services.knowledge import RuleEngine, load_rules, persist_verdicts, record_expert_review
 from services.progress import persistence as db
 from services.progress.document_mapper import (
+    cancel_document_mapping_review as cancel_mapping_decision,
+)
+from services.progress.document_mapper import (
     close_document_mapping_review,
     is_rejected_mapping,
     map_project_documents,
@@ -303,8 +306,13 @@ def _reject_confirm_of_rejected_mapping(row: ActivityDocumentMappingRow) -> None
     돌려주면서 readiness 는 이 확정을 영원히 보지 못하는** 반쪽 상태가 만들어졌다(이번 사이클에서 네 번째로
     나온 "응답은 성공인데 아무 효과가 없다").
 
-    설계대로 영구를 택해 거절한다 — 확정 시 반려 표시를 지우는 쪽(반려 취소)은 별개의 기능이고, 그것을
-    조용히 여기에 끼워 넣으면 화면에 도달 경로가 없는 API 만 생긴다(ADR Deferred 에 남겼다).
+    설계대로 거절한다 — 확정 시 반려 표시를 지우는 쪽(반려 취소)은 별개의 기능이고, 그것을 조용히 여기에
+    끼워 넣으면 화면에 도달 경로가 없는 API 만 생긴다. **그 별개의 기능이 ADR 0013 으로 생겼다**
+    (`POST /api/documents/mappings/{activity_id}/{doc_id}/cancel-review` → `cancel_document_mapping_review`):
+    반려는 이제 재계산에 대해서만 영구하고 CM 의 명시적 취소로는 풀린다(ADR 0013 규칙 8 이 ADR 0007 §4-2
+    규칙 6 ⑥ 의 주어를 좁혔다). 그래서 이 409 는 "영원히 불가"가 아니라 **"먼저 취소하라"** 를 뜻한다 —
+    취소가 반려 표시를 지우므로(`is_rejected_mapping` 이 그 뒤 `False`) 이 방어를 우회하지 않고 그 앞
+    단계를 지난다.
 
     `_confirm_document_mapping_row`(공유 본체)가 호출하므로 **모든 확정 경로**가 이 방어를 받는다 —
     전용 엔드포인트(`confirm_document_mapping`)와 검토 큐 승인(`resolve_review`) 둘 다. 화면에서는 확정
@@ -370,6 +378,41 @@ def confirm_document_mapping(session: Session, project_id: str, activity_id: str
     session.refresh(row)
     return db.document_mapping_row_to_model(row)
 
+
+def cancel_document_mapping_review(session: Session, project_id: str, activity_id: str, doc_id: str,
+                                   note: str | None, user: CurrentUser) -> ActivityDocumentMapping:
+    """매핑 결정(확정 또는 반려)의 취소 — cm 만(ADR 0013 불변식 5). 본체는 progress 소유이고
+    (`document_mapper.cancel_document_mapping_review` — CLAUDE.md §3 규칙 11: 매핑 생명주기·검토요청
+    해소) 여기서는 인가 → 존재 확인 → 호출 → 전문가 검토 로그 → commit 만 한다.
+
+    **검사 순서가 계약이다**(ADR 0013 규칙 6):
+    ① 인가(cm 아니면 403 `forbidden_role`, 비멤버 404 `project_not_found` — 확정 라우트와 같은 한 줄)
+    ② 매핑 행 존재(없으면 404 `document_mapping_target_not_found`)
+    ③ 취소할 결정이 있는가(409 `mapping_decision_not_cancellable`)
+    ④ 사유가 비어 있는가(409 `cancel_reason_required`)
+    ③·④ 는 본체가 그 순서로 던지고 `errors.py` 의 전용 핸들러 둘이 code 를 붙인다 — **api 가 사유를
+    다시 검사하지 않는다**: 본체가 모든 취소 경로의 병목이고, 여기서 한 번 더 검사하면 두 자리가 갈릴 때
+    조용히 어긋난다(ADR 0011 이 방어를 병목 하나에 건 것과 같은 방향).
+    ③ 이 ④ 보다 먼저인 근거는 ADR 0012 규칙 1 과 같다 — 취소할 결정이 없는 CM 에게 "사유를 적으라"고
+    말하면 그는 적을 수 없는 사유를 적는다.
+
+    `project_id` 를 쿼리로 **필수**로 받는 것은 확정 라우트와 같은 이유다(ADR 0008 §5: 매핑 PK 가
+    `(project_id, activity_id, doc_id)` 복합키이고 `activity_id` 는 공정표 파일에서 온다). 인가를 행 조회
+    **앞**에 두는 것도 같다 — 뒤에 두면 비멤버에게 매핑의 존재 여부를 흘린다."""
+    project_role(session, project_id, user, CONFIRM_ROLE)
+    row = session.get(ActivityDocumentMappingRow, (project_id, activity_id, doc_id))
+    if row is None:
+        raise NotFound(f"document mapping not found in project {project_id}: "
+                       f"activity_id={activity_id!r} doc_id={doc_id!r}",
+                       code="document_mapping_target_not_found")
+    before = db.document_mapping_row_to_model(row).model_dump(mode="json")
+    cancelled, review_request_id = cancel_mapping_decision(session, project_id, activity_id, doc_id,
+                                                           user.user_id, note or "")
+    record_expert_review(session, "activity_document_mapping", f"{activity_id}:{doc_id}", before,
+                         {**cancelled.model_dump(mode="json"), "cancelled_review_opened": review_request_id},
+                         user.user_id)
+    session.commit()
+    return cancelled
 
 # ------------------------------------------------------------------ mappings / drawings
 def confirm_entity_mapping(session: Session, drawing_id: str, handle: str, global_id: str, user: CurrentUser,

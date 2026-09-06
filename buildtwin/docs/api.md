@@ -36,6 +36,7 @@
 
 | 메서드 | 경로 | 요약 | 파라미터 | 요청 본문 | 응답 |
 |---|---|---|---|---|---|
+| POST | `/api/documents/mappings/{activity_id}/{doc_id}/cancel-review` | Cancel Document Mapping Review | activity_id*(path), doc_id*(path), project_id*(query) | json: CancelDocumentMappingReviewRequest | null | ActivityDocumentMapping |
 | POST | `/api/documents/mappings/{activity_id}/{doc_id}/confirm` | Confirm Document Mapping | activity_id*(path), doc_id*(path), project_id*(query) | json: ConfirmDocumentMappingRequest | null | ActivityDocumentMapping |
 | GET | `/api/documents/{doc_id}` | Get Document | doc_id*(path), project_id*(query) | - | DocumentDetail |
 | GET | `/api/projects/{project_id}/documents` | List Documents | project_id*(path), doc_type(query), approval_status(query), include_orphaned(query), page(query), page_size(query), size(query) | - | DocumentList |
@@ -138,6 +139,7 @@
 | BimObjectView | `global_id`*, `ifc_type`*, `group`*, `name`, `level`, `level_elevation`, `zone`, `bbox`, `mesh_ref`, `psets`, `material`, `quantity`, `express_id`, `project_id`*, `model_id`*, `model_version`*, `state`*, `is_orphaned`, `has_open_review` |
 | Blocker | `component`*, `reason`*, `related_ids`, `severity`, `kind` |
 | Body_upload_file_api_projects__project_id__files_post | `file`*, `kind`, `level` |
+| CancelDocumentMappingReviewRequest | `note` |
 | ConfirmDocumentMappingRequest | `note` |
 | ConfirmMappingRequest | `global_id`*, `note` |
 | ControlPoint | `name`*, `scan_xyz`*, `model_xyz`* |

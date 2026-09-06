@@ -8,6 +8,10 @@ from fastapi.responses import JSONResponse
 
 from packages.core.models.review import ReviewRejectionReasonRequiredError
 from packages.core.models.state import InvalidTransitionError, RevocationReasonRequiredError
+from services.progress.document_mapper import (
+    MappingDecisionCancelReasonRequiredError,
+    MappingDecisionNotCancellableError,
+)
 from services.progress.state_machine import ObjectNotFoundError, TransitionBlockedByReviewError
 
 
@@ -131,6 +135,43 @@ def install_handlers(app: FastAPI) -> None:
         return JSONResponse(status_code=409, content={"detail": str(exc), "code": "rejection_reason_required",
                                                       "review_kind": exc.review_kind,
                                                       "review_request_ids": list(exc.review_request_ids)})
+
+    @app.exception_handler(MappingDecisionNotCancellableError)
+    async def _mapping_decision_not_cancellable(_: Request, exc: MappingDecisionNotCancellableError) -> JSONResponse:
+        """ADR 0013 규칙 6 (나) — 취소하려는 `(activity_id, doc_id)` 쌍에 서 있는 CM 결정이 없다.
+
+        **이 핸들러가 없으면 500 이다.** 예외가 `Exception` 직속이라(ADR 0013 규칙 5) 상속으로 얻는
+        HTTP 폴백이 없다 — 즉 이 핸들러는 편의가 아니라 불변식의 일부다.
+
+        **`invalid_transition` 을 재사용하지 않은 이유는 문구가 아니라 응답 모양이다.** 그 code 의 화면
+        문구("현재 상태에서는 이 작업을 수행할 수 없습니다. 화면을 새로고침해 …")는 이 자리에서 오히려
+        **참**이다(정말 수행할 수 없고, 새로고침하면 그 쌍이 "검토 대기"로 보인다). 기각한 것은 위
+        `_invalid_transition` 이 반드시 싣는 `from_state`/`to_state`/`actor` 때문이다 — 매핑 결정에는 전이가
+        없어 그 셋이 **존재하지 않고**, 지어내면 glossary 부칙 "응답 모양 일관성"이 깨진다.
+
+        **상태코드 409**: 요청 스키마 위반(422)이 아니라 대상의 현재 상태에 대한 요건이고, glossary 서문의
+        호환 약속대로 `code` 를 모르는 클라이언트에게는 그대로 409 + `detail` 이다.
+
+        **부가 필드를 싣지 않는다**(ADR 0013 규칙 6 부칙). 실을 수 있는 값(`activity_id`·`doc_id`)은
+        클라이언트가 방금 URL 로 보낸 값이라 화면이 분기할 새 정보가 아니고, 실측상 오류 응답의 부가
+        필드를 읽는 비테스트 웹 소스가 0건이다(`ErrorBox` 는 `code`·`status`·`message` 만 읽는다).
+        어느 쌍인지는 `detail` 문장에 있다."""
+        return JSONResponse(status_code=409, content={"detail": str(exc),
+                                                      "code": "mapping_decision_not_cancellable"})
+
+    @app.exception_handler(MappingDecisionCancelReasonRequiredError)
+    async def _cancel_reason_required(_: Request, exc: MappingDecisionCancelReasonRequiredError) -> JSONResponse:
+        """ADR 0013 규칙 4 — 매핑 결정을 취소하는데 사유가 없다(`None`·`""`·공백만).
+
+        `Exception` 직속이라 이 핸들러가 없으면 500 인 것, 409 를 쓰는 것, 부가 필드를 싣지 않는 것은
+        위 핸들러와 같다. **다른 사유 code 둘과 갈라 놓은 근거는 화면 문구다**(ADR 0011 규칙 1-a 와 같은
+        기준): `rejection_reason_required` 의 안내는 "검토요청을 반려하려면 사유를 입력해야 합니다"인데
+        취소는 반려가 아니라 **반려를 되돌리는 일**이라 정반대이고, `revocation_reason_required` 의
+        안내는 "확정을 되돌리려면"이라 반려 취소에서 거짓이다(게다가 그 code 는 `from_state`/`to_state`/
+        `actor` 를 싣는 계약인데 매핑 결정에는 그 셋이 없다).
+
+        `detail` 은 예외 자신의 문장을 그대로 쓴다 — 다른 예외의 문장을 빌리지 않는다(ADR 0011 규칙 1-b)."""
+        return JSONResponse(status_code=409, content={"detail": str(exc), "code": "cancel_reason_required"})
 
     @app.exception_handler(TransitionBlockedByReviewError)
     async def _blocked(_: Request, exc: TransitionBlockedByReviewError) -> JSONResponse:

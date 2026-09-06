@@ -40,3 +40,15 @@ class DocumentDetail(BaseModel):
 
 class ConfirmDocumentMappingRequest(BaseModel):
     note: str | None = None
+
+
+class CancelDocumentMappingReviewRequest(BaseModel):
+    """매핑 결정 취소의 사유(ADR 0013 규칙 4 — 비어 있지 않아야 한다).
+
+    **타입을 `str | None` 으로 두고 본문 자체도 선택으로 받는다.** 필수 `str` 로 좁히면 사유 누락이 422
+    (요청 스키마 위반)로 나가는데, 이것은 스키마가 아니라 **대상의 현재 상태에 대한 요건**이라 409
+    `cancel_reason_required` 여야 한다(ADR 0013 규칙 6, `revocation_reason_required`·
+    `rejection_reason_required` 와 같은 판단). 판정은 `packages/core/models/review.py::
+    rejection_reason_missing` 하나가 하고 여기서 복제하지 않는다 — 공백만인 사유(`"   "`)도 같은 409 다."""
+
+    note: str | None = None
