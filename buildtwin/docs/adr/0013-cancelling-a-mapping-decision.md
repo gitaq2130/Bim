@@ -1,6 +1,16 @@
 # ADR 0013 — 매핑 결정의 취소(확정 취소·반려 취소)
 
 - 상태: Accepted
+  - **개정 1**(2026-09-06, 계획 0006 마감 — **문서만 고친다. 결정도 코드도 바뀌지 않는다**):
+    규칙 3 의 이력에는 **수명이 있다.** 재계산이 미확정 매핑의 `evidence` 를 새 후보로 덮으므로
+    `extra.cancelled_mapping_reviews` 는 **키째** 사라진다(빈 목록이 아니다 — 아래 §0-a 실측 `[P1-*]`).
+    qa 가 그 사실을 `test_20_…::…v8_…` docstring 에 관측값으로만 적고 방향을 이 사이클에 남겼다.
+    **재계산이 그 키를 보존하도록 `services/progress/` 를 고치는 쪽을 기각하고**(§Alternatives 8)
+    이 ADR 을 사실에 맞게 고친다: 취소 한 건의 **내구 기록**은 ① `expert_review_logs` 행과
+    ② 취소가 열거나 갱신한 검토요청 행의 `conflicting_sources` 이고, 매핑 행의 이력은 그 둘의 **사본**이다.
+    그리고 **닫힌 요청 행은 감사의 정본이 아니다** — 닫힌 행이 하나도 없는 취소 경로가 있다(§0-a `[P2-*]`).
+    고치는 자리: 불변식 5 표 셋째 행 · 규칙 3 · 규칙 7 · §"이 불변식을 지금 무엇이 붙들어 주는가" ·
+    §Alternatives 8 · §Deferred 6·7.
 - 작성: architect
 - 날짜: 2026-09-06
 - 관련: **ADR 0007 §Deferred "매핑 확정 취소(unconfirm)"·"매핑 반려 취소(unreject)"**(이 ADR 이 그 둘을
@@ -49,6 +59,16 @@ DB 직접 조작이 필요한 칸(곱 표의 네 칸)은 `packages.core.db.sessi
 `docs/plans/0006-*.md`(신규) **2 files changed**, 코드 트리 무변경. 그래도 **이 ADR 의 모든 수치는 계획에서
 옮겨 적지 않고 이 HEAD 에서 다시 실행해 얻었다.** 문서가 문서를 근거로 삼으면 서로를 가리키는 두 줄이
 서로의 근거가 된다(CLAUDE.md §6-3 — "표의 각 칸을 다른 절 참조로 갈음하면 그 행은 검증되지 않은 것이다").
+
+### 0-a. 개정 1 의 실측이 나온 자리 (재현 방법)
+
+**개정 1 의 수치만 다른 트리에서 났다**: 같은 작업 트리·같은 브랜치, **HEAD `61dcc3c`**(작업 3~9 가
+들어온 뒤). 저장소 루트 `/home/user/Bim` 에서 `git status --porcelain` **전문이 빈 출력**이고(탐침 전후로
+확인), 기준선은 `.venv/bin/pytest -q` → **803 passed** · `npx vitest run` → **283 passed** ·
+`make lint` → exit 0 이다. 실측은 `tests/integration/test_zzprobe_0006_close.py`(임시 탐침, 잰 뒤 지웠다)를
+세션 픽스처로 태워 얻었고 라벨은 `[P1-*]`(닫힌 행이 있는 경로) · `[P2-*]`(닫힌 행이 없는 경로) ·
+`[P3-*]`(반려 → 취소) · `[P4-*]`(반복 취소)다. **개정 1 이 새로 적는 `파일:줄`·심볼 참조는 `61dcc3c`
+트리의 것이고, 위 §0 이 못박은 `516949a` 참조는 갱신하지 않는다**(CLAUDE.md §3-13 첫째 갈래).
 
 ---
 
@@ -225,6 +245,15 @@ ADR 0011 이 상태 전이에 세운 세 가지를 매핑 결정 축으로 옮�
 | 무엇이 필요한가 — 비어 있지 않은 `evidence.note` | 무엇이 필요한가 — 비어 있지 않은 `note`. 술어는 **재사용**한다 — `packages/core/models/review.py:147 def rejection_reason_missing(note)` | **같다**(규칙 4) |
 | 어디에 남는가 — `StateTransition` 한 행이 그대로 이력이다(append) | 어디에 남는가 — **세 자리**: ① 옛 검토요청 행을 손대지 않는다 ② 새 open 요청 ③ 매핑 `evidence.extra.cancelled_mapping_reviews` append | **다르다** — 이력 테이블이 없어서다(§Context 2 표 셋째 줄) |
 
+**개정 1 정정 — 셋째 칸이 내구성이 다른 셋을 한 줄에 담았고, 그중 하나는 정본이 아니다.** ①은 **없을 수
+있고**(아래 규칙 3 개정 1 의 `[P2-*]`), ③은 **다음 재계산까지만 산다**. 이력 테이블이 없다고 적었지만
+실제로는 있다 — 이 ADR 이 §인터페이스에서 "전문가 검토 로그는 기존 것을 쓴다"고 정해 둔
+`expert_review_logs` 가 그것이고, api 가 취소 경로에서 실제로 한 행을 남긴다
+(`services/api/usecases.py::cancel_document_mapping_review` 의 `record_expert_review(..., "activity_document_mapping",
+f"{activity_id}:{doc_id}", before, {**cancelled…, "cancelled_review_opened": …}, user.user_id)`).
+**이 ADR 은 자기가 만든 자리를 자기 목록에서 빠뜨렸다**(CLAUDE.md §6-1: 목록의 기준이 "이 규칙이 새로
+만드는 것"이라 **이미 있는 기계를 쓰기로 한 자리**가 칸 밖으로 나갔다). 정정된 넷은 규칙 3 개정 1 의 표다.
+
 ### 규칙 1 — 취소의 착지점은 **미확정**(§Context 3 표 4행) 하나다. 반쪽 착지를 금지한다
 
 ```
@@ -275,6 +304,44 @@ evidence.extra 에서 반려 표시 4키 제거
 잃는 것은 반복 취소의 이력이고, 그것은 규칙 7(무제한)이 성립하기 위한 관측 가능성 그 자체다.
 readiness 는 이력이 있든 없든 3행·4행을 구별하지 못하므로(§Context 3 표) 이력을 남겨도 **점수는 움직이지
 않는다** — 즉 이 이력은 값이 아니라 감사에만 쓰인다.
+
+**개정 1 정정 — 이 이력은 append-only 이되 *수명*이 있고, 감사의 정본이 아니다.**
+관측(§0-a `[P1-*]` — 확정 → 취소 → `POST /api/projects/{pid}/documents/mappings`):
+
+```
+[P1-after-cancel]    extra keys: ['activity_id', 'cancelled_mapping_reviews', 'discipline_trusted', …]   history len: 1
+[P1-after-recompute] extra keys: ['activity_id', 'discipline_trusted', …]   history key present: False   value: None
+```
+
+**키째 사라진다**(빈 목록이 아니다). 원인은 이 ADR 이 바꾸지 않기로 한 경로다: `map_project_documents` 는
+`_drop_already_confirmed` 로 **사람이 판단한 행만**(`existing.reviewed_by is not None`) 후보에서 빼는데
+취소된 행은 정의상 `reviewed_by is None` 이라 후보에 남고, `save_document_mapping` 의 갱신 갈래가
+`row.confidence, row.evidence = mapping.confidence, mapping.evidence.model_dump(mode="json")` 로 evidence 를
+**통째로** 덮는다(`services/progress/persistence.py`, HEAD `61dcc3c`).
+
+*한정어 역방향 확인 — "다음 재계산까지"는 좁혀 적어야 한다.* 정확히는 **"그 쌍이 후보로 다시 산출되는
+다음 재계산까지"** 다. 실행값 `[P2-after-recompute] history key present: True` — A110 은 Activity 이름이
+바뀌어 후보에서 빠진 쌍이라(그래서 재확인 요청이 열려 있었다) 그 재계산이 그 행을 건드리지 않았다.
+한정어를 빼면 "재계산은 언제나 이력을 지운다"가 되는데 그것은 **거짓**이다. *옛 조건이 잡던 것* —
+초판의 "append 한다·덮어쓰지 않는다"는 **한 재계산 주기 안에서는 그대로 참이다**(실행값
+`[P4-before-recompute] history len: 2`, 규칙 7 의 반복 취소 시나리오).
+
+**그래서 취소 한 건의 감사가 어디에 남는지를 내구성과 함께 다시 적는다**(각 칸은 §0-a 실행값 또는 코드 인용):
+
+| 자리 | 무엇이 남는가 | 재계산 뒤 | 근거 |
+|---|---|---|---|
+| ① `expert_review_logs` 한 행(`entity_type="activity_document_mapping"`, `entity_id=f"{activity_id}:{doc_id}"`) | `proposal` = 취소 **직전** 매핑(반려 표시 4키 포함) · `final` = 취소 뒤 매핑 + `cancelled_review_opened` | **그대로** | `[P3-log] … proposal.extra= [… 'mapping_review_decision', … 'rejected_at', 'rejected_by', 'rejection_note', …] \| rejected_by= u-cm-77740163 \| rejection_note= 이 문서는 이 작업과 무관하다 \| final.history= 1` → `[P3-after-recompute] log rows: 1` |
+| ② 취소가 열거나 갱신한 요청 행의 `conflicting_sources` | `cancel_note` · `cancelled_review_request_id` | **그대로** — 재계산은 열린 요청의 `confidence`·`evidence`·`title` 만 덮는다(`_sync_pending_document_mapping_reviews`) | `[P1-after-recompute] rows: … ('a38ceb96', 'open', None, None, {'doc_id': …, 'cancelled_review_request_id': '15f1aa3c-…', 'cancel_note': '오조작이라 취소한다'}, '문서 매핑 확인: …')` — 같은 행의 **제목만** 취소 문구(`문서 매핑 재검토: … 취소했습니다`)에서 일반 문구(`문서 매핑 확인: …`)로 되돌아갔다(§Deferred 6) |
+| ③ 옛(닫힌) 요청 행 | **원 결정**의 `status`·`resolved_by`·`resolution_note` | 그대로 — **다만 아예 없을 수 있다** | `[P1-after-recompute] rows: ('15f1aa3c', 'approved', 'u-cm-…', '확정', …)` ↔ `[P2-after-cancel] rows:` 는 **`open` 한 행뿐**(닫힌 행 0) |
+| ④ 매핑 행 `extra.cancelled_mapping_reviews` | ①의 사본(지운 표시 + 취소자·시각·사유) | **사라진다**(위) | 위 `[P1-*]` |
+
+**닫힌 요청 행은 감사의 정본이 될 수 없다.** 이 문장은 개정 1 이 새로 쓰는 것이므로 §6-3 대로 "결함 있는
+코드가 그대로 만족하는가"를 먼저 물었고, 그 물음이 곧 반례를 찾아냈다: 확정이
+`_reopen_reviews_for_invalidated_confirmations` 로 재확인 열린 상태에서 취소하면 그 쌍에 닫힌 행이 **하나도
+없다.** 실행값 `[P2-after-confirm] rows: ('b6cd28e1', 'approved', 'u-cm-…', '확정', …)` →
+`[P2-after-reopen] rows: ('b6cd28e1', 'open', None, None, …)`(재오픈이 **원 확정의 감사까지** 지운다 —
+규칙 2 가 베끼지 않기로 한 바로 그 모양이다) → `[P2-after-cancel] … 'cancelled_review_request_id': None`
+(없는 것을 지어내지 않는다). 이 경로에서 취소의 감사는 **①②에만** 있다.
 
 ### 규칙 4 — 사유 술어는 `rejection_reason_missing` 을 **그대로 쓴다**. 이름의 좁음은 기록한다
 
@@ -446,6 +513,30 @@ glossary 서문의 호환 약속("신규 code 추가는 표에 행만 더하고 
 그리고 반복은 **조용하지 않다**: 매 취소가 사유를 요구하고(규칙 4), 이력에 항목을 하나 더 쌓고(규칙 3),
 CM 큐에 새 요청을 연다(규칙 2).
 
+**개정 1 정정 — "조용하지 않다"의 셋 중 하나(이력)는 재계산까지만 산다.** 남는 둘을 실행값으로 적는다
+(확정→취소→확정→취소 뒤 재계산, §0-a `[P4-*]`. `rows` 튜플은 `(요청 id, status, resolved_by, cancel_note)`):
+
+```
+[P4-before-recompute] history len: 2
+[P4-after-recompute]  history key present: False
+[P4-after-recompute]  rows: [('fcd59f6f','approved','u-cm-…',None), ('c28de0f4','approved','u-cm-…','1차 취소'), ('153d3e12','open',None,'2차 취소')]
+[P4-after-recompute]  logs total: 4 | cancel logs: 2 | notes: ['1차 취소', '2차 취소']
+```
+
+즉 재계산 뒤에도 **취소 횟수와 사유**는 ① `expert_review_logs`(취소마다 한 행 — `final` 에
+`cancelled_review_opened` 가 있는 행이 취소다)와 ② 취소가 연 요청 행들의 `conflicting_sources.cancel_note`
+로 남는다. **그러나 그 둘 중 어느 것도 화면에 닿지 않는다**: `expert_review_logs` 는 읽는 라우트가 없고
+(실행값 `grep -rn "expert" services/api/routers/` → **출력 없음, 종료코드 1**), `cancel_note` 는 검토요청
+응답에 실려 나가지만 그리는 코드가 없다(실행값 `grep -rn "cancel_note\|cancelled_review_request_id"
+apps/web/src services/api | grep -v test` → **출력 없음, 종료코드 1**). 그러므로 이 규칙의 관측 가능성은
+**DB 감사 수준**이고 운영자 화면 수준이 아니다 — §Deferred 7 에 그대로 적는다.
+
+*무제한 자체의 근거는 바뀌지 않는다.* 그것은 착지점 하나에 기대고(위 인용 블록의 §Context 3 표 3·4행),
+그 두 칸은 개정 1 이 건드리지 않았다. 개정 1 이 바꾸는 것은 **"반복을 누가 볼 수 있는가"** 뿐이다.
+② 의 셈에는 한정어가 하나 붙는다(*역방향 확인*): 취소가 **이미 열린 요청을 갱신**하는 경로에서는 새 행이
+생기지 않으므로(§테스트 `test_cancelling_while_a_reopened_request_is_already_open_…`) 행으로 센 횟수는
+**하한**이다. 취소마다 정확히 한 행인 것은 ① 뿐이다.
+
 *역방향 확인 — 무제한이 실제로 미는 것.* 확정↔취소를 반복하면 그 쌍의 닫힌 `document_mapping` 요청 행이
 계속 늘어난다(규칙 2 가 매번 새 행을 만든다). 그 누적이 운영에서 문제가 되는지는 **실측이 없다** —
 문제가 되면 카운터가 아니라 **큐의 누적 표시**("이 쌍은 n 번째 재검토")로 연다. §Deferred 1.
@@ -588,6 +679,20 @@ V1~V10 을 붙인다. 그러므로 여기 적는 것은 부재가 아니라 **�
 | 7(무제한) | 1회 제한 구현 — 첫 취소만 보면 통과한다 | 둘째 취소도 200 **그리고** `extra.cancelled_mapping_reviews` 길이 2 **그리고** 옛 요청 행 둘이 각자 그 시점 status 를 유지 |
 | 8(옛 조건) | `_drop_already_confirmed` 를 함께 건드린 구현 — 취소 동작만 보면 통과한다 | 취소 뒤 대장 재업로드에서 그 쌍의 open 요청이 **1건 그대로**(중복 없음), 매핑 행 그대로 |
 
+**개정 1 — 새로 정본이라고 부른 자리(①)는 지금 아무것도 붙들지 않는다.** 이것은 "놓칠 수 있다"는
+고백이 아니라 **실행으로 잰 값**이다(CLAUDE.md §6-1: 적어 두는 것은 커버리지가 아니므로 태워서 적는다).
+
+| 무엇을 물었나 | 어떻게 쟀나 | 값 |
+|---|---|---|
+| 취소가 `expert_review_logs` 행을 남기는 것을 어떤 테스트가 붙드는가 | `grep -rn "activity_document_mapping" tests/ --include=*.py` | **출력 없음, 종료코드 1** — 확정·반려·취소 어느 쪽도 이 `entity_type` 을 단언하지 않는다 |
+| 그 기록을 지우면 무엇이 죽는가 | `usecases.py::cancel_document_mapping_review` 의 `record_expert_review(...)` 세 줄을 지우고(변이가 무동작이 아님을 먼저 확인했다 — 탐침의 `[P1-after-cancel] logs` 가 취소 로그 없이 확정 로그 한 행만 냈다) `.venv/bin/pytest -q` | **803 passed**(하나도 죽지 않는다) |
+
+즉 **감사의 정본이 무보호**다. 이 사이클은 그것을 고칠 자리가 없다(테스트는 qa 소유이고 이 마감이 그
+사이클의 마지막 작업이다) — 그래서 **계획 0006 §후속**에 단언의 모양까지 적어 넘긴다: 취소 뒤
+`entity_type="activity_document_mapping"`·`entity_id=f"{activity_id}:{doc_id}"` 인 행이 **하나 늘고**, 그
+행의 `proposal` 이 취소가 지운 반려 표시를 담고 있으며, **재계산 뒤에도 그 행이 그대로**라는 셋을 함께
+단언한다(하나만 보면 재계산 경로를 바꾼 구현이 통과한다 — CLAUDE.md §6-2 4).
+
 **반려 방향의 시나리오를 값(`drawing_approval`·`score`)으로 단언하면 안 된다** — 실측상 반려 전후가
 0.5/0.625 로 같아서 결함 코드와 정상 코드가 구별되지 않는다(§Context 3 (2)). 그 방향에서 갈리는
 관측값은 `blockers[]` 와 `evidence.note` 둘뿐이고, **`kind` 만으로도 부족하다** — 1행(반려)과
@@ -637,6 +742,24 @@ unknown` ↔ 없음) 또는 `drawing_approval` blocker 의 **존재**까지 봐�
    술어는 이미 거기 있고 그대로 재사용한다.
 7. **`rejection_reason_required` 를 재사용한다.** 기각. 그 code 의 화면 문구가 이 자리에서 거짓이다
    (규칙 6 (가)).
+8. **(개정 1) 재계산이 취소 이력을 보존하게 한다.** 기각. 모양은 작다 —
+   `services/progress/document_mapper.py::map_project_documents` 가 `_drop_already_confirmed` 뒤에
+   기존 행의 `evidence.extra["cancelled_mapping_reviews"]` 를 새 후보의 evidence 로 **옮겨 싣거나**,
+   `services/progress/persistence.py::save_document_mapping` 의 갱신 갈래가 그 키만 살려 병합하면 된다
+   (둘 다 progress-engine 소유라 이 커밋은 쓰지 않는다). 기각 근거 셋:
+   ① **사는 값이 없다.** 그 이력을 읽는 자리는 이 저장소에 **없다** — 실행값
+   `grep -rn "cancelled_mapping_reviews" --include=*.py --include=*.ts --include=*.tsx --include=*.md .`
+   (`.venv`·`node_modules`·`.git`·`dist` 제외)의 히트는 구현 상수·문서·테스트뿐이고 화면 코드는 0건이다.
+   보존해도 CM 이 볼 수 있게 되는 것은 없다.
+   ② **같은 정보가 이미 내구 저장소에 있다.** `expert_review_logs` 의 `proposal` 이 취소가 지운 반려 표시
+   넷을 통째로 담는다(실행값 `[P3-log]`) — 보존은 **사본의 사본**을 지키는 일이다.
+   ③ **새로 만드는 것은 아무도 감시하지 않는 예외다.** `evidence` 는 "재계산이 통째로 덮는 블롭"이라는
+   단순한 규칙을 갖는데, 그 안에 **끈적한 하위 키** 하나를 만들면 앞으로 매핑 evidence 를 쓰는 모든 경로가
+   그 예외를 알아야 한다. 지금 그것을 붙들 감사는 없다(위 §"이 불변식을…" 개정 1 표: 그 축의 테스트 0건).
+   계획 0006 §리뷰어가 남긴 과제 2 가 같은 판단을 적었다 — "기계를 새로 만들면 그 기계가 새 무주공산이 된다".
+   *역방향 확인 — 기각이 미는 것.* ①이 뒤집히는 날(취소 이력을 **화면이 그리기로** 하는 사이클)에는 이
+   기각도 함께 뒤집어야 한다. 그때 필요한 것은 보존이 아니라 **읽는 쪽이 어디를 보는가**의 결정이고,
+   ①②가 이미 있으므로 후보는 `expert_review_logs` 를 읽는 라우트다(§Deferred 7).
 
 ## Deferred
 
@@ -653,6 +776,24 @@ unknown` ↔ 없음) 또는 `drawing_approval` blocker 의 **존재**까지 봐�
 4. **`"rejected"` 라는 *값* 리터럴의 전수 감사.** 이 ADR 의 목록 축은 **필드 이름**과 **예외 타입**이고
    값 축이 아니다. 계획 0005 가 `cause` 에 대해 만든 `tests/invariants/test_identity_drift_cause_contract.py`
    와 같은 감사를 이 값으로 넓힐지는 qa 의 판단이다(계획 0006 §후속 2).
-5. **`document_mapping_already_rejected` 가 화면 code 목록에 없다.** 실측(§Consequences): 서버는 내는데
-   `KnownApiErrorCode`·`CODE_MESSAGES` 에 없어 원인별 안내가 나가지 않는다. 이 ADR 은 정본 표(glossary)에만
-   행을 더한다 — 그 두 파일은 frontend 소유이고, 새 code 둘과 함께 한 번에 더하는 것이 옳다.
+5. ~~**`document_mapping_already_rejected` 가 화면 code 목록에 없다.**~~ → **개정 1: 같은 사이클의
+   작업 5 가 해소했다**(`b2b34c4`). 실측(HEAD `61dcc3c`): `KnownApiErrorCode`(46) · `CODE_MESSAGES`(46) ·
+   glossary "오류 응답 code 어휘" 표(46)의 **세 집합이 서로 정확히 같다**(대칭차 0 — 마감에서 파싱해
+   비교했다). **이 항목은 애초에 Deferred 로 적을 것이 아니었다**: 그것을 메우는 작업이 **같은 계획의
+   작업 5** 였으므로 "아직 없다"는 부재 단정은 시제 표현의 변장이었다(CLAUDE.md §6-1). 초판 문장은
+   위에 그대로 둔다 — 무엇을 어떻게 틀렸는지가 근거다.
+   (아래는 원문) 실측(§Consequences): 서버는 내는데 `KnownApiErrorCode`·`CODE_MESSAGES` 에 없어 원인별
+   안내가 나가지 않는다. 이 ADR 은 정본 표(glossary)에만 행을 더한다 — 그 두 파일은 frontend 소유이고,
+   새 code 둘과 함께 한 번에 더하는 것이 옳다.
+6. **(개정 1) 재계산이 취소가 연 요청의 *제목*을 일반 제목으로 되돌린다.** 실행값 `[P1-*]`: 취소 직후
+   `'문서 매핑 재검토: … CM 이 이 쌍의 확정을 취소했습니다 …'` → 재계산 뒤 같은 행이
+   `'문서 매핑 확인: …'`. `_sync_pending_document_mapping_reviews` 가 열린 요청의 `title` 을 최신 후보
+   기준으로 덮기 때문이다(`conflicting_sources` 는 손대지 않으므로 `cancel_note` 는 남는다).
+   **거짓 문구가 되는 것은 아니다** — 되돌아간 제목도 참이고 CM 이 할 일(확정 또는 반려)도 같다. 그래서
+   §6-4 1("사실과 다른 문구는 그 사이클이 고친다")에 걸리지 않는다. 잃는 것은 **왜 다시 열렸는가**이고,
+   그것을 큐에서 보이게 할지는 §Deferred 1(누적 표시)과 같은 자리에서 함께 정한다.
+7. **(개정 1) 취소의 내구 감사를 읽는 경로가 없다.** `expert_review_logs` 에는 라우트가 없고(실행값
+   `grep -rn "expert" services/api/routers/` → 출력 없음, 종료코드 1), `conflicting_sources.cancel_note` 는
+   응답에 실리지만 그리는 화면이 없다(실행값 `grep -rn "cancel_note\|cancelled_review_request_id"
+   apps/web/src services/api | grep -v test` → 출력 없음, 종료코드 1). 규칙 7 의 관측 가능성이 **DB 감사
+   수준**에 머무는 이유이고, 여는 순서는 **읽는 라우트 → 화면**이다(보존이 아니라 — §Alternatives 8).

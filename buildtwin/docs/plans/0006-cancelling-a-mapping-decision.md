@@ -713,3 +713,199 @@ V1·V2 가 각 축의 양성이며, V3·V7 이 각각 "너무 많이 되돌림"�
    시작해 실제로는 이미 누수였음이 드러났으므로(ADR 0008 §Context 2), "지금은 무해하다"를 근거로 쓰지
    않고 관측으로만 남긴다.
 5. **`on_hold` 에 공백만 note 를 보내면 `"   "` 가 그대로 저장된다**(ADR 0012 §Deferred 2 그대로).
+
+---
+
+# 사이클 마감 (architect, 2026-09-06)
+
+## M-0. 이 마감의 실측이 나온 자리 (재현 방법)
+
+**작업 트리** `/home/user/Bim/buildtwin`, 브랜치 `claude/buildtwin-initial-setup-ubulzb`,
+**HEAD `61dcc3c`**(작업 3~9 가 들어온 뒤). 저장소 루트 `/home/user/Bim` 에서 `git status --porcelain`
+**전문이 빈 출력**이다(모든 탐침·변이 전후로 확인했다).
+
+```
+$ cd /home/user/Bim/buildtwin && .venv/bin/pytest -q      # 임시 탐침 제외
+803 passed, 1 warning in 62.25s (0:01:02)
+
+$ cd /home/user/Bim/buildtwin/apps/web && npx vitest run
+ Test Files  28 passed (28)
+      Tests  283 passed (283)
+
+$ cd /home/user/Bim/buildtwin && make lint ; echo "exit=$?"
+exit=0
+```
+
+실측은 `tests/integration/test_zzprobe_0006_close.py`(임시 탐침 — 잰 뒤 지웠다)를 세션 픽스처
+(`client`/`auth`/`user_ids`)로 태워 얻었고, 라벨은 `[P1-*]`(닫힌 행이 있는 취소) · `[P2-*]`(닫힌 행이
+없는 취소) · `[P3-*]`(반려 → 취소) · `[P4-*]`(반복 취소)다. **이 절의 `파일:줄`·심볼 참조는 `61dcc3c`
+트리의 것이고, 위 §0 이 못박은 `99d3721` 참조는 갱신하지 않는다**(CLAUDE.md §3-13 첫째 갈래).
+
+## M-1. 각 작업의 실제 결과
+
+| # | 담당 | 커밋 | 계획과 달랐던 것 |
+|---|---|---|---|
+| 1 | architect | `13dda23`(ADR 0013 신규 658줄 + ADR 0007·0009 해소 표시 + ADR 0012 §Deferred 3 append + glossary) | 계획대로. 다만 ADR 자신이 두 자리를 틀렸다 — M-2 (e)(f) |
+| 2 | architect | `f983b8b`(CLAUDE.md §2 서수 → 문구·grep) | 계획대로(계획 커밋 `516949a` 보다 **앞선** 커밋이다 — 과제 3 은 계획을 쓰면서 함께 했다) |
+| 3 | progress-engine | `0c8faef`(`document_mapper.py` +198 · `persistence.py` +17) | 계획은 담당 파일을 `document_mapper.py` 하나로 적었는데 `persistence.py`(같은 소유)도 필요했다 — 조회 헬퍼 `document_mapping_reviews` |
+| 4 | api | `0d9ed3d`(`usecases.py`·`routers/documents.py`·`errors.py`·`schemas/documents.py`·`docs/api.md`) | 계획이 `schemas/documents.py` 를 적지 않았다(같은 소유라 무해) |
+| 5 | frontend | `b2b34c4`(`client.ts`·`hooks.ts`·`types.ts`·`ErrorBox.tsx`·`DocumentDetailPage.tsx`·`ReviewsPage.tsx`·**`ReviewsPage.test.tsx`**) | **계획이 나눌 수 없는 것을 나눴다** — M-2 (b′) |
+| 6·7 | qa | `5300c13`(`test_20_*` 565줄 신규 · `test_21_*` 150줄 신규 · 단위 둘 · `test_15`·`test_17` 문구) | V1~V9·V11·V12 + 서버 변이 14건을 개별로 태워 보고. **V10 은 웹이라 작업 9 로 갔다** |
+| 8 | qa | 같은 커밋(`test_15`·`test_17`) | 계획이 적은 자리는 `test_15:315` 하나였는데 실제로는 `test_17` 도 있었고, `ReviewsPage.test.tsx` 는 작업 5 가 이미 고쳤다 — M-2 (b) |
+| 9 | frontend | `61dcc3c`(`DocumentDetailPage.test.tsx` +312 · `ReviewsPage.test.tsx` +27) | 계획대로 |
+| 10 | architect | 이 절 + ADR 0013 개정 1 + glossary 정정 + CLAUDE.md §6-1 근거 두 행 | 계획은 "마감"만 적었고 **qa 가 넘긴 설계 결정 하나**(M-3)가 여기서 처리됐다 |
+
+수치: `pytest` 783 → **803**(+20), `vitest` 268 → **283**(+15), `make lint` exit 0 유지.
+
+## M-2. 계획 자신이 틀렸던 자리
+
+**(a) §1-c 곱 표가 blocker 를 `kind` 로만 적었다.** 곱은 §6-1 대로 만들었는데(2축 × 2 = 4칸) 각 칸의
+관측값을 `kind` 하나로 잘랐고, 1행(반려)과 2행(반쪽 취소 — 같은 표가 "가장 위험한 칸"이라 적은 자리)이
+**둘 다 `None`** 이라 그 축으로는 갈리지 않는다. 계획대로 시나리오를 짰으면 §0 위반인 반쪽 취소를
+못 잡는다. 잡은 것은 ADR 0013(`reason` 과 blocker 의 **존재**까지 봐야 한다는 실측)이고, qa 의
+`_drawing_blockers` 가 `(kind, reason)` 쌍으로 읽는다. → CLAUDE.md §6-1 표 10회차.
+
+**(b) 작업 8 의 "낡은 계약 문자열" 전수가 좁았다.** 계획은 `test_15:315` 하나만 적었다. 실제로는
+`test_17` 의 `test_v2_rejection_stays_permanent` docstring("반려의 영구성" — 한정어 없음)도 낡았고,
+`ReviewsPage.test.tsx` 에는 **둘째 거짓 계약**(`toMatch(/되돌릴 수 없/)`)이 있었으며, 사용자 문구
+`ReviewsPage.tsx` 반려 배너 "(되돌릴 수 없습니다)"와 주석 둘(`hooks.ts` "영구 반려 표시" ·
+`DocumentDetailPage.tsx` "반려는 … 영구하다")도 그랬다. 뿌리는 ADR 0013 규칙 9 의 생성 기준이다 —
+루트 grep 은 옳았는데(`grep -rn "취소\|되돌리" .`) **낱말의 표기 집합**을 세지 않았다: 활용형 `되돌릴`,
+동의어 `영구`. 실측: 그 grep 을 `hooks.ts`·`test_17` 에 돌리면 히트 0. → CLAUDE.md §6-1 표 11회차.
+
+**(b′) 계획이 나눌 수 없는 것을 두 작업으로 나눴다.** 작업 5(frontend, 문구)와 작업 8(qa,
+`ReviewsPage.test.tsx` 의 그 문구를 고정한 단언)은 **같은 커밋이 아니면 `make test` 가 깨진다**
+(CLAUDE.md §3 규칙 1). frontend 가 그 이유를 커밋 본문에 적고 함께 담았다(`b2b34c4` — §2 마지막 불릿의
+"커밋을 뗄 수 없는 변경은 그 이유를 적는다"를 이행). 계획의 작업 분배 축은 "한 소유가 한 커밋으로 끝낼 수
+있는 단위"였는데, **거짓 문구와 그것을 고정한 테스트는 소유가 둘이어도 커밋이 하나여야 한다** — 축이
+보지 못한 것은 이번에도 무주공산이 아니라 **분리 불가능한 쌍**이었다(§6-3 8·9회차 계열).
+
+**(c) 브리핑의 전제가 틀렸고 계획이 그것을 정정했다.** "잘못 반려하면 `drawing_approval` 0.0 으로
+굳는다"는 실측상 0.5 → 0.5 였다(§1-c (1)). 굳는 것은 값이 아니라 **1.0 에 이르는 경로**다. 계획은 이
+정정 위에 섰고, 그래서 반려 방향을 값으로 단언하지 않는 시나리오(V2)가 나왔다.
+
+**(d) 취소 이력의 수명을 아무도 묻지 않았다.** 계획 §열린 질문 4 는 "저장된 **과거** 기록에 키가 없다"만
+물었고 "**앞으로** 그 키가 얼마나 사는가"는 묻지 않았다. 재계산이 미확정 매핑의 `evidence` 를 덮으므로
+키는 **다음 재계산까지** 산다. qa 가 V8 docstring 에 관측값으로 남겼고 이 마감이 닫았다 — M-3.
+
+**(e) ADR 0013 §Deferred 5 가 부재 단정의 탈을 쓴 시제 표현이었다.** "그 세 code 가 화면 code 목록에
+없다"고 적었는데 그것을 메우는 것이 **같은 계획의 작업 5** 였고(그 Deferred 자신이 "새 code 둘과 함께 한
+번에 더하는 것이 옳다"고 적었다), `b2b34c4` 가 그 문장을 거짓으로 만들었다. `docs/glossary.md` 부칙에
+같은 문장이 한 번 더 있었다. 마감에서 둘 다 정정했다(실측: 정본 표 46 ↔ `KnownApiErrorCode` 46 ↔
+`CODE_MESSAGES` 46, **대칭차 0**). CLAUDE.md §6-1 이 이미 요구하던 확인이고, 그 항목이 지목한
+디렉터리(`packages/core/models/`) 밖에서 났다 — 그래서 §6-1 에 그 한 줄만 더했다.
+
+**(f) ADR 0013 의 "감사는 세 자리에 남는다"가 자기 ADR 이 쓰기로 한 자리를 빠뜨렸다.** 같은 ADR
+§인터페이스가 "전문가 검토 로그는 새 테이블을 만들지 않고 기존 것을 쓴다"고 정했고 api 가 실제로
+`record_expert_review(..., "activity_document_mapping", ...)` 를 남기는데, 불변식 5 표의 셋째 칸은 그것을
+세지 않았다. 목록의 기준이 "이 규칙이 **새로 만드는** 자리"라서 **이미 있는 기계를 쓰기로 한 자리**가
+칸 밖으로 나갔다(§6-1 의 모양 그대로). ADR 0013 개정 1 이 넷으로 고쳤다.
+
+**(g) qa 의 관측 문장을 한 칸 좁혔다.** V8 docstring 은 "길이 1 → 0"이라 적었는데, 저장된 행에서는
+**키 자체가 사라진다**(`[P1-after-recompute] history key present: False`). 읽는 쪽이 `.get(key) or []`
+이라 길이 0 으로 보일 뿐이다. 결론은 같고 표현만 정확해진다 — ADR 개정 1 이 그렇게 적었다.
+
+## M-3. qa 가 넘긴 설계 구멍 — 이력의 수명을 **ⓐ(사실에 맞게 적는다)** 로 닫았다
+
+**결정.** 재계산이 취소 이력을 보존하도록 `services/progress/` 를 바꾸지 않는다. ADR 0013 규칙 3·7 과
+불변식 5 표를 사실에 맞게 고치고, **감사의 정본을 다시 지목한다**(ADR 0013 개정 1).
+
+**근거(전부 §M-0 실행값).**
+
+| 물음 | 값 |
+|---|---|
+| 재계산이 무엇을 지우는가 | `[P1-after-cancel] history len: 1` → `[P1-after-recompute] history key present: False, value: None` — **키째** 사라진다 |
+| 언제나 그런가 | 아니다. `[P2-after-recompute] history key present: True` — 그 쌍이 후보로 다시 산출되지 않으면(Activity 이름 변경) 그 행은 손대지 않는다. 수명은 "**그 쌍이 후보로 다시 산출되는** 다음 재계산까지" |
+| 그 이력을 읽는 코드가 있는가 | 없다. `grep -rn "cancelled_mapping_reviews" --include=*.py --include=*.ts --include=*.tsx --include=*.md .` 의 히트는 구현 상수·문서·테스트뿐(화면 0건) |
+| 같은 정보가 다른 곳에 남는가 | 남는다. `[P3-log] … proposal.extra= [… 'rejected_at','rejected_by','rejection_note' …] \| rejected_by= u-cm-… \| rejection_note= 이 문서는 이 작업과 무관하다 \| final.history= 1` — `expert_review_logs` 의 `proposal` 이 **취소가 지운 표시를 통째로** 담고, `[P3-after-recompute] log rows: 1` 로 재계산을 견딘다 |
+| 반복 취소가 관측되는가 | `[P4-after-recompute] logs total: 4 \| cancel logs: 2 \| notes: ['1차 취소', '2차 취소']`, 같은 시점 요청 행(튜플은 `(요청 id, status, resolved_by, cancel_note)`) `[('…','approved','u-cm-…',None), ('…','approved','u-cm-…','1차 취소'), ('…','open',None,'2차 취소')]` |
+
+**"감사는 닫힌 요청 행에 남는다"는 태워 보니 거짓이었다**(§6-2 를 내 문장에 건 결과). 확정에 재확인
+요청이 열려 있는 상태에서 취소하면 그 쌍에 닫힌 행이 **하나도 없다**: `[P2-after-confirm]`
+`('b6cd28e1','approved','u-cm-…','확정')` → `[P2-after-reopen]` `('b6cd28e1','open',None,None)` —
+`_reopen_reviews_for_invalidated_confirmations` 가 원 확정의 `resolved_by`·`resolution_note` 까지 지운다 →
+`[P2-after-cancel]` `cancelled_review_request_id: None`. 그러므로 **정본은 닫힌 행이 아니라
+`expert_review_logs` 행과 취소가 열거나 갱신한 요청 행의 `conflicting_sources`** 이고, 매핑 행의 이력은
+그 둘의 **사본**이다.
+
+**ⓑ(보존)를 기각한 이유와, 그 기각이 미는 것.** ADR 0013 §Alternatives 8 에 모양과 함께 적었다 —
+읽는 값이 없고, 같은 정보가 이미 내구 저장소에 있고, `evidence` 안에 **끈적한 하위 키**를 만들면 앞으로
+매핑 evidence 를 쓰는 모든 경로가 그 예외를 알아야 하는데 그것을 붙들 감사가 없다. 뒤집히는 조건도
+적었다: 취소 이력을 **화면이 그리기로** 하는 사이클. 그때 필요한 것은 보존이 아니라 읽는 라우트다.
+
+**대신 새로 드러난 무보호를 실측으로 적었다.** `usecases.py::cancel_document_mapping_review` 의
+`record_expert_review(...)` 세 줄을 지우고(변이가 무동작이 아님을 먼저 확인 — 탐침이 취소 로그 없이
+확정 로그 한 행만 냈다) `.venv/bin/pytest -q` → **803 passed**. 즉 방금 정본이라고 부른 자리를
+**아무 테스트도 붙들지 않는다**. `grep -rn "activity_document_mapping" tests/ --include=*.py` 도 히트 0.
+단언의 모양까지 §후속 5 로 qa 에 넘긴다 — "놓칠 수 있다"고 적는 것은 커버리지가 아니므로(§6-1)
+태워서 값을 적고 넘긴다.
+
+## M-4. `docs/api.md` · `docs/glossary.md` 정합성 (계획이 확인하지 않은 자리 — 실행으로 확인했다)
+
+| 물음 | 명령 | 값 |
+|---|---|---|
+| api.md 의 라우트 표가 코드와 같은가 | `.venv/bin/python services/api/scripts/gen_api_doc.py <tmp> && diff -u docs/api.md <tmp>` | **exit 0**(바이트 동일). 새 라우트 행 `POST /api/documents/mappings/{activity_id}/{doc_id}/cancel-review … CancelDocumentMappingReviewRequest \| null → ActivityDocumentMapping` 포함 |
+| glossary code 표 ↔ 화면 유니온 ↔ 화면 문구 | 세 집합을 파싱해 대칭차 계산 | 표 **46** · `KnownApiErrorCode` **46** · `CODE_MESSAGES` **46**, **대칭차 0** |
+| 서버가 내는 code 가 표에 다 있는가 | 서버 트리(비테스트)의 `code="…"` 전수 ∪ `errors.py` 핸들러가 직접 싣는 다섯 | 표에 없는 것은 `internal_error` **하나**뿐이고, 그것은 `ServerError` 의 **기본값**이다 — raise 자리 둘(`usecases.py` 의 `mapping_review_data_corrupt` 둘) 모두 `code=` 로 덮으므로 지금 이 트리에서는 나가지 않는다. `code=` 없이 `ServerError` 를 던지는 셋째 자리가 생기면 화면이 모르는 code 를 받는다 → §후속 6(api 소유) |
+| api.md 오류 절의 열거가 최신인가 | 그 절을 읽고 `errors.py` 의 핸들러 등록과 대조 | **낡았다**: "`ApiError` 계열 예외(및 상태기계의 셋, 그리고 코어 모델의 `ReviewRejectionReasonRequiredError`)"라는 **열거**가 이번에 늘어난 `MappingDecisionNotCancellableError`·`MappingDecisionCancelReasonRequiredError`(둘 다 `Exception` 직속 + 전용 핸들러)를 담지 않는다. 그 문장은 `services/api/scripts/gen_api_doc.py` 의 `ERROR_ENVELOPE_SECTION` 상수라 **api 소유**다 → §후속 6 |
+
+glossary 에서 마감이 고친 것 둘(둘 다 architect 소유): `취소 이력` 행에 **수명과 정본**을 적었고,
+`document_mapping_already_rejected` 행과 부칙의 "화면 목록에 아직 없다"를 정정했다(M-2 (e)).
+
+## M-5. CLAUDE.md §6 을 얼마나 늘렸는가
+
+**규칙은 한 글자도 늘리지 않았다. 근거만 더했다**(§6-5 압축 규칙: "재발하면 근거를 추가한다").
+
+- §6-1 표에 **두 행**(10회차 = M-2 (a), 11회차 = M-2 (b)). 둘 다 기존 규칙의 재발이고 새 규칙을 요구하지
+  않는다 — 10회차는 "목록의 기준이 곧 한계"의 관측축 판이고, 11회차는 그 항목의 *역방향 확인*이 이미
+  적어 둔 "**표기 집합**을 세라"를 지키지 않은 것이다.
+- "이름 붙은 블라인드 스팟" 문단에 **한 문장**: 부재 단정 확인이 `packages/core/models/` 밖에서도 난다
+  (M-2 (e)). 새 불릿이 아니라 이미 있는 규칙의 **적용 범위**를 실측으로 넓힌 것이다.
+
+실측(정의는 §6-5 와 같다 — §6 = `## 6.` 제목 줄부터 EOF, 파일 전체 대비. 커밋별로 잰다):
+
+| 커밋 | §6 줄 | §6 문자 | 비중(줄 / 문자) |
+|---|---|---|---|
+| `f40e279`(§6-5 가 마지막으로 기록한 커밋) | 208 | 13,407 | 54.2% / 61.0% |
+| `99d3721` | 213 | 13,922 | 50.6% / 56.4% |
+| `61dcc3c`(마감 전) | 213 | 13,922 | 49.9% / 55.7% |
+| 마감 후(이 커밋) | 220 | 15,148 | **50.7% / 57.7%** |
+
+**비중이 `f40e279` 보다 낮은 것은 §6 이 줄어서가 아니다** — §6 문자는 13,407 → 13,922 로 **늘었고**,
+그 사이 커밋들이 §2·§3 을 더 늘려 분모가 커졌다. 이번 마감이 더한 것은 **+7줄 / +1,226자**이고 전부
+근거다. (§6-5 에 적힌 `f40e279` 54.0% 와 내 54.2% 가 다른 것은 줄 세는 방식의 차이로 보인다 — 그 값을
+고치지 않는다. 여기 표는 **이 마감이 한 방식으로** 잰 것이고, 그 방식을 이 줄에 적어 둔다.)
+
+**새 절도 새 규칙도 만들지 않았다.** 이번 사이클의 재발은 전부 **이미 있는 규칙**이 덮는 형태였고
+(목록의 기준 · 표기 집합 · 부재 단정), CLAUDE.md §6-1 자신이 "없던 것은 규칙이 아니라 기계적 감사이고
+산문으로 닫히지 않는다"고 적었다. 늘려야 할 것이 있다면 그것은 §6 이 아니라 **테스트**이고, 그 자리는
+M-3 마지막 문단에서 qa 로 넘겼다.
+
+## M-6. 확인하지 않은 것
+
+- **§6-2·§6-4 압축**(계획 §후속 1). 이번에도 하지 않았다. 마감 커밋이 §6-1 에 근거 두 행을 더했으므로,
+  같은 커밋에서 다른 절을 압축하면 "한 번에 한 절"(§6-5)을 어긴다.
+- **qa 가 보고한 서버 변이 14건을 재현하지 않았다.** 내가 직접 태운 변이는 하나
+  (`record_expert_review` 삭제 → 803 passed)뿐이다.
+- **`expert_review_logs` 의 다른 `entity_type`**(`review_request`·`entity_object_mapping`·
+  `drawing_alignment`)이 같은 무보호인지 세지 않았다. `activity_document_mapping` 축만 실측했다.
+- **웹 변이를 태우지 않았다.** vitest 283 은 그대로 재실행만 했다.
+- **운영 데이터가 없다.** 취소 이력을 화면이 그려야 하는지(§Deferred 7), 닫힌 요청 행이 쌓이는 것이
+  실제로 문제인지(ADR 0013 §Deferred 1)는 여전히 실측이 없다.
+
+## M-7. 후속(계획 §후속 에 이어서)
+
+5. **취소의 내구 감사를 붙드는 회귀**(qa). 취소 뒤 `entity_type="activity_document_mapping"` ·
+   `entity_id=f"{activity_id}:{doc_id}"` 인 `ExpertReviewLogRow` 가 **하나 늘고**, 그 행의 `proposal` 이
+   취소가 지운 반려 표시를 담고 있으며, **재계산 뒤에도 그대로**라는 셋을 함께 단언한다(하나만 보면
+   재계산 경로를 바꾼 구현이 통과한다 — §6-2 4). 지금 무보호임은 실측했다(M-3).
+   **같은 파일의 V8 docstring 한 줄도 그때 함께 좁힌다**(qa 소유라 이 마감이 고치지 않았다): 거기 적힌
+   "감사 자체는 닫힌 요청 행에 남으므로"가 **재확인이 열린 확정을 취소하는 경로에서는 거짓**이다 —
+   그 경로에는 닫힌 행이 하나도 없다(M-3 의 `[P2-*]`, ADR 0013 개정 1). 그 문장은 V8 의 배역
+   (`A100` — 닫힌 행이 있다)에서는 참인데 **일반 명제로 적혀 있고**, 같은 파일 마지막 테스트
+   (`test_cancelling_while_a_reopened_request_is_already_open_…`)가 그 반례 경로를 이미 태우고 있다
+   (§6-3: 같은 문서의 인접한 자리와 교차 확인한다).
+6. **`docs/api.md` 오류 절의 예외 열거와 `internal_error`**(api). 생성 스크립트 상수
+   `ERROR_ENVELOPE_SECTION` 의 열거가 이번 예외 둘을 담지 않는다. 열거를 유지할지(§6-1: 열거는 길이가
+   곧 개수다) 부재 단정·grep 으로 바꿀지는 소유자의 판단이다. 같은 자리에서 `internal_error` 가 표에
+   없는 것도 함께 본다(M-4).
