@@ -331,6 +331,33 @@ describe("ReviewsPage — document_mapping (ADR 0007)", () => {
     expect(within(card).getByTestId("rejected-notice")).toBeInTheDocument();
   });
 
+  it("반려 안내는 되살릴 길과 그 길이 어디 있는지를 말한다 (ADR 0013 규칙 8)", async () => {
+    // 이 배너의 존재만 고정하던 자리다 — 문구를 옛 판("되돌릴 수 없습니다")으로 되돌려도 268건이
+    // 전부 통과했다. 문장을 베끼지 않고 **그 상황에서 참일 수 없는 말이 없다**를 단언한다
+    // (CLAUDE.md §6-4 3): 취소 라우트가 생긴 뒤로 "되돌릴 수 없다"는 거짓이고, 되살릴 길이 있다면
+    // 그것이 **어디에 있는지**(문서 상세)까지 말해야 CM 이 다음 행동을 고를 수 있다.
+    // 반대로 "재업로드해도 다시 제안되지 않는다"는 그대로 참이므로 계속 요구한다 — 서버가
+    // `_drop_already_confirmed` 를 바꾸지 않았다(tests/integration/test_15_…).
+    resetStore();
+    loginAs("cm");
+    const REJECTED_REVIEW: ReviewRequest = { ...MAPPING_REVIEW, status: "rejected" };
+    mockFetch((url) => {
+      if (url.includes("/api/documents/doc-aaa")) return { body: docDetail(rejectedMapping()) };
+      if (url.includes("/api/projects/p1/review-requests")) return { body: [REJECTED_REVIEW] };
+      if (url.endsWith("/api/projects/p1")) return { body: { project_id: "p1", name: "P", my_role: "cm" } };
+      return undefined;
+    });
+    renderPage();
+
+    const card = await screen.findByTestId("document-mapping-card");
+    await within(card).findByText(/문서번호/);
+    const text = within(card).getByTestId("rejected-notice").textContent ?? "";
+    expect(text).not.toMatch(/되돌릴 수 없|취소할 수 없|영구/);
+    expect(text).toMatch(/취소/);
+    expect(text).toMatch(/문서 상세/);              // 취소 버튼은 이 화면이 아니라 문서 상세에 있다
+    expect(text).toMatch(/다시 제안되지 않습니다/);
+  });
+
   it("반려 직후 문서 쿼리가 무효화돼 카드가 곧바로 반려 상태로 갱신된다", async () => {
     // 12차 리뷰: 이 카드를 useDocument 에 의존시켰는데 useResolveReview 가 그 쿼리를 무효화하지 않아,
     // CM 이 반려한 **바로 그 순간·그 화면**에서 새 반려 안내가 뜨지 않았다(매핑 상태가 낡은 "확정"으로

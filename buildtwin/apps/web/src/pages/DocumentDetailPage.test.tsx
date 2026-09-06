@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import { vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { Route, Routes } from "react-router-dom";
@@ -453,5 +453,315 @@ describe("DocumentDetailPage — 식별 정보 (ADR 0009)", () => {
     // 접힌 영역이다 — 목록·카드로 새어 나가지 않는다(계획 0003 §3-g).
     expect(box.tagName).toBe("DETAILS");
     expect((box as HTMLDetailsElement).open).toBe(false);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// ADR 0013 — 매핑 결정의 취소(확정 취소·반려 취소). 계획 0006 작업 9 의 화면 회귀.
+//
+// 이 블록이 붙들고 있는 것(변이를 **하나씩 개별로** 적용해 재현한 무보호 목록. 적용 전 268 passed):
+//
+// | 변이 | 잡는 자리 |
+// |---|---|
+// | 취소 버튼 조건 `reviewState !== "pending"` 삭제 | "검토 대기에는 취소 버튼이 없다" |
+// | 취소 버튼 조건 `canDecide` 삭제 | "cm 이 아니면 취소 버튼이 없다" |
+// | 취소 라우트 URL·`project_id` 파라미터 이름 변경 | "취소가 실제로 가는 곳" |
+// | `useCancelDocumentMappingReview` 의 무효화(문서 상세·검토요청·주간요약·착수가능·readiness) 제거 | "취소 뒤 무엇이 다시 조회되는가" |
+// | `requireNote` 를 끔 | "사유 없이는 취소 버튼이 눌리지 않는다" |
+// | `mappingDialogMessage` 의 취소 분기를 확정 문구로 되돌림 | "취소 다이얼로그가 확정을 약속하지 않는다" |
+// | `MAPPING_ACTION_LABELS.cancel` 을 방향과 무관한 "취소"로 | 같은 테스트의 라벨 단언 |
+// | `CODE_MESSAGES` 의 새 code 셋 문구 | 세 개의 오류 안내 테스트 |
+//
+// **문구는 문장을 베끼지 않는다**(CLAUDE.md §6-4 3): 각 상황에서 **참일 수 없는 말이 없다**만
+// 단언한다. 예 — `cancel_reason_required` 안내의 "새로고침"은 거짓이다(서버 상태는 최신이고 빠진 것은
+// 사유뿐이다). 반대로 `mapping_decision_not_cancellable` 에서는 새로고침이 실제로 답이므로 그 말을
+// 금지하지 않는다. 같은 사이클의 두 code 가 서로 다른 요구를 갖는 것이 이 규칙이 문장이 아니라
+// **상황**을 보는 이유다.
+// ════════════════════════════════════════════════════════════════════════════
+describe("DocumentDetailPage — 매핑 결정의 취소 (ADR 0013)", () => {
+  const CONFIRMED_MAPPING: ActivityDocumentMapping = {
+    ...PENDING_MAPPING,
+    needs_review: false,
+    reviewed_by: "user-cm",
+  };
+  const REJECTED_MAPPING: ActivityDocumentMapping = {
+    ...PENDING_MAPPING,
+    needs_review: false,
+    reviewed_by: "user-cm",
+    evidence: {
+      ...PENDING_MAPPING.evidence,
+      extra: {
+        ...PENDING_MAPPING.evidence.extra,
+        mapping_review_decision: "rejected",
+        rejected_by: "user-cm",
+        rejected_at: "2026-09-03T00:00:00Z",
+        rejection_note: "다른 공종 문서로 확인됨",
+      },
+    },
+  } as ActivityDocumentMapping;
+  const CANCELLED_MAPPING: ActivityDocumentMapping = { ...PENDING_MAPPING };
+
+  beforeEach(() => {
+    resetStore();
+    loginAs("cm");
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** 매핑 하나를 그린 문서 상세. `onCancel` 응답과 오류를 칸별로 갈아 끼운다. */
+  function mockPage(
+    mapping: ActivityDocumentMapping,
+    opts: {
+      role?: "cm" | "contractor" | "client";
+      cancel?: { status?: number; body?: unknown };
+      confirm?: { status?: number; body?: unknown };
+      after?: ActivityDocumentMapping;
+    } = {},
+  ) {
+    const role = opts.role ?? "cm";
+    let cancelled = false;
+    return mockFetch((url, init) => {
+      if (url.includes("/cancel-review") && init?.method === "POST") {
+        cancelled = true;
+        return opts.cancel ?? { body: opts.after ?? CANCELLED_MAPPING };
+      }
+      if (url.includes("/confirm") && init?.method === "POST")
+        return opts.confirm ?? { body: CONFIRMED_MAPPING };
+      if (url.includes("/api/documents/doc-aaa"))
+        return { body: detail([cancelled ? (opts.after ?? CANCELLED_MAPPING) : mapping]) };
+      if (url.includes("/api/projects/p1/review-requests")) return { body: [] };
+      return mockProjectRole(role)(url);
+    });
+  }
+
+  // ---- 버튼 노출 조건(두 게이트를 **각각** 고정한다) ----
+
+  it("확정된 매핑에는 '확정 취소', 반려된 매핑에는 '반려 취소' 버튼이 뜬다 — 어느 결정을 되돌리는지가 라벨에 있다", async () => {
+    mockPage(CONFIRMED_MAPPING);
+    renderPage();
+    let row = await screen.findByTestId("mapping-row");
+    expect(within(row).getByTestId("cancel-decision")).toHaveTextContent("확정 취소");
+
+    cleanup();
+    vi.unstubAllGlobals();
+    mockPage(REJECTED_MAPPING);
+    renderPage();
+    row = await screen.findByTestId("mapping-row");
+    // 라벨이 방향과 무관해지면(둘 다 "취소") 다이얼로그의 닫기 버튼과 구별되지 않고 CM 은 자기가
+    // 무엇을 되돌리는지 볼 수 없다.
+    expect(within(row).getByTestId("cancel-decision")).toHaveTextContent("반려 취소");
+  });
+
+  it("검토 대기 매핑에는 취소 버튼이 없다 — 되돌릴 결정이 없고 서버도 409 로 막는다", async () => {
+    mockPage(PENDING_MAPPING);
+    renderPage();
+    const row = await screen.findByTestId("mapping-row");
+    expect(within(row).queryByTestId("cancel-decision")).not.toBeInTheDocument();
+    // 음성 대조군: 같은 행에 확정 버튼은 **있다**(버튼 자체가 사라진 것이 아니다).
+    expect(within(row).getByRole("button", { name: "확정" })).toBeInTheDocument();
+  });
+
+  it.each(["contractor", "client"] as const)("cm 이 아니면 취소 버튼이 없다 — %s", async (role) => {
+    resetStore();
+    loginAs(role);
+    mockPage(CONFIRMED_MAPPING, { role });
+    renderPage();
+    const row = await screen.findByTestId("mapping-row");
+    expect(within(row).queryByTestId("cancel-decision")).not.toBeInTheDocument();
+    expect(within(row).getByTestId("mapping-review-state")).toHaveTextContent("확정됨");   // 화면 자체는 그린다
+  });
+
+  // ---- 사유 요건(화면이 서버 409 보다 먼저 잠근다) ----
+
+  it("취소 다이얼로그는 사유가 비어 있으면 잠기고, 공백만으로도 열리지 않는다", async () => {
+    mockPage(CONFIRMED_MAPPING);
+    renderPage();
+    const user = userEvent.setup();
+    await screen.findByTestId("mapping-row");
+    await user.click(screen.getByTestId("cancel-decision"));
+
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText(/사유 \/ 메모/).textContent).toMatch(/필수/);
+    const submit = within(dialog).getByRole("button", { name: "확정 취소" });
+    expect(submit).toBeDisabled();
+    await user.type(within(dialog).getByRole("textbox"), "   ");
+    expect(submit).toBeDisabled();                       // 공백만은 사유가 아니다(서버 판정과 같은 축)
+    await user.type(within(dialog).getByRole("textbox"), "잘못 확정했다");
+    expect(submit).toBeEnabled();
+  });
+
+  it("확정 다이얼로그는 사유를 강제하지 않는다 — 요건은 취소 쪽에만 걸린다(음성 대조군)", async () => {
+    mockPage(PENDING_MAPPING);
+    renderPage();
+    const user = userEvent.setup();
+    await screen.findByTestId("mapping-row");
+    await user.click(screen.getByRole("button", { name: "확정" }));
+
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText(/사유 \/ 메모/).textContent).not.toMatch(/필수/);
+    expect(within(dialog).getByRole("button", { name: "확정" })).toBeEnabled();
+  });
+
+  // ---- 다이얼로그 본문(§6-4 3 — 그 상황에서 참일 수 없는 말이 없다) ----
+
+  it("반려 취소 다이얼로그는 확정을 약속하지 않는다 — 착지점은 검토 대기다", async () => {
+    mockPage(REJECTED_MAPPING);
+    renderPage();
+    const user = userEvent.setup();
+    await screen.findByTestId("mapping-row");
+    await user.click(screen.getByTestId("cancel-decision"));
+
+    const text = screen.getByTestId("confirm-message").textContent ?? "";
+    // 확정 다이얼로그의 약속("도면 승인 근거로 확정됩니다")은 이 자리에서 거짓이다 — 취소는 확정을
+    // 만드는 경로가 아니고, 확정하려면 CM 이 확정 액션을 다시 해야 한다(CLAUDE.md §0).
+    expect(text).not.toMatch(/도면 승인 근거로 확정됩니다/);
+    expect(text).not.toMatch(/되돌릴 수 없|영구/);        // 취소 자체가 되돌리기다
+    // **확정 취소 쪽 문구를 그대로 쓰면 여기서 거짓이 된다**: 반려된 매핑은 애초에 도면 승인 근거로
+    // 세지 않으므로(서버 실측 — 반려 전후 drawing_approval 0.5 → 0.5) 반려를 취소해도 착수 가능
+    // 점수가 내려갈 수 없다. 방향별 분기가 사라지면 이 줄이 죽는다.
+    expect(text).not.toMatch(/점수가 내려갈|낮아질/);
+    expect(text).toMatch(/검토 대기|미확정/);              // 착지점은 말해야 한다
+    expect(text).toMatch(/사유/);                          // 사유가 필수라는 사실
+  });
+
+  it("확정 취소 다이얼로그는 착수 가능 점수가 내려갈 수 있다는 것을 말한다 — 확정 취소의 실제 결과다", async () => {
+    mockPage(CONFIRMED_MAPPING);
+    renderPage();
+    const user = userEvent.setup();
+    await screen.findByTestId("mapping-row");
+    await user.click(screen.getByTestId("cancel-decision"));
+
+    const text = screen.getByTestId("confirm-message").textContent ?? "";
+    expect(text).not.toMatch(/도면 승인 근거로 확정됩니다/);
+    // 서버 실측(tests/integration/test_20_…::test_v1_…): 확정 취소로 drawing_approval 1.0 → 0.5.
+    // 그 결과를 말하지 않으면 CM 은 자기 행위가 착수 가능 판단을 바꾼다는 것을 모른 채 누른다.
+    expect(text).toMatch(/착수 가능|readiness/);
+  });
+
+  // ---- 취소가 실제로 가는 곳 ----
+
+  it("취소는 POST /documents/mappings/{activity_id}/{doc_id}/cancel-review 에 project_id 와 사유를 보낸다", async () => {
+    const { calls } = mockPage(CONFIRMED_MAPPING);
+    renderPage();
+    const user = userEvent.setup();
+    await screen.findByTestId("mapping-row");
+    await user.click(screen.getByTestId("cancel-decision"));
+    await user.type(within(screen.getByRole("dialog")).getByRole("textbox"), "잘못 확정했다");
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "확정 취소" }));
+
+    const post = await waitFor(() => {
+      const c = calls.find((x) => x.init?.method === "POST");
+      expect(c).toBeDefined();
+      return c!;
+    });
+    const u = new URL(post.url, "http://x");
+    expect(u.pathname).toMatch(/\/api\/documents\/mappings\/ACT-100\/doc-aaa\/cancel-review$/);
+    // ADR 0008 대리키 라우트: 쿼리 이름이 바뀌면 서버가 422 를 낸다(매핑 PK 가 복합키라 필수다).
+    expect(u.searchParams.get("project_id")).toBe("p1");
+    expect(JSON.parse(String(post.init?.body))).toEqual({ note: "잘못 확정했다" });
+    // 그리고 화면은 서버가 돌려준 미확정 상태로 갱신된다 — 되돌린 결과가 그 자리에서 보여야 한다.
+    expect(await screen.findByText("검토 대기")).toBeInTheDocument();
+  });
+
+  it("취소 뒤 문서 상세·검토요청·주간요약·착수가능·readiness 가 모두 무효화된다", async () => {
+    // 취소는 서버에서 **매핑 행과 검토요청 큐를 둘 다** 바꾸고 drawing_approval 을 움직인다.
+    // 한 줄만 지워도 화면은 정상이고 값만 낡는다(staleTime 10초라 마운트된 채로는 사실상 무기한).
+    mockPage(CONFIRMED_MAPPING);
+    const { qc } = renderPage();
+    const spy = vi.spyOn(qc, "invalidateQueries");
+    const user = userEvent.setup();
+    await screen.findByTestId("mapping-row");
+    await user.click(screen.getByTestId("cancel-decision"));
+    await user.type(within(screen.getByRole("dialog")).getByRole("textbox"), "잘못 확정했다");
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "확정 취소" }));
+
+    const keys = () => spy.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey));
+    await waitFor(() => expect(keys()).toContain(JSON.stringify(queryKeys.document("p1", "doc-aaa"))));
+    expect(keys()).toContain(JSON.stringify(["projects", "p1", "review-requests"]));
+    expect(keys()).toContain(JSON.stringify(["projects", "p1", "weekly-summary"]));
+    expect(keys()).toContain(JSON.stringify(["projects", "p1", "startable"]));
+    // 키 리터럴을 눈으로 맞추면 런타임 부분 일치가 안 걸리는 결함을 그대로 통과시킨다 — TanStack 자신의
+    // 매처로 **실행해서** 확인한다(12·13차 리뷰).
+    const invalidated = spy.mock.calls
+      .map((c) => c[0]?.queryKey)
+      .filter((k): k is readonly unknown[] => Array.isArray(k));
+    expect(invalidated.some((k) => partialMatchKey(queryKeys.readiness("p1", "ACT-100"), k))).toBe(true);
+    spy.mockRestore();
+  });
+
+  // ---- 오류 안내(새 code 셋) ----
+
+  it("사유 없는 취소가 서버에서 막히면 '사유'를 말하고 '새로고침'은 말하지 않는다", async () => {
+    // 화면이 먼저 잠그므로 이 응답은 API 직접 호출·잠금 누락 시의 최종 방어다 — 그런 자리일수록
+    // 안내가 정확해야 한다. 이 상황에서 새로고침은 아무것도 바꾸지 않는다(서버 상태는 최신이다).
+    mockPage(CONFIRMED_MAPPING, {
+      cancel: { status: 409, body: { detail: "cancelling the cm decision ... requires a non-empty reason", code: "cancel_reason_required" } },
+    });
+    renderPage();
+    const user = userEvent.setup();
+    await screen.findByTestId("mapping-row");
+    await user.click(screen.getByTestId("cancel-decision"));
+    await user.type(within(screen.getByRole("dialog")).getByRole("textbox"), "사유");
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "확정 취소" }));
+
+    const alert = await screen.findByRole("alert");
+    const text = alert.textContent ?? "";
+    expect(text).toMatch(/사유/);
+    expect(text).not.toMatch(/새로고침/);
+    expect(text).not.toMatch(/반려하려면/);          // 취소는 반려가 아니라 반려를 되돌리는 일이다
+    expect(text).not.toMatch(/확정을 되돌리려면/);   // 취소는 반려 방향에서도 걸린다
+    expect(text).not.toMatch(/non-empty reason/);    // 서버 detail 을 그대로 노출하는 폴백이 아니다
+  });
+
+  it("취소할 결정이 없다는 409 는 '사유'를 요구하지 않고 원인을 하나로 지어내지도 않는다", async () => {
+    mockPage(CONFIRMED_MAPPING, {
+      cancel: { status: 409, body: { detail: "no cm decision to cancel ...", code: "mapping_decision_not_cancellable" } },
+    });
+    renderPage();
+    const user = userEvent.setup();
+    await screen.findByTestId("mapping-row");
+    await user.click(screen.getByTestId("cancel-decision"));
+    await user.type(within(screen.getByRole("dialog")).getByRole("textbox"), "사유");
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "확정 취소" }));
+
+    const text = (await screen.findByRole("alert")).textContent ?? "";
+    expect(text).not.toMatch(/사유를 입력/);                        // 빠진 것은 사유가 아니다
+    expect(text).not.toMatch(/다른 담당자가 이미 이 검토요청을 처리했습니다/);  // 취소의 대상은 검토요청이 아니다
+    expect(text).not.toMatch(/no cm decision/);                     // 서버 detail 폴백이 아니다
+  });
+
+  it("반려된 매핑을 확정하려다 막히면 '먼저 취소하라'고 말한다 — '되돌릴 수 없다'가 아니다", async () => {
+    // ADR 0013 이 이 code 의 뜻을 좁혔다(반려는 재계산에 대해서만 영구하다). 화면이 "되돌릴 수 없다"고
+    // 말하면 그 순간 서버에 없는 제약을 지어내는 것이 된다.
+    // 오늘 이 화면은 반려된 행에 확정 버튼을 내지 않으므로(위 블록의 회귀) 확정 경로는 **검토 대기**
+    // 행에서 태우고 서버 응답만 그 409 로 둔다 — 확인하는 것은 code → 문구 매핑이다.
+    mockPage(PENDING_MAPPING, {
+      confirm: { status: 409, body: { detail: "document mapping already rejected: ...", code: "document_mapping_already_rejected" } },
+    });
+    renderPage();
+    const user = userEvent.setup();
+    await screen.findByTestId("mapping-row");
+    await user.click(screen.getByRole("button", { name: "확정" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "확정" }));
+
+    const text = (await screen.findByRole("alert")).textContent ?? "";
+    expect(text).toMatch(/취소/);
+    expect(text).not.toMatch(/되돌릴 수 없|영구/);
+    expect(text).not.toMatch(/already rejected/);   // 서버 detail 폴백이면 한국어 안내가 없다는 뜻이다
+  });
+
+  // ---- 반려 블록의 취소 안내 ----
+
+  it("반려 안내는 되살릴 길이 있다고 말한다 — 취소 라우트가 생긴 뒤로 '되돌릴 수 없다'는 거짓이다", async () => {
+    mockPage(REJECTED_MAPPING);
+    renderPage();
+    const row = await screen.findByTestId("mapping-row");
+    const rejection = within(row).getByTestId("mapping-rejection");
+    const text = rejection.textContent ?? "";
+    // 그대로 참인 것(재계산 축의 영구성)은 계속 요구한다 — ADR 0013 은 `_drop_already_confirmed` 를
+    // 바꾸지 않는다(서버 회귀: tests/integration/test_15_…::test_rejected_pair_is_not_recreated_…).
+    expect(text).toMatch(/다시 제안되지 않습니다/);
+    // 그 상황에서 참일 수 없는 말: 되돌릴 길이 없다는 선언.
+    expect(text).not.toMatch(/되돌릴 수 없|취소할 수 없|영구/);
+    expect(text).toMatch(/취소/);
   });
 });
