@@ -1,0 +1,20 @@
+ERMHDR	20.12	2026-09-01	Project	admin	admin	dbxDatabaseNoName	Project Management	KRW
+%T	PROJECT
+%F	proj_id	proj_short_name
+%R	1	BT
+%T	TASK
+%F	task_id	proj_id	task_code	task_name	wbs_id	target_start_date	target_end_date	target_drtn_hr_cnt	phys_complete_pct
+%R	1	1	A100	1F 기둥 철근·거푸집·타설	1.1.1	2026-09-01 08:00	2026-09-10 17:00	64	0
+%R	2	1	A110	1F 보 시공	1.1.2	2026-09-11 08:00	2026-09-18 17:00	48	0
+%R	3	1	A120	1F 슬래브 타설	1.1.3	2026-09-19 08:00	2026-09-24 17:00	32	0
+%R	4	1	A200	1F 외벽 조적	1.2.1	2026-09-25 08:00	2026-10-05 17:00	64	0
+%R	5	1	A300	1F 덕트 설치	1.3.1	2026-10-06 08:00	2026-10-12 17:00	40	0
+%R	6	1	A400	2F 기둥 시공	2.1.1	2026-09-25 08:00	2026-10-04 17:00	64	0
+%T	TASKPRED
+%F	task_pred_id	task_id	pred_task_id	pred_type	lag_hr_cnt
+%R	1	2	1	PR_FS	0
+%R	2	3	2	PR_FS	0
+%R	3	4	3	PR_FS	0
+%R	4	5	3	PR_FS	16
+%R	5	6	3	PR_FS	0
+%E

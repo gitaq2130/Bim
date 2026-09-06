@@ -1,0 +1,6 @@
+# 착수 가능 집합(CP-SAT) 자원 한도. 담당: progress-engine
+# 동시에 착수하는 작업들의 resources 합이 각 cap 이하여야 한다. Activity.resources 키와 이름을 맞춘다.
+caps:
+  crew: 12      # 동시 투입 가능 인원
+  crane: 1      # 타워크레인 대수
+  pump: 1       # 펌프카

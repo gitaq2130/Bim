@@ -1,0 +1,37 @@
+{
+  "sheets": {
+    "TFA": 8,
+    "TFR": 2,
+    "NCR": 0
+  },
+  "header_row": 3,
+  "first_data_row": 4,
+  "title_column": {
+    "TFA": "H",
+    "TFR": "G"
+  },
+  "result_column": {
+    "TFA": "I",
+    "TFR": "H"
+  },
+  "trailing_formatted_blank_rows": 12,
+  "cases": {
+    "blank_result_is_unknown": "동부-HG-TFA-구조-26-051",
+    "discipline_token_conflicts_with_column": {
+      "doc_no": "동부-HG-TFA-토목-26-011",
+      "token": "토목",
+      "column": "건축"
+    },
+    "result_needs_strip": "중원-HG-TFA-기계-26023",
+    "near_duplicate_title_different_zone": [
+      "동부-HG-TFA-구조-26-049",
+      "동부-HG-TFA-구조-26-053"
+    ],
+    "two_token_discipline_and_date_number": {
+      "doc_no": "S1-HG-TFA-통신-품질-제26-07-09호",
+      "discipline": "통신-품질",
+      "number": "260709"
+    },
+    "date_cell_types_mixed": true
+  }
+}

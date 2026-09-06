@@ -1,0 +1,15 @@
+# WBS 코드 → 객체 유형 매핑 표 (선택). 담당: progress-engine
+# activity_mapper 가 Activity.wbs_code 와 대조한다. 정확 일치(codes) 우선, 없으면 prefixes 로 앞부분 일치.
+# 값: ifc_types(대상 IFC 타입), discipline(공종), level(층, 선택). 예시는 tests/fixtures/schedule.* 기준.
+codes:
+  "1.1.1": {ifc_types: [IfcColumn], discipline: structure, level: 1F}
+  "1.1.2": {ifc_types: [IfcBeam], discipline: structure, level: 1F}
+  "1.1.3": {ifc_types: [IfcSlab], discipline: structure, level: 1F}
+  "1.2.1": {ifc_types: [IfcWall, IfcWallStandardCase], discipline: architecture, level: 1F}
+  "1.3.1": {ifc_types: [IfcDuctSegment, IfcDuctFitting], discipline: mechanical, level: 1F}
+  "2.1.1": {ifc_types: [IfcColumn], discipline: structure, level: 2F}
+prefixes:
+  "1.1": {discipline: structure}
+  "1.2": {discipline: architecture}
+  "1.3": {discipline: mechanical}
+  "1.4": {discipline: electrical}

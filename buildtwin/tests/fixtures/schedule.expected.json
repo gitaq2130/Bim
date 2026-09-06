@@ -1,0 +1,85 @@
+{
+  "activity_count": 6,
+  "relation_count": 5,
+  "activities": [
+    "A100",
+    "A110",
+    "A120",
+    "A200",
+    "A300",
+    "A400"
+  ],
+  "relations": [
+    [
+      "A100",
+      "A110",
+      "FS",
+      0
+    ],
+    [
+      "A110",
+      "A120",
+      "FS",
+      0
+    ],
+    [
+      "A120",
+      "A200",
+      "FS",
+      0
+    ],
+    [
+      "A120",
+      "A300",
+      "FS",
+      2
+    ],
+    [
+      "A120",
+      "A400",
+      "FS",
+      0
+    ]
+  ],
+  "activity_object_mapping": {
+    "A100": [
+      "05IWCBkgTBg9LoGDDXvbpo",
+      "06Hqjjs7zBE9j$Vl0X2G7g",
+      "0BcjbttMr12PUpme0A2uXY",
+      "07wJs7Y7L2PQX6H9G_gn8l",
+      "2BPo4ICcrBBgW7C72p1J60",
+      "1jb$gcxd9EtwtS2tSkcKgo"
+    ],
+    "A110": [
+      "0MDve6QTTA$fyar1a33L0Z",
+      "24Z3CszIr1IwzMooANR1cb",
+      "1nsnuTBpX6YPJBSthdy8dT",
+      "34vkXEubT1fv2UIIiOw8uw",
+      "14tOqVm5H3V8quwLOOybXv",
+      "1VtyYRuxHCQwjTPjU5yXdP",
+      "1247XZuizACQNvpfdv0QV0",
+      "0eb42JP8n18x5N3FLDU8cO"
+    ],
+    "A120": [
+      "31J_7iRKnCK8u0cm5mnE6n"
+    ],
+    "A200": [
+      "15e_$4GoP4pPvNGLz7FlJE",
+      "08IiDAJTPD9P5uPQz_Xxhu",
+      "2vJEXIlvbEPBfaw$50Xh18",
+      "1lP0DCzQ98gPWAS$fPqwcu"
+    ],
+    "A300": [
+      "3ZbV81Z858uwKc7ExSy0kU",
+      "3$sB4fL5zFDu_TuUkKvGcN"
+    ],
+    "A400": [
+      "3R4I8xcrn5Vxe9XgJ1UJVF",
+      "0IG0fG059B0f3y81CgAKsi",
+      "2hdzdacoPCigRS_DeBW9Wz",
+      "0P1ESXHYz1Lvs2a9V$HAUD",
+      "2$ysQIX9v7hAtJMiWuFR2Q",
+      "1AA7$HRPX1N8b9QhOZDw_U"
+    ]
+  }
+}
