@@ -363,3 +363,60 @@ glossary "오류 응답 code 어휘" 표에 행을 더하고, 부가 필드가 `
    닫는다(`services/sync/review_queue.py:153`). 자리 A 는 요청 하나의 사유를 검사하지만 닫히는 것은
    여럿일 수 있고, 같은 사유가 전부에 붙는다 — 지금도 그렇고 이 ADR 이 바꾸지 않는다.
    한 핸들에 열린 mapping 요청이 둘 이상인 상황은 **실측하지 않았다.**
+
+   ### append — 2026-09-06(계획 0006 §1-g / ADR 0013 사이클): 만들어 보려 했고 **못 만들었다**
+
+   > 이 블록은 위 문장에 **실측만 더한다.** 이 ADR 의 불변식 4·규칙 1~6 은 바뀌지 않는다.
+   > **항목은 닫지 않는다** — 닫지 않는 이유는 이 블록 끝에 있다.
+   > 아래 `파일:줄`·수치는 전부 HEAD **`516949a`** 트리에서 잰 것이다(전량 기준선 `783 passed` /
+   > vitest `268 passed`, 저장소 루트 `git status --porcelain` 은 탐침 전후 빈 출력).
+   > 방법: `tests/integration/` 의 임시 탐침이 세션 픽스처(`project`/`dxf_job`)로 TestClient 를 태워
+   > 큐 반려 1건 → 재정합 2회를 돌리고, 열린 `mapping` 요청을 **핸들별로** 셌다. 탐침은 지웠다.
+
+   ```
+   [D0-open-per-handle]                {'53': 1}
+   [D1-reject]                         200 rejected
+   [D1-mapping-served-after-reject]    [('0BcjbttMr12PUpme0A2uXY', True, None, None)]
+                                       (global_id, needs_review, reviewed_by, mapping_review_decision)
+   [D1-open-per-handle]                {}
+   [D2-realign1]                       200  created=1  superseded=0
+   [D2-open-per-handle]                {'53': 1}  max 1
+   [D3-realign2]                       200  created=1  superseded=1
+   [D3-open-per-handle]                {'53': 1}  max 1
+   [D4-rows-per-handle]                [('3A', 1), ('3B', 1), ('3C', 1)]
+   ```
+
+   **왜 만들 수 없는가 — 코드 인용.** `kind="mapping"` 검토요청을 만드는 생산 코드는
+   `services/sync/review_queue.py:25`(`review_request_for`, `kind="mapping"` 리터럴은 `:27`) 하나이고
+   (`grep -rn 'kind="mapping"' --include=*.py .` 의 비테스트 히트 중 생성은 이 한 줄 —
+   나머지는 `usecases.py:397` 의 `JobRow(kind="mapping")`, 즉 **잡**이지 검토요청이 아니다),
+   그 유일한 호출자는 같은 파일 `:38`(`mappings_needing_review`)이며, 그것의 비테스트 호출자는 둘이다 —
+   `services/sync/persistence.py:163`(`rebuild_mappings`)과 `services/sync/tasks.py:87`(결과에 개수만 싣고
+   저장하지 않는다). `rebuild_mappings` 는 같은 호출 안에서 그 도면의 이전 open 요청을 전부 `on_hold` 로
+   바꾸고(`services/sync/persistence.py:171-172` — `old.status = "on_hold"` · `resolution_note =
+   f"superseded_by={…}"`), `build_mappings`(`services/sync/matcher.py:123`)는 엔티티 하나당
+   `out.append`(`:169`)를 한 번만 한다.
+
+   **그러나 스키마는 허용한다.** `EntityObjectMappingRow` 의 PK 는 `(drawing_id, entity_handle, global_id)`
+   세 칸이다(`packages/core/models/orm.py:141-143`) — 한 핸들에 서로 다른 `global_id` 행이 여럿 저장될 수
+   있다. **막고 있는 것은 스키마가 아니라 파이프라인이다.**
+
+   **그래서 닫지 않는다.** ① 이 항목의 본체("닫히는 것은 여럿일 수 있고 같은 사유가 전부에 붙는다")는
+   실측이 아니라 **코드가 그대로 하는 일**이고 이 사이클이 고치지 않았다. ② 닫는 근거가 될 수 있는 것은
+   "오늘 파이프라인이 그 상황을 만들지 않는다"뿐인데, 이 저장소는 그 형태의 근거가 틀렸던 선례를 갖고
+   있다 — ADR 0007 §Deferred 의 `_drop_already_confirmed` 항목이 "지금은 `activity_id` 가 전역 고유해
+   무해하다"로 시작해 실제로는 **이미 누수**였음이 드러났다(ADR 0008 §Context 2). "지금은 무해하다"를
+   닫는 근거로 쓰지 않는다.
+
+4. **`confirm_mapping_row` 의 `.first()`**(위 3 의 잔여 위험, 2026-09-06 분리). 같은 PK 사실
+   (`packages/core/models/orm.py:141-143`)에서 나오는 다른 결과다 — 한 핸들에 여러 매핑 행이 저장될 수
+   있는데 그 조회는 첫 행만 쓴다:
+
+   ```python
+   # services/sync/review_queue.py:98-99
+   row = session.scalars(select(EntityObjectMappingRow).where(
+       EntityObjectMappingRow.drawing_id == drawing_id, EntityObjectMappingRow.entity_handle == entity_handle)).first()
+   ```
+
+   오늘 저장된 행은 핸들당 하나다(위 `[D4-rows-per-handle]`). 그러므로 지금은 무해하고, **그것이 이
+   항목을 닫는 근거가 아니다**(위 3 의 ② 와 같은 이유). 관측으로만 남긴다.

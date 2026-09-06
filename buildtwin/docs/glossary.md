@@ -198,6 +198,9 @@ reviewer 4차 지적 1: 동일 상태코드(특히 409)가 서로 무관한 여�
 | `document_not_found` | 404 | `(project_id, doc_id)`로 문서를 찾을 수 없음(ADR 0007 §8). 문서 조회는 언제나 두 키를 함께 건다 |
 | `document_register_invalid` | 422 | 업로드된 문서관리대장(xlsx)에서 헤더 행을 찾지 못했거나 필수 컬럼(`제목`)이 없어 어떤 시트도 읽을 수 없음(ADR 0007 §2-5 규칙 3). 요청은 잘 형성되었고 거부 사유가 파일 내용의 의미적 자격이므로 400이 아닌 422 |
 | `document_mapping_target_not_found` | 404 | 문서↔Activity 매핑 생성·확정이 가리키는 `doc_id` 또는 `activity_id`가 그 프로젝트에 없음(ADR 0007 §4·§7) |
+| `document_mapping_already_rejected` | 409 | 이미 반려된 `(activity_id, doc_id)` 매핑을 **확정**하려 함(`services/api/usecases.py::_reject_confirm_of_rejected_mapping` — 전용 확정 엔드포인트와 검토 큐 승인 **둘 다** 이 방어를 받는다). **2026-09-06 에 뒤늦게 등재한다**: 이 code 는 2026-09-03 부터 서버가 내보내는데 이 표에 행이 없었고, `KnownApiErrorCode`(`apps/web/src/api/client.ts`)·`CODE_MESSAGES`(`ErrorBox.tsx`)에도 없어 화면이 `errorText` 의 3번 분기로 서버 `detail` 을 그대로 보여준다(실측 2026-09-06: `grep -rn document_mapping_already_rejected` 의 비테스트 히트는 `usecases.py:316` 과 문서뿐). ADR 0013 이 이 code 의 **뜻을 좁혔다** — 반려는 더 이상 영구가 아니라 CM 의 명시적 취소로 풀리므로, 이 409 는 "영원히 불가"가 아니라 "먼저 취소하라"를 뜻한다 |
+| `cancel_reason_required` | 409 | **매핑 결정을 취소하는데 사유가 없다** — `POST /api/documents/mappings/{activity_id}/{doc_id}/cancel-review` 의 `note` 가 `None`·`""`·공백만임(ADR 0013 불변식 5 규칙 4). 판정 술어는 `packages/core/models/review.py::rejection_reason_missing` 을 그대로 재사용한다(이름은 반려를 말하지만 판정은 "비어 있지 않은 문자열"이라 축이 같다 — ADR 0013 §Deferred 3). **`rejection_reason_required` 와 갈라 놓은 이유**: 그 code 의 화면 안내는 "검토요청을 반려하려면 사유를 입력해야 합니다"인데 취소는 반려가 아니라 **반려를 되돌리는 일**이라 그 문장이 정반대다. **`revocation_reason_required` 도 아닌 이유**: 그 안내는 "확정을 되돌리려면"이라 반려 취소에서 거짓이고, 그 code 는 `from_state`/`to_state`/`actor` 를 싣는 계약인데 매핑 결정에는 그 셋이 존재하지 않는다. **부가 필드는 싣지 않는다**(아래 ADR 0013 부칙). 서버 예외는 `services/progress/document_mapper.py::MappingDecisionCancelReasonRequiredError`(**`Exception` 직속**)이고 `errors.py` 전용 핸들러가 이 code 의 일부다 |
+| `mapping_decision_not_cancellable` | 409 | **취소할 CM 결정이 없다** — 같은 라우트에서 그 `(activity_id, doc_id)` 매핑 행의 `reviewed_by` 가 `None`(= 이미 검토 대기)일 때(ADR 0013 규칙 6). **검사 순서가 계약이다**: 대상 부재(404 `document_mapping_target_not_found`) → 이 code → `cancel_reason_required`. 취소할 결정이 없는 CM 에게 "사유를 적으라"고 말하면 적을 수 없는 사유를 적게 된다(ADR 0012 규칙 1 이 `review_already_resolved` 를 사유보다 앞에 둔 것과 같은 판단). **`invalid_transition` 을 재사용하지 않은 이유는 문구가 아니라 응답 모양이다** — 그 문구("현재 상태에서는 … 새로고침해 …")는 이 자리에서 오히려 **참**이지만, 그 code 의 핸들러가 반드시 싣는 `from_state`/`to_state`/`actor` 가 매핑 결정에는 없다. **`review_already_resolved` 도 아닌 이유**: 취소의 대상은 검토요청이 아니라 쌍이고, 그 쌍은 아무도 판단한 적이 없을 수 있어 "다른 담당자가 이미 처리했다"가 지어낸 원인이 된다. 서버 예외는 `services/progress/document_mapper.py::MappingDecisionNotCancellableError`(**`Exception` 직속**) |
 | `admin_cannot_be_member` | 422 | `POST /api/projects/{pid}/members`의 대상 `user_id`가 전역 `admin` 계정임. admin은 **어떤 프로젝트의 멤버도 될 수 없다**(ADR 0006 §2-1) — 멤버십 행이 있으면 그 프로젝트 역할이 인가의 근거가 되므로, 이 금지가 없으면 admin이 스스로 `cm` 프로젝트 역할을 발급해 확정 권한을 얻는다. 읽기측(`project_role`/`caller_project_role`)이 admin 호출자의 멤버십 행을 무시하는 심층 방어와 한 쌍이다. 400이 아닌 이유는 요청이 잘 형성되었고 거부 사유가 대상의 의미적 자격이기 때문이며, 409가 아닌 이유는 상태를 바꿔 재시도할 수 있다는 뜻이 아니기 때문이다(ADR 0006 §2-1 근거) |
 
 ### 부칙 — reviewer 5차 지적 반영 (api, 2026-09-03)
@@ -294,6 +297,35 @@ reviewer 4차 지적 1: 동일 상태코드(특히 409)가 서로 무관한 여�
   "유니온 ↔ 표" 정합성만 잡는다** — 이 표(정본)에 새 code 가 늘어도 컴파일은 걸리지 않는다. 그래서 이 표에
   행을 더하는 사람이 그 유니온도 함께 본다(client.ts 상단 TODO 가 그 자동화를 후속으로 남겨 두었다).
 
+### 부칙 — ADR 0013 매핑 결정의 취소 (architect, 2026-09-06)
+
+이 절도 append-only — 기존 문장·행은 그대로 둔다. 특히 위 "부칙 — reviewer 5차 지적 반영"의 **응답 모양
+일관성** 문단과 "부칙 — ADR 0012 검토요청 반려 사유"는 **고치지 않는다**. 아래는 이번에 표에 더한 세 행
+(신규 둘 `cancel_reason_required`·`mapping_decision_not_cancellable` + 뒤늦게 등재한
+`document_mapping_already_rejected`)이 그 요구와 어떻게 만나는가에 대한 답이다.
+
+- **부가 필드를 싣지 않는 이유 — raise 자리가 하나씩이라 교집합이 상한을 걸지 않는다.** ADR 0012 부칙은
+  "부가 필드는 code 의 성질이 아니라 **raise 자리 집합의 교집합**"이라고 적었다. 그 문장은 상한을 말하는
+  것이고 하한을 말하지 않는다: `cancel_reason_required`·`mapping_decision_not_cancellable` 은 raise 자리가
+  각각 하나(`services/progress/document_mapper.py::cancel_document_mapping_review`)라 실을 수 있는 값이
+  `activity_id`·`doc_id` 까지 열려 있지만, **그 둘은 클라이언트가 방금 URL 로 보낸 값**이라 화면이 분기할
+  새 정보가 아니다. 그리고 실측(2026-09-06, HEAD `516949a`): 비테스트 웹 소스에서 오류 응답의 **부가
+  필드를 읽는 줄은 0건**이다 — `ApiError` 는 `body` 를 보관하지만(`apps/web/src/api/client.ts:98`)
+  `grep -rn "\.body\b" apps/web/src | grep -v test` 의 히트는 그 대입 한 줄과 `hooks.ts:388`(요청 본문
+  분해)뿐이고, `errorText`(`ErrorBox.tsx`)는 `code`·`status`·`message` 만 읽는다. 부가 필드는 계약면이라
+  **뺄 때가 실을 때보다 비싸므로** 필요해지는 사이클에 더한다(예: 여러 쌍을 한 번에 취소하는 라우트).
+- **`ErrorBox` 문구가 지켜야 하는 것이 두 code 에서 다르다.** `cancel_reason_required` 안내에는
+  **"새로고침"이라는 말을 쓰지 않는다** — 서버 상태는 최신이고 다음 행동은 사유를 적는 것 하나다
+  (ADR 0011·0012 의 같은 판단). 반대로 `mapping_decision_not_cancellable` 에서는 **새로고침이 실제로 답이다**
+  (다른 CM 이 이미 취소했거나 애초에 검토 대기였다) — 그래서 그 말을 써도 된다. 같은 사이클의 두 code 가
+  서로 다른 요구를 갖는다는 것이, 문구 규칙이 **문장**이 아니라 **상황**을 본다는 뜻이다(CLAUDE.md §6-4).
+- **화면 쪽 정본 동기화가 세 줄 밀려 있다.** `KnownApiErrorCode`(`apps/web/src/api/client.ts`)에는 이번에
+  더한 세 code(`document_mapping_already_rejected`·`cancel_reason_required`·`mapping_decision_not_cancellable`)가
+  아직 없다. 그 유니온은 `client.ts` 상단 TODO 대로 **수작업 동기화 목록**이고, 이 표(정본)에 행이 늘어도
+  컴파일은 걸리지 않는다 — 그래서 이 표에 행을 더한 사람이 그 유니온을 함께 보아야 한다. 세 code 가 그
+  유니온에 들어가기 전까지 화면은 `errorText` 3번 분기로 서버 `detail` 을 그대로 보인다(UX 는 깨지지
+  않고 원인별 안내만 못 나간다).
+
 ## ADR 0007 추가 항목 (architect, 2026-09-03) — 문서관리대장 연동
 
 문서관리대장(ADR 0007)이 도입한 개념. **핵심은 두 가지다** — ① `drawing_approval`의 입력이 수동 플래그에서
@@ -357,8 +389,25 @@ reviewer 4차 지적 1: 동일 상태코드(특히 409)가 서로 무관한 여�
 
 | 한국어 | 영어(식별자) | 정의 |
 |---|---|---|
-| 매핑 반려 | `mapping rejection` (`reject_document_mapping`, `services/progress/document_mapper`) | CM이 `document_mapping` 검토요청을 검토 큐에서 반려(`resolve_review`에 `decision="rejected"`)하면 대응 `ActivityDocumentMappingRow`에 남는 영구 표시. **매핑 행을 삭제하지 않는다** — 감사를 위해 남긴다(ADR 0007 §4-2 규칙 7과 같은 원칙). 확정과 달리 Activity가 바뀌어도 되살아나지 않는다(§4-2 규칙 6 ⑥) — 확정은 readiness·3중 검증의 증거로 쓰이므로 근거가 흔들리면 재확인이 필요하지만, 반려는 애초에 증거로 쓰이지 않으므로 같은 위험이 없다. `doc_id`가 title의 해시라 문서 제목이 바뀌면 자동으로 새 후보가 되는 것과 대칭이다(별도 코드 불필요) |
+| 매핑 반려 | `mapping rejection` (`reject_document_mapping`, `services/progress/document_mapper`) | CM이 `document_mapping` 검토요청을 검토 큐에서 반려(`resolve_review`에 `decision="rejected"`)하면 대응 `ActivityDocumentMappingRow`에 남는 표시. **2026-09-06(ADR 0013)에 "영구 표시"에서 고쳤다** — 재계산(대장 재업로드·수동 재계산)에 대해서는 여전히 영구하지만(`_drop_already_confirmed`), CM 이 `cancel-review` 로 명시적으로 취소하면 풀린다(아래 `매핑 결정 취소`). **매핑 행을 삭제하지 않는다** — 감사를 위해 남긴다(ADR 0007 §4-2 규칙 7과 같은 원칙). 확정과 달리 Activity가 바뀌어도 되살아나지 않는다(§4-2 규칙 6 ⑥) — 확정은 readiness·3중 검증의 증거로 쓰이므로 근거가 흔들리면 재확인이 필요하지만, 반려는 애초에 증거로 쓰이지 않으므로 같은 위험이 없다. `doc_id`가 title의 해시라 문서 제목이 바뀌면 자동으로 새 후보가 되는 것과 대칭이다(별도 코드 불필요) |
 | 매핑 검토 결정 | `mapping_review_decision` (`ActivityDocumentMapping.evidence.extra.mapping_review_decision`) | 매핑 반려의 표시값. 값은 `"rejected"` 하나뿐 — 확정된 매핑에는 이 키 자체가 없다. `reviewed_by is not None`을 "확정됐다"의 근거로 쓰는 모든 코드는 이 값도 함께 확인해야 확정과 반려를 구분할 수 있다(§4-2 규칙 6 ⑥의 "누수 A·B" 방어가 이 원칙의 실제 적용 사례) |
 | 반려 근거 필드 | `Evidence.extra` 의 `rejected_by` / `rejected_at` / `rejection_note` | 매핑 반려 시 `mapping_review_decision`과 함께 남는 부가 필드 — 누가·언제·왜 반려했는지. `evidence.source_type`/`.method`는 시스템이 제안했을 때의 값(`document`/`document_title_match`)을 그대로 두고 `note`만 반려 코멘트로 갱신한다(확정 시 evidence를 보존하는 §4-2 규칙 7과 같은 관례) |
 | 확정·반려 공통 필터 | `_drop_already_confirmed` (`services/progress/document_mapper`) | 이름은 "확정만 거른다"는 인상을 주지만 ⑥ 이후로는 `reviewed_by is not None`이면(확정이든 반려든) 재계산 후보에서 제외하는 함수다 — 이름이 실제 역할보다 좁다. ADR 0007 §4-2 규칙 6이 이 이름을 직접 인용하므로 문서·코드 명칭을 맞추기 위해 개명하지 않았다 |
 | 문서 반려 / 매핑 반려 구분 | `documents.approval_status == REJECTED` ≠ `mapping_review_decision == "rejected"` | 같은 한국어 "반려"를 쓰지만 서로 다른 축이다. **문서 반려**는 발주처가 대장 처리결과에 명시적으로 거부라고 적은 것(`logic.rejected_document_count`, ADR 0007 §6-1)이고, **매핑 반려**는 CM이 "이 문서는 이 Activity와 무관하다"고 문서↔Activity 매핑 후보를 반려한 것(위 `mapping rejection`)이다. 매핑이 반려되면 그 문서는 `confirmed_required_documents`의 확정 목록에서 아예 빠지므로, 매핑 반려는 `logic.rejected_document_count`를 절대 늘리지 않는다 |
+
+## ADR 0013 추가 항목 (architect, 2026-09-06) — 매핑 결정의 취소
+
+`(activity_id, doc_id)` 쌍에 **서 있는 CM 의 결정**(확정 또는 반려)을 CM 이 되돌리는 경로. ADR 0007
+§Deferred 의 두 항목(`unconfirm`·`unreject`)과 ADR 0009 §Deferred 3 을 함께 닫는다. **핵심은 착지점이
+하나라는 것**이다 — 반려 취소든 확정 취소든 도착점은 `needs_review=True`(미확정)이고, 확정으로 가는
+지름길이 아니다(CLAUDE.md §0).
+
+| 한국어 | 영어(식별자) | 정의 |
+|---|---|---|
+| 매핑 결정 취소 | `mapping decision cancellation` (`cancel_document_mapping_review`, `services/progress/document_mapper`) | CM 이 그 쌍에 서 있는 결정을 되돌리는 한 트랜잭션. 셋을 **함께** 한다 — ① 옛 `ReviewRequestRow` 를 손대지 않고 ② 새 `open` `document_mapping` 요청을 그 자리에서 열고 ③ 매핑 행을 미확정으로 되돌린다(`reviewed_by=None`, `needs_review=True`, 반려 표시 4키 제거). 셋 중 ③ 을 반쪽만 하면(표시만 지우고 `reviewed_by` 를 남기면) 그 매핑이 `confirmed_required_documents` 의 **확정 증거**가 되어 `drawing_approval` 이 1.0 이 된다 — CM 이 한 행위가 반려뿐인데 착수 가능이 뜨는 §0 위반이다(ADR 0013 §Context 3 실측) |
+| 취소 이력 | `cancelled_mapping_reviews` (`ActivityDocumentMapping.evidence.extra.cancelled_mapping_reviews`) | 취소가 지운 값을 옮겨 담는 **append-only** 목록. 항목은 `{cancelled_by, cancelled_at, cancel_note, previous_decision, previous_reviewed_by, previous_rejected_at?, previous_rejection_note?}`. `previous_decision` 은 `"confirmed"` \| `"rejected"` — 취소 뒤에는 어느 방향이었는지가 매핑 행 어디에도 남지 않기 때문이다. **저장된 과거 기록에는 이 키가 없고 마이그레이션하지 않는다** — 읽는 쪽이 키 없음을 빈 목록으로 읽는다 |
+| 취소가 여는 요청 | `ReviewRequest.conflicting_sources` 의 `cancelled_review_request_id` / `cancel_note` | 취소가 그 자리에서 여는 새 `document_mapping` 검토요청이 기존 `doc_id` 키에 더해 싣는 둘 — 어느 결정을 취소한 것인가 / 왜. 재계산을 기다리지 않는 이유는 실측이다: 매핑 행만 되돌리면 readiness 는 "문서 매핑 1건이 CM 검토 대기"인데 **CM 큐에는 열린 것이 없다**(ADR 0013 §Context 4) |
+| 취소 사유 예외 | `MappingDecisionCancelReasonRequiredError` (`services/progress/document_mapper`, **`Exception` 직속**) | 취소에 사유가 없을 때. → 409 `cancel_reason_required` |
+| 취소 불가 예외 | `MappingDecisionNotCancellableError` (`services/progress/document_mapper`, **`Exception` 직속**) | 그 쌍에 서 있는 CM 결정이 없을 때(`reviewed_by is None`). → 409 `mapping_decision_not_cancellable` |
+| 예외를 어디에 두는가 | (규칙) **raise 자리의 소유 집합이 정한다** | 소유가 하나면 그 서비스 트리, 둘 이상일 때만 공통 상위(`packages/core/models/`). 저장소 전수(ADR 0013 규칙 5)가 이 규칙을 예외 없이 따른다 — `packages/core/models/` 의 예외 셋 중 둘은 그 파일 자신이 raise 하고, 나머지 하나(`ReviewRejectionReasonRequiredError`)만 raise 소유가 둘(progress·api)이다. 취소의 두 예외는 raise 소유가 하나(progress)라 `services/progress/` 에 둔다 |
+| 반려의 영구성(좁혀짐) | ADR 0007 §4-2 규칙 6 ⑥ → ADR 0013 규칙 8 | "반려는 영구하다"는 **대체되지 않고 주어가 좁아진다**: 재계산에 대해서는 여전히 영구하고(`_drop_already_confirmed` 무변경 — 실측: 반려 뒤 대장 재업로드에서 그 쌍의 open 요청 0건), **CM 의 명시적 취소**에 대해서만 풀린다 |
