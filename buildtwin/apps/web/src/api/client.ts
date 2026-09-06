@@ -64,7 +64,23 @@ export type KnownApiErrorCode =
   // ADR 0007 §8: 문서관리대장 연동.
   | "document_not_found"
   | "document_register_invalid"
-  | "document_mapping_target_not_found";
+  | "document_mapping_target_not_found"
+  // 반려된 (activity_id, doc_id) 매핑을 **확정**하려 할 때 나는 409. 서버는 2026-09-03 부터 이 code 를
+  // 내보내는데(`services/api/usecases.py::_reject_confirm_of_rejected_mapping`) 이 유니온에 없어
+  // 사흘 넘게 `errorText` 3번 분기(서버 detail 그대로)로 떨어지고 있었다 — 이 유니온이 수작업 동기화
+  // 목록(위 TODO)이라 glossary 정본에 행이 늘어도 컴파일이 걸리지 않는 그 경로다.
+  // ADR 0013 이 이 code 의 **뜻을 좁혔다**: 반려는 더 이상 영구가 아니라 CM 의 명시적 취소로 풀리므로
+  // 이 409 는 "영원히 불가"가 아니라 **"먼저 취소하라"** 다. CODE_MESSAGES 문구가 그렇게 말한다.
+  | "document_mapping_already_rejected"
+  // ADR 0013 규칙 6 (가): 매핑 결정 취소(`POST …/cancel-review`)에 사유가 없을 때의 409.
+  // `rejection_reason_required`(“반려하려면”)·`revocation_reason_required`(“확정을 되돌리려면”)를
+  // 재사용하지 않은 이유는 두 문구가 이 자리에서 각각 거짓이기 때문이다 — 취소는 반려가 아니고,
+  // 확정 방향에서도 반려 방향에서도 걸린다. 부가 필드는 싣지 않는다(glossary 부칙 — ADR 0013).
+  | "cancel_reason_required"
+  // ADR 0013 규칙 6 (나): 그 쌍에 취소할 CM 결정이 없을 때(`reviewed_by is None`)의 409.
+  // `invalid_transition` 을 재사용하지 않은 이유는 문구가 아니라 **응답 모양**이다 — 그 code 의 핸들러가
+  // 반드시 싣는 `from_state`/`to_state`/`actor` 가 매핑 결정에는 존재하지 않는다.
+  | "mapping_decision_not_cancellable";
 
 /**
  * 서버 에러 바디의 안정적 원인 식별자. `detail` 은 사람이 읽는 문구(오늘의 동작 유지),

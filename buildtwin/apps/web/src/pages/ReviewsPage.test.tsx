@@ -159,18 +159,20 @@ describe("ReviewsPage — document_mapping (ADR 0007)", () => {
     const dialog = screen.getByRole("dialog");
     const text = within(dialog).getByText(/이 문서 ↔ Activity 매핑이 확정됩니다/).textContent ?? "";
     expect(text).toMatch(/needs_review=False/);
-    // 13차 리뷰: 이 자리는 "확정 이후에는 사람만 되돌릴 수 있습니다"라고 약속했는데 **되돌리는 API 가
-    // 없다**(문서 매핑 쓰기 경로는 generate 와 confirm 둘뿐). 그 거짓 절을 되돌려도 178건이 전부
-    // 통과했으므로(14차 뮤테이션 확인) 문구가 아니라 **약속의 내용**을 고정한다 — 없는 기능을 약속하지
-    // 않고, 시스템이 무엇을 하는지만 말해야 한다.
-    expect(text).toMatch(/확정을 취소하는 기능은 없습니다/);
-    expect(text).not.toMatch(/되돌릴 수 있습니다/);
+    // 13차 리뷰: 이 자리는 "확정 이후에는 사람만 되돌릴 수 있습니다"라고 약속했는데 그때는 **되돌리는
+    // API 가 없었다**(문서 매핑 쓰기 경로가 generate 와 confirm 둘뿐). 그래서 그 시점의 참을 문장째
+    // 고정했는데, **ADR 0013 이 그 라우트를 만들면서 그 단언이 거짓 문구를 계약으로 고정한 자리가 됐다**
+    // (계획 0006 §1-i · CLAUDE.md §6-4 3: 문장을 베끼면 거짓 문구가 계약이 된다).
+    // 문장을 베끼지 않고 "그 상황에서 참일 수 없는 말이 없다"만 단언한다 — 취소 경로가 있으므로 그것이
+    // 없다는 선언이 있으면 안 된다. 취소가 무엇을 하는지(미확정 착지·큐 재개방)는 화면 소유의 판단이다.
+    expect(text).not.toMatch(/취소하는 기능은 없|되돌리는 (API|경로)가 없/);
   });
 
   // 10차 리뷰: 이 테스트는 원래 "매핑 행은 아직 바뀌지 않습니다"라는 **거짓 문구를 계약으로 고정**하고
-  // 있었다. reject_document_mapping 이 매핑 행을 실제로 바꾸고 그 반려가 영구적인데도 화면은 정반대를
-  // 말했고, 이 기대값 때문에 웹 테스트 169개가 전부 통과했다. 문구가 아니라 **실제 동작**을 고정한다.
-  it("document_mapping 반려 다이얼로그는 반려가 영구적이고 되돌릴 수 없다고 경고한다", async () => {
+  // 있었다. reject_document_mapping 이 매핑 행을 실제로 바꾸는데 화면은 정반대를 말했고, 이 기대값 때문에
+  // 웹 테스트 169개가 전부 통과했다. 문구가 아니라 **실제 동작**을 고정한다.
+  // ADR 0013 규칙 8 이 그 "영구"의 주어를 좁혔다(재계산에 대해서만 영구 · CM 의 명시적 취소로는 풀린다).
+  it("document_mapping 반려 다이얼로그는 반려가 재계산으로는 되살아나지 않는다고 경고한다", async () => {
     resetStore();
     loginAs("cm");
     mockFetch((url) => {
@@ -186,8 +188,10 @@ describe("ReviewsPage — document_mapping (ADR 0007)", () => {
 
     const dialog = screen.getByRole("dialog");
     const text = within(dialog).getByText(/반려하면 이 문서/).textContent ?? "";
-    // 되돌릴 수 없다는 경고와, 재업로드해도 다시 제안되지 않는다는 사실이 반드시 있어야 한다.
-    expect(text).toMatch(/되돌릴 수 없/);
+    // 재업로드해도 다시 제안되지 않는다는 사실은 그대로 참이므로 계속 요구한다(실측: ADR 0013 은
+    // `_drop_already_confirmed` 를 바꾸지 않는다). 반면 옛 단언 `toMatch(/되돌릴 수 없/)` 은 ADR 0013 이
+    // 취소 라우트를 만든 뒤로 **그 상황에서 참일 수 없는 말**이 됐다 — 방향을 뒤집어 그 말이 없음을 본다.
+    expect(text).not.toMatch(/되돌릴 수 없/);
     expect(text).toMatch(/다시 제안되지 않습니다/);
     // 반대로 "아무것도 바뀌지 않는다"는 취지의 문구가 다시 들어오면 안 된다(원래 결함의 회귀 방지).
     expect(text).not.toMatch(/아직 바뀌지 않습니다/);

@@ -7,6 +7,7 @@ import { api } from "./client";
 import type {
   ActivityDocumentMapping,
   AlignmentInput,
+  CancelDocumentMappingReviewRequest,
   ConfirmDocumentMappingRequest,
   DailyReport,
   DailyReportCreate,
@@ -373,11 +374,13 @@ export function useReviewRequests(projectId: string | null | undefined, kind?: R
  * 검토요청 해소(승인/반려/보류). **무효화 범위는 `useConfirmDocumentMapping` 과 같아야 한다**(12차 리뷰).
  *
  * `document_mapping` 승인은 서버에서 `_confirm_document_mapping_row` 를 실제로 실행하고(전용 확정
- * 엔드포인트와 **같은 본체**), 반려는 매핑 행에 영구 반려 표시를 남긴다. 둘 다 문서 상세(`mappings`)와
+ * 엔드포인트와 **같은 본체**), 반려는 매핑 행에 반려 표시를 남긴다. 둘 다 문서 상세(`mappings`)와
  * drawing_approval readiness 를 바꾼다. 그런데 이 훅은 review-requests 만 무효화하고 있었다:
  * 반려 직후 화면의 매핑 상태가 낡은 "확정"으로 남아, ReviewsPage 카드가 반려 안내도 재확인 안내도
- * 띄우지 못하고 **아무 말도 하지 않았다**. 되돌릴 수 없는 행위를 한 바로 그 순간·그 화면에서 그 결과가
- * 보이지 않았다는 뜻이다 — 이 사이클이 반복한 "조용한 죽음"의 화면 쪽 형태다.
+ * 띄우지 못하고 **아무 말도 하지 않았다**. 재계산으로는 되살아나지 않는 행위를 한 바로 그 순간·그
+ * 화면에서 그 결과가 보이지 않았다는 뜻이다 — 이 사이클이 반복한 "조용한 죽음"의 화면 쪽 형태다.
+ * (ADR 0013 이 그 반려 표시를 **CM 의 명시적 취소**로 풀 수 있게 했다 — `useCancelDocumentMappingReview`.
+ * 여기서 "영구"라고 적고 있던 것을 그 사이클이 지웠다: 재계산에 대해서만 영구다.)
  *
  * 서버에서 두 확정 경로의 방어를 공유 본체로 합친 것과 같은 이유로, 화면에서도 두 경로의 무효화 범위를
  * 맞춘다. doc_id 는 응답 evidence.source_id 에 실려 온다(ADR 0007 §4 규칙 7).
@@ -518,6 +521,40 @@ export function useConfirmDocumentMapping(projectId: string, docId: string) {
       // 이 훅 쪽에서 지켜지지 않고 있었다.
       qc.invalidateQueries({ queryKey: ["projects", projectId, "review-requests"] });
       // ADR 0008: 프로젝트 범위 readiness 키의 접두사(useResolveReview 와 같은 범위여야 한다).
+      qc.invalidateQueries({ queryKey: queryKeys.activitiesRoot(projectId) });
+    },
+  });
+}
+
+/**
+ * 매핑 결정(확정 **또는** 반려)의 취소 — cm만(ADR 0013 불변식 5). 착지점은 **미확정 하나**다:
+ * `reviewed_by=null` · `needs_review=true` · 반려 표시 제거. 취소는 "직전 결정의 반대"가 아니다 —
+ * 확정을 원하면 CM 이 취소 뒤 확정 액션을 다시 해야 하고, 그 액션이 CLAUDE.md §0 이 요구하는 사람의
+ * 승인 행위다.
+ *
+ * **무효화 범위는 `useConfirmDocumentMapping` 과 같아야 한다** — 취소가 바꾸는 것이 확정이 바꾸는 것의
+ * 상위집합이기 때문이다. 확정 취소는 `drawing_approval` 을 1.0 → 0.5 로 되돌리고(readiness·요약·착수가능),
+ * 매핑 행을 검토 대기로 되돌리고(문서 상세), **그 자리에서 새 open 검토요청을 연다**(검토요청 목록 —
+ * ADR 0013 규칙 2: 재계산을 기다리지 않는다). 검토요청 목록을 빠뜨리면 CM 이 방금 자기가 연 요청을
+ * 못 보는데, 그것이 이 저장소가 반복해 겪은 "조용한 죽음"의 화면 쪽 형태다.
+ *
+ * `docId` 를 훅이 아니라 뮤테이션 인자로 받는 것은 계획 0006 §인터페이스 정의의 계약이다.
+ */
+export function useCancelDocumentMappingReview(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ activityId, docId, note }: { activityId: string; docId: string; note: string }) =>
+      api.post<ActivityDocumentMapping>(
+        // ADR 0008 §5: 대리키 라우트는 project_id 를 필수 쿼리로 받는다(누락 시 422).
+        `/documents/mappings/${encodeURIComponent(activityId)}/${encodeURIComponent(docId)}/cancel-review` +
+          `?project_id=${encodeURIComponent(projectId)}`,
+        { note } satisfies CancelDocumentMappingReviewRequest,
+      ),
+    onSuccess: (_mapping, { docId }) => {
+      qc.invalidateQueries({ queryKey: queryKeys.document(projectId, docId) });
+      qc.invalidateQueries({ queryKey: queryKeys.weeklySummary(projectId) });
+      qc.invalidateQueries({ queryKey: queryKeys.startable(projectId) });
+      qc.invalidateQueries({ queryKey: ["projects", projectId, "review-requests"] });
       qc.invalidateQueries({ queryKey: queryKeys.activitiesRoot(projectId) });
     },
   });

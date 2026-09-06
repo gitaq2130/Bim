@@ -251,6 +251,17 @@ export interface ConfirmDocumentMappingRequest {
   note?: string | null;
 }
 
+/**
+ * POST /documents/mappings/{activity_id}/{doc_id}/cancel-review 본문 (ADR 0013).
+ *
+ * 타입은 서버 스키마(`services/api/schemas/documents.py::CancelDocumentMappingReviewRequest`)와 같은
+ * `string | null` 이다 — 사유 누락을 422(스키마 위반)가 아니라 409 `cancel_reason_required` 로 내기 위해
+ * 서버가 일부러 선택 필드로 두었다. 화면은 그보다 앞서 다이얼로그의 `requireNote` 로 막는다.
+ */
+export interface CancelDocumentMappingReviewRequest {
+  note?: string | null;
+}
+
 /** 문서 ↔ Activity 매핑. 문서 ↔ 객체 직접 매핑은 만들지 않는다(§4-1 규칙 1) */
 export interface ActivityDocumentMapping {
   activity_id: string;
