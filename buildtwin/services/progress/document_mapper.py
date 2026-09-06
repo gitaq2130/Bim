@@ -21,6 +21,11 @@ api 가 호출) / 문서가 고아가 되면 자동 종료. api 는 이 함수�
 반려된 매핑을 readiness/검증 증거에서 제외한다. api 는 대응 검토요청을 `status="rejected"`로 닫는 것까지만
 하고, 매핑 행은 건드리지 않은 채 `reject_document_mapping`을 호출한다.
 
+**결정의 취소**(ADR 0013)도 같은 생명주기라 여기서 소유한다: `cancel_document_mapping_review`가 그 쌍에 서
+있는 CM 의 결정(확정이든 반려든)을 **미확정으로** 되돌리고(`reviewed_by=None`·`needs_review=True`·반려 표시
+제거), 지운 표시를 `evidence.extra.cancelled_mapping_reviews` 로 옮기고, 새 `document_mapping` 검토요청을
+그 자리에서 연다 — 셋이 한 트랜잭션이다. api 는 인가·존재 확인·commit 만 한다.
+
 **식별 드리프트**(ADR 0009 §5-2·§5-3)도 매핑 생명주기에 걸리므로 여기서 소유한다:
 `open_identity_drift_review`가 "우리 식별 규칙이 움직여 CM 이 확정·반려한 판단이 오염됐다"는 사건을 CM 큐에
 올린다. 오염되는 길은 셋이고(`lost_decisions[].cause`) 사람이 해야 할 일이 서로 다르므로 검토요청 제목은
@@ -55,6 +60,7 @@ from packages.core.models.review import (
     IDENTITY_DRIFT_CAUSE_UNSPECIFIED,
     IdentityDriftCause,
     ReviewRequest,
+    rejection_reason_missing,
 )
 
 from . import persistence as db
@@ -538,7 +544,11 @@ def reject_document_mapping(session: Session, project_id: str, activity_id: str,
     `confirmed_required_documents`가 `evidence.extra.mapping_review_decision` 로 반려된 행을 걸러내므로
     반려된 매핑은 readiness `drawing_approval`·3중 검증 `logic` 축 어디에도 증거로 들어가지 않는다.
 
-    **반려는 (activity_id, doc_id) 쌍에 대해 영구하다 — Activity 쪽 정보가 바뀌어도 되돌리지 않는다.**
+    **반려는 (activity_id, doc_id) 쌍에 대해 *재계산에 대해서만* 영구하다 — Activity 쪽 정보가 바뀌어도
+    시스템이 되돌리지 않는다. CM 의 명시적 취소(`cancel_document_mapping_review`)로는 풀린다**(ADR 0013
+    규칙 8 이 ADR 0007 §4-2 규칙 6 ⑥ 의 "영구"를 **대체하지 않고 주어를 좁혔다**). 그 규칙이 실제로
+    지키던 것("CM 이 매주 같은 후보를 다시 반려하지 않는다")은 그대로 참이다 — 취소는
+    `_drop_already_confirmed` 를 건드리지 않으므로 반려 뒤 대장을 재업로드해도 후보는 다시 생기지 않는다.
     확정 매핑은 Activity 가 바뀌면 재확인 검토요청을 다시 연다(`_reopen_reviews_for_invalidated_confirmations`)
     — 확정은 "이 문서가 이 Activity 의 착수 가능 판단에 쓰일 증거"이므로, 그 근거가 흔들리는데 침묵하면
     낡은 증거가 계속 AND 조건을 채운다(안전 문제). 반려는 반대다 — 반려된 매핑은 애초에 증거로 쓰이지
@@ -570,6 +580,185 @@ def reject_document_mapping(session: Session, project_id: str, activity_id: str,
     row.reviewed_by = rejected_by
     row.needs_review = False
     session.flush()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 매핑 결정의 취소 (ADR 0013 불변식 5)
+#
+# 취소는 **한 트랜잭션에서 셋을 함께** 한다(규칙 1·2·3). 반쪽 착지가 CLAUDE.md §0 위반이기 때문이다:
+# 반려 표시만 지우고 `reviewed_by` 를 남기면 그 행이 `confirmed_required_documents` 의 두 필터
+# (`not m.needs_review` · `not is_rejected_mapping(...)`)를 **둘 다** 통과해 확정 증거가 되고,
+# CM 이 한 행위가 반려뿐인데 `drawing_approval` 이 1.0 이 된다(ADR 0013 §Context 3 표 2행 실측).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# `reject_document_mapping` 이 남기는 반려 표시 4키. 취소는 이 넷을 **함께** 지운다 — 하나라도 남기면
+# `is_rejected_mapping`(`mapping_review_decision` 만 본다)과 화면이 서로 다른 말을 한다:
+# `apps/web/src/domain/mappingReview.ts` 의 `mappingRejection` 은 `needs_review` 를 보지 않고 나머지 셋을
+# 그대로 보여주므로, 표시를 남긴 채 되돌리면 한 카드가 "검토 대기" 배지와 옛 반려자·반려 사유를 함께 낸다.
+# 이 넷을 **쓰는** 자리는 `reject_document_mapping`, **읽는** 자리는 `is_rejected_mapping`(서버)과
+# `apps/web/src/domain/mappingReview.ts`(화면)다. 그 목록이 길어지면 이 튜플도 함께 움직여야 하고, 목록을
+# 그 자리에서 돌려주는 명령은 아래다(개수를 적지 않는다 — 세는 순간 다음 커밋이 거짓으로 만든다):
+#     grep -rn "mapping_review_decision" --include=*.py --include=*.ts --include=*.tsx . \
+#         --exclude-dir=.venv --exclude-dir=node_modules
+_REJECTION_MARKER_KEYS = ("mapping_review_decision", "rejected_by", "rejected_at", "rejection_note")
+
+# 취소 이력(ADR 0013 규칙 3, glossary `취소 이력`). **append-only** 이고 저장된 과거 기록에는 이 키가
+# 없다 — 마이그레이션하지 않고 읽는 쪽이 키 없음을 빈 목록으로 읽는다.
+_CANCELLED_REVIEWS_KEY = "cancelled_mapping_reviews"
+
+_MAPPING_REVIEW_DECISION_CONFIRMED = "confirmed"   # 취소 이력의 `previous_decision` 값(반려 쪽은 위 상수)
+
+
+class MappingDecisionNotCancellableError(Exception):
+    """그 `(activity_id, doc_id)` 쌍에 취소할 CM 결정이 없다(`reviewed_by is None`) — ADR 0013 규칙 6 (나).
+
+    **`Exception` 직속이다**(ADR 0012 규칙 3 과 같은 판단): 하위 타입이면 다른 `except` 가 삼킬 수 있고,
+    상속으로 얻는 HTTP 폴백이 없으므로 `services/api/errors.py` 의 **전용 핸들러가 이 불변식의 일부**다
+    (핸들러가 없으면 409 `mapping_decision_not_cancellable` 이 아니라 500 + `code` 없음이 나간다).
+
+    **이 타입을 `packages/core/models/` 가 아니라 여기 두는 근거**(ADR 0013 규칙 5 전수 표): 이 저장소의
+    도메인 예외는 예외 없이 "예외의 자리는 raise 자리의 소유 집합이 정한다"를 따르고, 취소의 raise 자리는
+    아래 `cancel_document_mapping_review` **하나**(소유 progress-engine)뿐이다. api 는 던지지 않고 받는다.
+    ADR 0012 가 `ReviewRejectionReasonRequiredError` 를 공통 상위에 둔 근거("raise 소유가 둘")는 여기서
+    서지 않는다. *둘째 raise 소유가 생기면 그 사이클이 이 타입을 `packages/core/models/` 로 올린다.*
+
+    **이 타입이 기대는 부재**(부재가 시제 표현의 변장인지 확인했다 — 넓은 `except` 를 만드는 작업이 이
+    사이클에 없다): 취소 경로가 지나는 세 파일에 넓은 `except` 가 없다. 확인 명령은 **이 문장 자신을 잡지
+    않는 형태**로 적는다(앞선 판은 따옴표 안의 자기 패턴을 잡아 "히트 0"이 거짓이었다 —
+    `packages/core/models/review.py` 가 같은 자리에서 겪은 것):
+        grep -nE '^[[:space:]]*except([[:space:]]+(Exception|BaseException))?[[:space:]]*:' \\
+            services/api/usecases.py services/api/routers/documents.py services/progress/document_mapper.py
+    """
+
+    def __init__(self, project_id: str, activity_id: str, doc_id: str) -> None:
+        self.project_id, self.activity_id, self.doc_id = project_id, activity_id, doc_id
+        super().__init__(f"no cm decision to cancel on mapping activity_id={activity_id!r} doc_id={doc_id!r} "
+                         f"in project {project_id!r}: the mapping is still pending review")
+
+
+class MappingDecisionCancelReasonRequiredError(Exception):
+    """매핑 결정을 취소하는데 사유가 없다 — ADR 0013 규칙 4. 판정은 `rejection_reason_missing` 재사용.
+
+    `Exception` 직속·전용 핸들러(409 `cancel_reason_required`)는 위 타입과 같은 이유다. 문장은 이 예외가
+    스스로 쓴다 — 반려·확정 되돌리기의 문장을 빌려 오지 않는다(ADR 0011 규칙 1-b 와 같은 판단: 취소는
+    반려가 아니고, 반려 취소에서 "확정을 되돌리려면"은 거짓이다)."""
+
+    def __init__(self, project_id: str, activity_id: str, doc_id: str) -> None:
+        self.project_id, self.activity_id, self.doc_id = project_id, activity_id, doc_id
+        super().__init__(f"cancelling the cm decision on mapping activity_id={activity_id!r} doc_id={doc_id!r} "
+                         f"in project {project_id!r} requires a non-empty reason")
+
+
+def _cancelled_decision_review_title(mapping_row: ActivityDocumentMappingRow, doc: Document | None,
+                                     previous_decision: str) -> str:
+    """취소가 여는 새 요청의 제목. **아는 것만 말한다**(CLAUDE.md §6-4 2) — 어느 방향을 취소했는지는
+    취소 뒤 매핑 행 어디에도 남지 않으므로 그 값을 여기서 그대로 싣고, 지어낸 원인을 붙이지 않는다."""
+    label = f"{doc.doc_number or doc.doc_id} «{doc.title}»" if doc is not None else mapping_row.doc_id
+    what = "확정을" if previous_decision == _MAPPING_REVIEW_DECISION_CONFIRMED else "반려를"
+    return (f"문서 매핑 재검토: Activity {mapping_row.activity_id} → {label} — CM 이 이 쌍의 {what} "
+            "취소했습니다. 이 매핑은 다시 미확정(검토 대기) 상태이며, 확정하거나 반려해야 합니다.")
+
+
+def cancel_document_mapping_review(session: Session, project_id: str, activity_id: str, doc_id: str,
+                                   cancelled_by: str, note: str) -> tuple[ActivityDocumentMapping, str]:
+    """CM 이 이 쌍에 서 있는 결정(확정 또는 반려)을 취소한다. `(매핑, 새 검토요청 id)` 를 돌려준다.
+    ADR 0013 불변식 5. commit 은 호출자(api) 책임이다.
+
+    **검사 순서가 계약이다**(ADR 0013 규칙 6, ADR 0012 규칙 1 과 같은 판단):
+    `reviewed_by is None` → `MappingDecisionNotCancellableError` 가 **먼저**이고, 그 다음이
+    `rejection_reason_missing(note)` → `MappingDecisionCancelReasonRequiredError` 다. 취소할 결정이 없는
+    CM 에게 "사유를 적으라"고 하면 그는 **적을 수 없는 사유**를 적는다. 두 검사가 **본체 안에** 있는 이유는
+    본체가 모든 취소 경로가 지나는 병목이기 때문이다(ADR 0011 이 `StateTransition._check` 에 건 것과 같은
+    방향) — api 가 검사하면 둘째 호출자가 생기는 날 방어가 한쪽에만 걸린다.
+
+    셋을 **한 트랜잭션에서 함께** 한다:
+
+    ① 옛 `ReviewRequestRow` 는 손대지 않는다(`status`/`resolved_by`/`resolved_at`/`resolution_note` 그대로).
+       `_reopen_reviews_for_invalidated_confirmations` 는 정확히 반대를 하는데(그 넷을 지운다) 그 모양은
+       "결정에는 이유가 남는다"(ADR 0011·0012)의 정반대라 베끼지 않는다.
+    ② 새 `document_mapping` 요청을 **그 자리에서** 연다 — 재계산을 기다리지 않는다. 기다리면 readiness 는
+       "문서 매핑 1건이 CM 검토 대기"라고 하는데 CM 큐에는 열린 것이 없다(ADR 0013 §Context 4 실측:
+       매핑 행만 되돌린 뒤 그 Activity 의 `document_mapping` 요청은 `['rejected']` 하나뿐이었다).
+       `conflicting_sources` 는 기존 계약(`doc_id`)에 `cancelled_review_request_id`·`cancel_note` 를 더한다.
+    ③ 매핑 행을 **미확정으로** 되돌린다: `reviewed_by=None` · `needs_review=True` · 반려 표시 4키 제거.
+       셋 중 하나만 하면 §Context 3 표 2행(= `drawing_approval` 1.0)에 착지할 수 있고 그것이 §0 위반이다.
+       지운 표시는 `evidence.extra["cancelled_mapping_reviews"]` 에 **append** 한다(덮어쓰지 않는다 —
+       반복 취소의 이력이 규칙 7 "무제한"의 관측 가능성 그 자체다). 키가 없으면 빈 목록으로 읽는다
+       (저장된 과거 기록에는 이 키가 없고 마이그레이션하지 않는다).
+
+    `evidence.note` 는 취소 사유로 갱신한다 — `reject_document_mapping`·`_confirm_document_mapping_row`
+    와 같은 관례(그 자리는 "이 쌍에 대한 CM 의 마지막 코멘트"다)이고, 취소 뒤에도 옛 반려 사유가 남으면
+    화면(`ConfidenceBadge` 의 note 행)이 검토 대기 매핑에 반려 코멘트를 보인다. 덮어써도 감사가 사라지지
+    않는다: 옛 사유는 **손대지 않는** 옛 요청 행의 `resolution_note` 와 위 취소 이력 항목에 남는다.
+
+    대상 매핑 행이 없으면 `LookupError`(호출자 사전조건 — api 가 존재를 이미 404 로 확인한다,
+    `reject_document_mapping`·`save_document_mapping` 과 같은 관례)."""
+    row = session.get(ActivityDocumentMappingRow, (project_id, activity_id, doc_id))
+    if row is None:
+        raise LookupError(f"document mapping not found: activity_id={activity_id!r} doc_id={doc_id!r} "
+                          f"in project {project_id!r}")
+    if row.reviewed_by is None:
+        raise MappingDecisionNotCancellableError(project_id, activity_id, doc_id)
+    if rejection_reason_missing(note):
+        raise MappingDecisionCancelReasonRequiredError(project_id, activity_id, doc_id)
+
+    before_evidence = Evidence(**row.evidence)
+    previous_decision = (_MAPPING_REVIEW_DECISION_REJECTED if is_rejected_mapping(row.evidence)
+                         else _MAPPING_REVIEW_DECISION_CONFIRMED)
+
+    extra = dict(before_evidence.extra)
+    entry: dict[str, Any] = {
+        "cancelled_by": cancelled_by, "cancelled_at": datetime.now(UTC).isoformat(), "cancel_note": note,
+        "previous_decision": previous_decision, "previous_reviewed_by": row.reviewed_by,
+    }
+    # 반려 방향에서만 존재하는 두 값. **모르는 값을 흔한 값으로 떨어뜨리는 폴백을 두지 않는다**
+    # (CLAUDE.md §6-4 2) — 없으면 키 자체를 싣지 않는다.
+    if extra.get("rejected_at") is not None:
+        entry["previous_rejected_at"] = extra["rejected_at"]
+    if extra.get("rejection_note") is not None:
+        entry["previous_rejection_note"] = extra["rejection_note"]
+    history = list(extra.get(_CANCELLED_REVIEWS_KEY) or [])   # 키 없음 = 빈 목록(마이그레이션 없음)
+    history.append(entry)
+    for key in _REJECTION_MARKER_KEYS:
+        extra.pop(key, None)
+    extra[_CANCELLED_REVIEWS_KEY] = history
+    evidence = before_evidence.model_copy(update={"note": note, "extra": extra})
+
+    # ② 취소가 여는 요청. `cancelled_review_request_id` 는 **마지막으로 닫힌** 요청이다 — 한 쌍은 생애
+    # 동안 여러 요청 행을 갖고(복귀·재오픈·반복 취소), 지금 취소하는 결정을 기록한 것이 그 행이다.
+    closed = [r for r in db.document_mapping_reviews(session, project_id, activity_id, doc_id) if r.status != "open"]
+    cancelled_review_id = closed[-1].review_request_id if closed else None
+    doc_row = db.load_document(session, project_id, doc_id)
+    doc = db.document_row_to_model(doc_row) if doc_row is not None else None
+    sources: dict[str, Any] = {"doc_id": doc_id, "cancelled_review_request_id": cancelled_review_id,
+                               "cancel_note": note}
+    title = _cancelled_decision_review_title(row, doc, previous_decision)
+    open_review = db.open_document_mapping_review(session, project_id, activity_id, doc_id)
+    if open_review is not None:
+        # 이미 열린 요청이 있는 경로: 확정 매핑의 재확인 요청이 `_reopen_reviews_for_invalidated_confirmations`
+        # 로 열려 있는 상태에서 그 확정을 취소하면 여기 온다. 하나 더 만들면 ADR 0007 §4 규칙 6 "중복 생성
+        # 금지"를 깨고, 같은 쌍에 열린 요청이 둘이면 CM 이 하나를 닫아도 큐에 남는다. 그래서 그 행을
+        # 취소의 요청으로 갱신한다 — 이것은 규칙 2 의 "옛 행을 손대지 않는다"에 걸리지 않는다: 그 규칙이
+        # 지키는 것은 **닫힌 결정의 감사**(`resolved_by`·`resolution_note`)이고 이 행은 닫힌 적이 없다.
+        new_review_id = open_review.review_request_id
+        open_review.title, open_review.confidence = title, row.confidence
+        open_review.evidence = evidence.model_dump(mode="json")
+        open_review.conflicting_sources = {**(open_review.conflicting_sources or {}), **sources}
+    else:
+        review = ReviewRequest(project_id=project_id, kind="document_mapping", activity_id=activity_id,
+                               global_id=None, title=title, conflicting_sources=sources,
+                               confidence=row.confidence, evidence=evidence, assignee_role="cm")
+        db.save_review_request(session, review)
+        new_review_id = str(review.review_request_id)
+
+    # ③ 매핑 행 — 셋을 함께. `ActivityDocumentMapping` 모델이 `needs_review = (reviewed_by is None)` 을
+    # 강제하므로(`packages/core/models/document.py::_always_needs_review`) 모델을 거쳐 저장하는 한 두 필드가
+    # 갈라질 수 없다 — 반쪽 착지(§Context 3 표 2행)를 이 한 줄이 구조적으로 막는다.
+    cancelled = ActivityDocumentMapping(activity_id=activity_id, doc_id=doc_id, confidence=row.confidence,
+                                        evidence=evidence, reviewed_by=None)
+    db.save_document_mapping(session, project_id, cancelled)
+    session.flush()
+    return cancelled, new_review_id
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1021,7 +1210,8 @@ def confirmed_required_documents(session: Session, project_id: str, activity_ids
 
 __all__ = [
     "DocumentEvidence", "DocumentMappingSyncResult", "IdentityDriftCause", "IdentityDriftReport",
-    "LostDecision", "close_document_mapping_review", "confirmed_required_documents", "is_rejected_mapping",
-    "map_documents_to_activities", "map_project_documents", "open_identity_drift_review",
-    "reject_document_mapping",
+    "LostDecision", "MappingDecisionCancelReasonRequiredError", "MappingDecisionNotCancellableError",
+    "cancel_document_mapping_review", "close_document_mapping_review", "confirmed_required_documents",
+    "is_rejected_mapping", "map_documents_to_activities", "map_project_documents",
+    "open_identity_drift_review", "reject_document_mapping",
 ]

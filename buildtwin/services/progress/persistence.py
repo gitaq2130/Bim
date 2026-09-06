@@ -433,6 +433,23 @@ def find_document_mapping_review(session: Session, project_id: str, activity_id:
     return None
 
 
+def document_mapping_reviews(session: Session, project_id: str, activity_id: str,
+                            doc_id: str) -> list[ReviewRequestRow]:
+    """그 쌍의 `document_mapping` 검토요청 **전부**를 오래된 것부터(ADR 0013 규칙 2).
+
+    `find_document_mapping_review` 는 상태 무관이지만 **하나만** 돌려주므로 한 쌍에 요청 행이 여럿일 때
+    어느 것을 준 것인지가 호출자에게 보이지 않는다 — 한 쌍은 생애 동안 여러 요청 행을 갖는다(ADR 0007
+    §4-2 규칙 6 ⑤ 의 복귀·재오픈, 그리고 취소가 매번 여는 새 요청 — ADR 0013 규칙 7 "무제한").
+    취소는 "어느 결정을 취소한 것인가"(`cancelled_review_request_id`)를 새 요청에 실어야 해서 **마지막으로
+    닫힌** 행을 골라야 한다."""
+    stmt = select(ReviewRequestRow).where(
+        ReviewRequestRow.project_id == project_id,
+        ReviewRequestRow.kind == "document_mapping", ReviewRequestRow.activity_id == activity_id,
+    )
+    rows = [r for r in session.scalars(stmt) if (r.conflicting_sources or {}).get("doc_id") == doc_id]
+    return sorted(rows, key=lambda r: r.created_at)
+
+
 def save_review_request(session: Session, review: ReviewRequest) -> ReviewRequestRow:
     ensure_project(session, review.project_id)
     row = ReviewRequestRow(
