@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Site } from "@/lib/types";
+import { SITE_CONFIG } from "@/lib/siteConfig";
 import styles from "./DailyDashboardPane.module.css";
 import { useLiveClockWeather } from "./useLiveClockWeather";
 import {
@@ -511,7 +512,7 @@ export default function DailyDashboardPane({ site }: { site: Site }) {
               <span className={styles.liveSub}>{clock.date}</span>
             </div>
             <div className={styles.liveCard}>
-              <span className={styles.liveLabel}>고창 현재 날씨</span>
+              <span className={styles.liveLabel}>{SITE_CONFIG.regionLabel} 현재 날씨</span>
               <b className={styles.liveMain}>{weather.main}</b>
               <span className={styles.liveSub}>{weather.detail}</span>
             </div>

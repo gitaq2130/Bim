@@ -1,0 +1,46 @@
+{
+  "project": {
+    "name": "한들 물류센터 신축공사",
+    "shortName": "한들",
+    "siteCode": "HD",
+    "period": { "start": "2025.12.17.", "end": "2027.11.30." }
+  },
+  "primeContractor": {
+    "name": "한빛건설(주)",
+    "representative": "홍길동"
+  },
+  "cm": {
+    "organization": "가온씨엠",
+    "engineer": "김철수"
+  },
+  "documentNumber": {
+    "pattern": "{sender}-{siteCode}-{type}-{trade}-{serial}",
+    "types": ["TFA", "TFR", "FI", "SCAR", "NCR", "DN", "VE", "RFI"]
+  },
+  "ledger": {
+    "headerRow": 3,
+    "dataStartRow": 4,
+    "titleLine1": "승인/검토/참조 요청서(TFA)",
+    "titleLine2": "(한들 물류센터 신축공사)",
+    "columns": {
+      "발생일": "B",
+      "발신": "C",
+      "공종": "D",
+      "번호": "E",
+      "문서번호": "F",
+      "제목": { "TFA": "H", "TFR": "G" }
+    },
+    "fillColumns": ["B", "C", "D", "E", "H"],
+    "highlightColor": "FFFF00"
+  },
+  "holidayPlan": {
+    "sheetName": "PM단 보고용",
+    "organizations": ["가온씨엠", "한빛건설(건축)", "한빛건설(전기)", "다온이엔지", "가온기공"],
+    "font": "굴림체",
+    "columnWidths": { "E": 18, "G": 18, "H": 8, "I": 8, "J": 8 }
+  },
+  "output": {
+    "directory": "/mnt/user-data/outputs/",
+    "fileNamePrefix": "한들"
+  }
+}
