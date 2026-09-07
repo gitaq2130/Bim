@@ -13,7 +13,8 @@ model: sonnet
 ## 담당 디렉터리
 - `tests/` 전체
   - `tests/unit/<service>/` — 서비스별 pytest
-  - `tests/integration/` — API+Celery(eager)+DB(testcontainers 또는 sqlite+spatialite 폴백)
+  - `tests/integration/` — API+Celery(eager)+DB. DB 축은 `BUILDTWIN_CI_POSTGRES_URL`(ADR 0014 §2-2):
+    그 이름이 있으면 PostgreSQL + 세션 전용 스키마, 없으면 임시 SQLite. 두 갈래를 CI 가 둘 다 돈다
   - `tests/e2e/` — Playwright
   - `tests/fixtures/` — 샘플 파일과 기대값 JSON
   - `tests/metrics.json` — 회귀 기준 수치
