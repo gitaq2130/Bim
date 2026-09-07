@@ -62,6 +62,24 @@ def db_axis_contract():
     axis.check_contract(dialect=RECORDER.dialect, tests_on_postgres=RECORDER.tests_on_postgres, floor=floor)
 
 
+def pytest_terminal_summary(terminalreporter) -> None:
+    """축 측정값을 **잡 로그 한 줄**로 남긴다(리뷰 M1). 파일은 다운로드해야 보인다.
+
+    자리가 `db_axis_contract` 파이널라이저가 **아닌** 이유는 실측이다: 세션 픽스처 teardown 의 `print` 는
+    pytest 가 캡처해 **초록 실행에서 통째로 버린다**(이 트리에서 확인 — postgres 전량 `pytest -q` 로그에
+    그 줄이 나오지 않았다). `pytest_terminal_summary` 는 성공·실패·teardown ERROR 어느 쪽이든 찍힌다.
+
+    *이 훅 자신은 무보호다*: 통째로 지우면 두 축 모두 초록이다(실측, 통합 207건 트리: sqlite 207 passed /
+    postgres 207 passed, 로그에서 `[db-axis]` 줄만 사라진다). 줄의 **내용**은
+    `test_report_line_carries_every_field_the_ci_log_needs` 가 붙들지만 **찍히는지**는 붙들지 못한다 —
+    그것을 붙들려면 하위 프로세스로 pytest 를 돌려 출력을 grep 해야 하고, 이 저장소에 그런 기구가 없다.
+    `check_contract` 호출 삭제 변이와 같은 종류의 공백이다(test_99 머리말 1).
+    """
+    line = axis.report_line(axis.measured_report(RECORDER, axis.read_floor())) if RECORDER.is_postgres \
+        else axis.sqlite_log_line()
+    terminalreporter.write_line(line)
+
+
 @pytest.fixture(autouse=True)
 def _record_test_on_axis():
     """이 테스트가 축 엔진 위에서 SQL 을 실행했는가. sqlite 모드에서는 리스너가 없어 항상 0 이다."""
