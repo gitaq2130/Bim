@@ -278,28 +278,41 @@ def _make_scan_order_disagree_with_created_at(earlier_id: str, later_id: str) ->
     재라고 배정한 칸). 이 배역의 `EXPLAIN` 실행값은 **`Seq Scan` 이 아니다.** 그러나 **어느 인덱스인지는
     세션마다 다르다** — 그래서 이 문단은 인덱스 이름을 계약처럼 적지 않는다.
 
-    *재는 법*: 저장소 밖 pytest 플러그인이 SQLAlchemy `Engine` 의 `before_cursor_execute` 에서 이 배역의
-    **실제 실행 문장**(`review_requests` · 세 술어 `project_id`·`kind`·`activity_id` · `ORDER BY` 없음)에
-    같은 커넥션으로 `EXPLAIN` 을 건다. `tests/` 에 파일을 만들지 않는다.
-    *실행값*(PostgreSQL 16.13 · 포트 55435 · 잰 트리 = `ac6b30b` + 이 커밋의 변경 ·
-    **세션 N=10**, 세션마다 스키마가 새로 생긴다): 세 술어 조회가 고른 인덱스는
-    `ix_review_requests_kind` **5/10** · `ix_review_requests_project_id` **5/10** ·
-    `ix_review_requests_status` **4/10**(한 세션이 문장에 따라 둘을 함께 내기도 한다).
-    세 계획의 추정 비용은 `cost=0.14..8.17` 로 **똑같고**, 한 세션 안에서는 같은 계획이 반복된다 —
-    그래서 **한 세션에서 몇 번을 재도 표본은 1이다**(N 은 세션 수로 센다, CLAUDE.md §후속 34).
+    *재는 법*: 저장소 밖 pytest 플러그인이 SQLAlchemy `Engine` 의 `before_cursor_execute` 에서
+    `EXPLAIN` 을 같은 커넥션으로 건다(`tests/` 에 파일을 만들지 않는다). **문장을 고르는 축이 이
+    측정의 전부다**: 문장 **전체 텍스트**에 낱말이 있는지로 거르면 안 된다 — `activity_id` 는
+    **SELECT 컬럼 목록**에도 있어서 술어가 넷인 문장(`+status`)과 정렬을 얹은 문장까지 같은 칸에
+    들어온다. 그래서 **`WHERE` 절만 잘라 그 안에서 비교되는 컬럼 집합**을 만들고, 그 집합이 정확히
+    `{project_id, kind, activity_id}` 이고 `ORDER BY` 가 없는 문장만 센다 = 위 `_raw_review_scan`.
+
+    *실행값*(PostgreSQL 16.13 · 포트 55435 · 잰 트리 `68b5795` · **세션 N=10**, 세션마다 스키마가
+    새로 생긴다. 한 세션에서 그 문장은 10회 실행된다):
+
+    | 계획 | 세션 |
+    |---|---|
+    | `Index Scan using ix_review_requests_kind` (`Index Cond: kind`, `Filter: project_id AND activity_id`) | **5/10** |
+    | `Index Scan using ix_review_requests_project_id` (`Index Cond: project_id`, `Filter: kind AND activity_id`) | **5/10** |
+    | `ix_review_requests_status` | **0/10** |
+    | `Seq Scan` | **0/10** |
+
+    두 계획의 추정 비용은 `cost=0.14..8.17 rows=1 width=440` 로 **똑같다.** 그리고 **한 세션 안에서는
+    10/10 이 같은 계획**이라, 한 세션에서 몇 번을 재도 **세션 표본은 1이다** — N 은 세션 수로 센다
+    (CLAUDE.md §후속 34).
 
     그런데도 반환이 `ctid` 오름차순인 것은 btree 가 같은 키의 중복을 **heap TID 순서**로 담기
-    때문이고(PostgreSQL 12+), 그 성질은 위 셋 **모두**가 갖는다. `f6ad00e` 의 실행값: 재배치 전
+    때문이고(PostgreSQL 12+), 그 성질은 위 **두 인덱스 모두**가 갖는다. `f6ad00e` 의 실행값: 재배치 전
     `(0,7) (0,9)` → 재배치 뒤 `(0,10) (1,1)`(강제 `VACUUM` 없는 조건, N=1).
     즉 이 어긋냄이 서 있는 자리는 특정 인덱스가 아니라 **플래너가 고르는 그 btree** 이고(ADR 0015 §2-1
     의 결론이 그것이다), 플래너가 `Seq Scan` 이나 정렬을 얹은 계획으로 옮겨 가면 아래 단언이 그
     자리에서 죽는다.
 
     *갈린 값을 적는다(§6-3).* ADR 0015 §2-1 표 1행은 `ix_review_requests_kind` 가 **`project_id` 술어가
-    인덱스 조건으로 없을 때만** 나온다고 적는다(리뷰어 3/3 · 계획 0011 59/59 — 둘 다 **한 세션**의 값).
-    위 N=10 은 그 조건을 재현하지 않는다: 세 술어가 **다 있는** 문장이 5/10 세션에서 `kind` 인덱스를
-    골랐고, 아무도 이름 붙이지 않은 `status` 인덱스도 4/10 에서 나왔다. 비용이 정확히 같아 갈리는 것은
-    술어가 아니라 **플래너의 동점 처리**로 보인다. 결론(*"특정 인덱스가 아니라 그 성질"*)은 그대로이고,
+    인덱스 조건으로 없을 때만** 나온다고 적는다. 위 N=10 은 그 조건을 재현하지 않는다 — **세 술어가 다
+    있는** 그 문장이 5/10 세션에서 `kind` 인덱스를 골랐다. 비용이 정확히 같으므로 갈리는 것은 술어가
+    아니라 **플래너의 동점 처리**로 보인다. 그 표의 값들(리뷰어 3/3 · 계획 0011 59/59)이 반대 결론을
+    낸 이유도 위 *재는 법*이다: 같은 세션에서 `{project_id, kind}` + `ORDER BY created_at DESC` 문장은
+    **59회** 실행되고 `{project_id, kind, activity_id, status}` 문장도 따로 있다 — 문장을 술어 집합으로
+    가르지 않으면 그 값들이 이 칸에 섞여 들어온다. 결론(*"특정 인덱스가 아니라 그 성질"*)은 그대로이고,
     바뀌는 것은 그 결론의 근거가 **더 넓다**는 것이다.
     """
     with session_scope() as session:

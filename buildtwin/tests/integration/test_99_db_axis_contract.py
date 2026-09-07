@@ -9,8 +9,8 @@
 | `check_contract` 의 바닥값 단언 | `test_contract_fails_when_tests_on_postgres_is_below_the_floor` |
 | `check_sqlite_noop` 의 단언 | `test_sqlite_noop_check_fails_when_the_measured_file_changed` |
 | conftest 의 measured 쓰기를 축과 무관하게 만드는 것 | conftest 파이널라이저의 `check_sqlite_noop` 호출(세션 끝) |
-| `should_write_measured` 를 항상 `False` 로(= 늘 쓴다) | `test_the_finalizer_does_not_write_below_the_floor_but_still_dies_with_the_count` · `test_the_below_floor_child_left_the_measured_file_alone` |
-| `should_write_measured` 를 항상 `True` 로(= 아무 때도 안 쓴다) | `test_the_finalizer_writes_when_the_run_met_the_floor` |
+| `should_write_measured` 를 항상 **`True`** 로(= 바닥값을 무시하고 **늘 쓴다**) | `test_the_finalizer_does_not_write_below_the_floor_but_still_dies_with_the_count` · `test_the_below_floor_child_left_the_measured_file_alone` |
+| `should_write_measured` 를 항상 **`False`** 로(= **아무 때도 안 쓴다**) | `test_the_finalizer_writes_when_the_run_met_the_floor` |
 | 게이트를 `check_contract` 호출까지 함께 덮는 것(= 부분집합이 **초록**이 된다) | `test_a_below_floor_postgres_session_stays_red_and_says_the_real_count` |
 | `should_write_measured` 가 호출 형태(`-k`·`--deselect`·`argv`)를 읽게 만드는 것 | `test_the_write_gate_is_decided_by_values_not_by_the_call_shape` |
 | `report_line` 에서 필드를 빼는 것 | `test_report_line_carries_every_field_the_ci_log_needs` |
@@ -216,6 +216,14 @@ def test_the_write_gate_is_decided_by_values_not_by_the_call_shape():
     grep 은 자기 문서에 걸린다(그 축의 저장소 루트 전수는 계획 0011 §전수 목록 A ③ 에 있다).
     단언하는 것은 셋이다: 인자가 **키워드 전용 값 둘**뿐이고, `*args`·`**kwargs` 가 없고, 몸통이
     그 둘 밖의 어떤 이름도 읽지 않는다(전역·`config`·`session`·`sys.argv` 가 들어올 자리가 없다).
+
+    *그 전수를 다시 세는 사람에게*: 저장소 루트에서 `config.option` 을 **텍스트로** 세면 `.py` 히트가
+    **0 이 아니다** — 오늘 나오는 `.py` 히트는 **전부 이 파일의 산문**(이 문단과 아래 주석)이고 판정에
+    쓰는 코드는 하나도 없다. `sys.argv` 도 같아서, 그 `.py` 히트 중 하나는 위 이 함수의 docstring 이다.
+    커밋 `98ce2d6` 본문이 그 자리를 *"`config.option` `.py` 히트 0"* 이라 적은 것은 **거짓이었다**
+    (리뷰어가 잡았다 — 그 커밋 시점에도 아래 주석이 이미 있었다). 자기 문서에 걸리는 이 모양이 바로
+    이 함수가 텍스트 grep 이 아니라 **AST** 로 보는 이유다: 넓힌 목록은 히트 **수**가 아니라 각 히트를
+    **읽어서** 거른다(CLAUDE.md §6-1 의 역방향 확인).
     """
     tree = ast.parse(AXIS_SRC.read_text(encoding="utf-8"))
     fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "should_write_measured")
