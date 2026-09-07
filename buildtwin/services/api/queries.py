@@ -47,7 +47,14 @@ def project_objects(session: Session, project_id: str, include_orphaned: bool = 
 
 
 def model_objects(session: Session, model_id: str) -> list[BimObjectRow]:
-    return list(session.scalars(select(BimObjectRow).where(BimObjectRow.model_id == model_id, BimObjectRow.is_orphaned.is_(False))))
+    """`global_id` 오름차순 — 형제 `project_objects` 와 같은 키.
+
+    2D 엔티티 매칭(`services.sync.matcher`)의 `max(scored, ...)` 가 동률에서 첫 원소를 돌려주므로
+    이 순서가 어느 객체에 매핑되는지를 정한다(ADR 0016 결정 1 ⓐ · 결정 2 「결정성의 축」).
+    """
+    return list(session.scalars(select(BimObjectRow)
+                                .where(BimObjectRow.model_id == model_id, BimObjectRow.is_orphaned.is_(False))
+                                .order_by(BimObjectRow.global_id)))
 
 
 def as_models(rows: list[BimObjectRow]) -> list[BimObject]:
@@ -55,7 +62,13 @@ def as_models(rows: list[BimObjectRow]) -> list[BimObject]:
 
 
 def project_drawings(session: Session, project_id: str) -> list[DrawingRow]:
-    return list(session.scalars(select(DrawingRow).where(DrawingRow.project_id == project_id)))
+    """`drawing_id` 오름차순. 뷰어의 기본 도면 선택(`ViewerPage` 의 `list[0]` 폴백)이 이 순서에 선다.
+
+    `DrawingRow` 에는 시간 컬럼이 없고 `drawing_id` 는 불투명한 식별자다 — 이 키가 뜻하는 것은
+    「가장 최근」이 아니라 「매번 같은 것」뿐이다(ADR 0016 결정 2 「결정성의 축」).
+    """
+    return list(session.scalars(select(DrawingRow).where(DrawingRow.project_id == project_id)
+                                .order_by(DrawingRow.drawing_id)))
 
 
 def project_scans(session: Session, project_id: str) -> list[ScanRow]:
@@ -97,8 +110,14 @@ def previous_verdicts(session: Session, project_id: str, global_ids: list[str], 
 
 
 def entity_mappings_for_object(session: Session, project_id: str, global_id: str) -> list[EntityObjectMappingRow]:
-    return list(session.scalars(select(EntityObjectMappingRow).where(EntityObjectMappingRow.project_id == project_id,
-                                                                     EntityObjectMappingRow.global_id == global_id)))
+    """(`drawing_id`, `entity_handle`) 오름차순. `ObjectDetail.linked.drawing_id` 가 `[0]` 을 읽는다.
+
+    한 객체가 여러 도면·여러 핸들에 걸리므로 이 순서가 그 한 원소를 정한다(ADR 0016 결정 1 ⓐ).
+    """
+    return list(session.scalars(select(EntityObjectMappingRow)
+                                .where(EntityObjectMappingRow.project_id == project_id,
+                                       EntityObjectMappingRow.global_id == global_id)
+                                .order_by(EntityObjectMappingRow.drawing_id, EntityObjectMappingRow.entity_handle)))
 
 
 def entity_mapping(session: Session, drawing_id: str, handle: str) -> EntityObjectMappingRow | None:
