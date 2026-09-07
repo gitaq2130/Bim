@@ -275,12 +275,32 @@ def _make_scan_order_disagree_with_created_at(earlier_id: str, later_id: str) ->
     둔 값을 이 파일이 계약으로 고정한다.
 
     *무정렬 조회가 실제로 무엇을 따라가는가*(계획 0010 §확인하지 않은 것 3 이 `qa` 에게 이 작업에서
-    재라고 배정한 칸). 이 배역의 `EXPLAIN` 실행값은 **`Seq Scan` 이 아니다**:
-    `Index Scan using ix_review_requests_kind … Index Cond: kind = 'document_mapping'`.
+    재라고 배정한 칸). 이 배역의 `EXPLAIN` 실행값은 **`Seq Scan` 이 아니다.** 그러나 **어느 인덱스인지는
+    세션마다 다르다** — 그래서 이 문단은 인덱스 이름을 계약처럼 적지 않는다.
+
+    *재는 법*: 저장소 밖 pytest 플러그인이 SQLAlchemy `Engine` 의 `before_cursor_execute` 에서 이 배역의
+    **실제 실행 문장**(`review_requests` · 세 술어 `project_id`·`kind`·`activity_id` · `ORDER BY` 없음)에
+    같은 커넥션으로 `EXPLAIN` 을 건다. `tests/` 에 파일을 만들지 않는다.
+    *실행값*(PostgreSQL 16.13 · 포트 55435 · 잰 트리 = `ac6b30b` + 이 커밋의 변경 ·
+    **세션 N=10**, 세션마다 스키마가 새로 생긴다): 세 술어 조회가 고른 인덱스는
+    `ix_review_requests_kind` **5/10** · `ix_review_requests_project_id` **5/10** ·
+    `ix_review_requests_status` **4/10**(한 세션이 문장에 따라 둘을 함께 내기도 한다).
+    세 계획의 추정 비용은 `cost=0.14..8.17` 로 **똑같고**, 한 세션 안에서는 같은 계획이 반복된다 —
+    그래서 **한 세션에서 몇 번을 재도 표본은 1이다**(N 은 세션 수로 센다, CLAUDE.md §후속 34).
+
     그런데도 반환이 `ctid` 오름차순인 것은 btree 가 같은 키의 중복을 **heap TID 순서**로 담기
-    때문이다(PostgreSQL 12+). 같은 실행의 값: 재배치 전 `(0,7) (0,9)` → 재배치 뒤 `(0,10) (1,1)`
-    (강제 `VACUUM` 없는 조건, N=1). 즉 이 어긋냄이 서 있는 자리는 **그 인덱스**이고, 인덱스가 바뀌면
-    다시 재야 한다 — 그때 아래 단언이 그 자리에서 죽는다.
+    때문이고(PostgreSQL 12+), 그 성질은 위 셋 **모두**가 갖는다. `f6ad00e` 의 실행값: 재배치 전
+    `(0,7) (0,9)` → 재배치 뒤 `(0,10) (1,1)`(강제 `VACUUM` 없는 조건, N=1).
+    즉 이 어긋냄이 서 있는 자리는 특정 인덱스가 아니라 **플래너가 고르는 그 btree** 이고(ADR 0015 §2-1
+    의 결론이 그것이다), 플래너가 `Seq Scan` 이나 정렬을 얹은 계획으로 옮겨 가면 아래 단언이 그
+    자리에서 죽는다.
+
+    *갈린 값을 적는다(§6-3).* ADR 0015 §2-1 표 1행은 `ix_review_requests_kind` 가 **`project_id` 술어가
+    인덱스 조건으로 없을 때만** 나온다고 적는다(리뷰어 3/3 · 계획 0011 59/59 — 둘 다 **한 세션**의 값).
+    위 N=10 은 그 조건을 재현하지 않는다: 세 술어가 **다 있는** 문장이 5/10 세션에서 `kind` 인덱스를
+    골랐고, 아무도 이름 붙이지 않은 `status` 인덱스도 4/10 에서 나왔다. 비용이 정확히 같아 갈리는 것은
+    술어가 아니라 **플래너의 동점 처리**로 보인다. 결론(*"특정 인덱스가 아니라 그 성질"*)은 그대로이고,
+    바뀌는 것은 그 결론의 근거가 **더 넓다**는 것이다.
     """
     with session_scope() as session:
         labelled = {"이른행": earlier_id, "늦은행": later_id}
@@ -767,7 +787,7 @@ def test_cancelling_leaves_a_durable_expert_review_log_row_that_survives_recompu
     그 대조군을 **실행으로 태웠다**(적어 두는 것은 커버리지가 아니다 — CLAUDE.md §6-1):
     `_confirm_document_mapping_row` 의 `record_expert_review(...)` 를 지우고 `.venv/bin/pytest -q` →
     **하나도 죽지 않는다**. 세 트리에서 같은 값이다 — `716d67d` 직전 **804 passed**, 계획 0008 §2-a 가
-    `136e66f` 에서 **805 passed**, 이 사이클(기준선 807)에서 **807 passed**. 즉 이 단언들은 취소 축만
+    `136e66f` 에서 **805 passed**, `7d44cca` 에서 **807 passed**. 즉 이 단언들은 취소 축만
     잡는다(계획 0008 §과제 1 이 더한 정렬 회귀 둘도 이 축을 넓히지 않는다). 같은 실측이
     확정 축의 로그도 무보호임을 말하는데, 이 파일은 그 축을 고정하지 않는다 — §후속 5 가 넘긴 것은
     취소의 감사이고, 축을 넓히면 "취소만" 잡는 것이 아니게 된다.
