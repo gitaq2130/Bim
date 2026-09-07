@@ -466,8 +466,12 @@ def document_mapping_reviews(session: Session, project_id: str, activity_id: str
     `find_document_mapping_review` 는 상태 무관이지만 **하나만** 돌려주므로 한 쌍에 요청 행이 여럿일 때
     어느 것을 준 것인지가 호출자에게 보이지 않는다 — 한 쌍은 생애 동안 여러 요청 행을 갖는다(ADR 0007
     §4-2 규칙 6 ⑤ 의 복귀·재오픈, 그리고 취소가 매번 여는 새 요청 — ADR 0013 규칙 7 "무제한").
-    취소는 "어느 결정을 취소한 것인가"(`cancelled_review_request_id`)를 새 요청에 실어야 해서 **마지막으로
-    닫힌** 행을 골라야 한다."""
+    취소는 "어느 결정을 취소한 것인가"(`cancelled_review_request_id`)를 실어야 하는데, **그 답이 닫힌 행인
+    것은 취소가 새 요청을 여는 갈래뿐이다** — 거기서는 그 쌍의 **마지막으로 닫힌** 행이 그 결정을 기록한
+    행이고(닫힌 행이 하나도 없으면 `None`), 그 갈래만 이 조회를 쓴다. 취소가 **이미 열린 요청을 갱신하는**
+    갈래에서 그 결정을 기록한 행은 열려 있는 그 행 자신이라 이 목록의 닫힌 행 어느 것도 그 답이 아니다 —
+    그래서 그 갈래는 이 함수를 부르지 않고 `None` 을 싣는다(ADR 0013 §Deferred 8,
+    `document_mapper.cancel_document_mapping_review`)."""
     stmt = select(ReviewRequestRow).where(
         ReviewRequestRow.project_id == project_id,
         ReviewRequestRow.kind == "document_mapping", ReviewRequestRow.activity_id == activity_id,

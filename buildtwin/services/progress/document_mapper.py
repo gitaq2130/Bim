@@ -724,16 +724,38 @@ def cancel_document_mapping_review(session: Session, project_id: str, activity_i
     extra[_CANCELLED_REVIEWS_KEY] = history
     evidence = before_evidence.model_copy(update={"note": note, "extra": extra})
 
-    # ② 취소가 여는 요청. `cancelled_review_request_id` 는 **마지막으로 닫힌** 요청이다 — 한 쌍은 생애
-    # 동안 여러 요청 행을 갖고(복귀·재오픈·반복 취소), 지금 취소하는 결정을 기록한 것이 그 행이다.
-    closed = [r for r in db.document_mapping_reviews(session, project_id, activity_id, doc_id) if r.status != "open"]
-    cancelled_review_id = closed[-1].review_request_id if closed else None
+    # ② 취소가 여는 요청. `cancelled_review_request_id` 는 **지금 취소하는 결정을 기록한 닫힌 요청 행**이고,
+    # 그런 행이 없으면 `None` 이다 — 모르는 값을 흔한 값으로 떨어뜨리는 폴백을 두지 않는다(CLAUDE.md §6-4 2).
+    # 아래 두 갈래에서 값이 다르다:
+    #  · **새 요청을 여는 갈래**(열린 요청이 없다) — 그 쌍의 **마지막으로 닫힌** 행이 그 행이다. 한 쌍은
+    #    생애 동안 여러 요청 행을 갖지만(복귀·재오픈·반복 취소) 확정도 반려도 **열린 행**을 닫고
+    #    (`close_document_mapping_review` / `resolve_review` 의 `review_already_resolved` 가드), 결정 뒤에
+    #    새 행을 만드는 경로가 없으므로 그 결정의 행이 곧 가장 최근 행이다.
+    #  · **이미 열린 요청을 갱신하는 갈래**(아래) — `None`. 결정이 선 쌍(`reviewed_by is not None`)에 열린
+    #    요청이 있는 길은 `_reopen_reviews_for_invalidated_confirmations` 뿐이다. 이 단정이 기대는 **부재**는
+    #    둘이고 각각 이렇게 확인한다: 요청 행을 다시 `open` 으로 되돌리는 자리가 그것뿐 —
+    #        grep -rnE '^[^#]*status = "open"' services/ --include=*.py   (기대 히트 1 = 그 재오픈.
+    #        주석 줄을 빼지 않으면 이 문단 자신이 히트한다 — 실측: 뺄 때 1, 안 뺄 때 2)
+    #    그리고 `document_mapping` 요청을 만드는 자리는 `_document_mapping_review`(그 호출자
+    #    `_sync_pending_document_mapping_reviews` 가 `needs_review` 매핑에만 연다) · 그 재오픈 · 이 함수
+    #    셋뿐이며, 앞의 하나와 이 함수는 결정이 서 있지 않은 쌍에만 연다.
+    #    그 함수의 두 갈래 어디에도 지금 취소하는 결정을 기록한 **닫힌** 행이 없다: 되열린 행이면 그 결정을
+    #    기록한 것이 열려 있는 그 행 자신이고(그 결정의 감사는 재오픈이 이미 지웠다 — 아래 갈래 주석),
+    #    그 함수가 새로 만든 행이면 그 쌍에 요청 행이 아예 없었다는 뜻이다(`find_document_mapping_review`
+    #    가 상태 무관이다). `closed[-1]` 을 그대로 쓰면 **이미 취소된 옛 결정의 행**을 가리켜 이름("어느
+    #    결정을 취소한 것인가")과 값이 달라진다(ADR 0013 §Deferred 8 `[P-corner-*]`).
     doc_row = db.load_document(session, project_id, doc_id)
     doc = db.document_row_to_model(doc_row) if doc_row is not None else None
-    sources: dict[str, Any] = {"doc_id": doc_id, "cancelled_review_request_id": cancelled_review_id,
-                               "cancel_note": note}
     title = _cancelled_decision_review_title(row, doc, previous_decision)
     open_review = db.open_document_mapping_review(session, project_id, activity_id, doc_id)
+    if open_review is None:
+        closed = [r for r in db.document_mapping_reviews(session, project_id, activity_id, doc_id)
+                  if r.status != "open"]
+        cancelled_review_id = closed[-1].review_request_id if closed else None
+    else:
+        cancelled_review_id = None
+    sources: dict[str, Any] = {"doc_id": doc_id, "cancelled_review_request_id": cancelled_review_id,
+                               "cancel_note": note}
     if open_review is not None:
         # 이미 열린 요청이 있는 경로: 확정 매핑의 재확인 요청이 `_reopen_reviews_for_invalidated_confirmations`
         # 로 열려 있는 상태에서 그 확정을 취소하면 여기 온다. 하나 더 만들면 ADR 0007 §4 규칙 6 "중복 생성
