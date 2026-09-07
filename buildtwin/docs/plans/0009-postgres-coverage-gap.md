@@ -1,0 +1,625 @@
+# 계획 0009 — §후속 10: PostgreSQL 커버리지 공백 · **착수 크기를 먼저 잰다**
+
+- 작성: architect
+- 날짜: 2026-09-07
+- 관련: `docs/adr/0014-database-as-a-test-parameter.md`(이 사이클이 쓰는 ADR — 결정의 정본),
+  `docs/plans/0007-*.md` §과제 2 전체(§2-a·2-b·2-c — §후속 10 의 원 조사) · §후속 10,
+  `docs/plans/0008-*.md` §후속 1~15 · §Deferred · §리스크 2 · §M-2-2(이월 상실 두 모드) · §M-4,
+  CLAUDE.md §1 · §2 소유 · §3-4 · §3-13 · §6-1 ①②③ · §6-2 · §6-3 · §6-4 · §6-5
+
+---
+
+## 0. 이 문서의 실측이 나온 자리 (재현 방법)
+
+**작업 트리** `/home/user/Bim/buildtwin`, **저장소 루트는 `/home/user/Bim`**(프로젝트는 그 하위
+`buildtwin/`), 브랜치 `claude/buildtwin-initial-setup-ubulzb`, **HEAD `5beb954`**.
+루트에서 `git status --porcelain` **전문이 빈 출력**이다(모든 변이 전후로 확인했다).
+
+**§6-1 이 말하는 "저장소 루트"는 `/home/user/Bim` 이다.** 이 사이클에서 그 구별이 다시 결론을 바꿨다 —
+`.github/workflows/buildtwin-ci.yml` 은 **`buildtwin/` 밑이 아니라 루트에 있고**, 이 사이클의 대상
+파일이다. 계획 0007 §0 의 선례 그대로다.
+
+기준선(전부 이 사이클에서 직접 쟀다):
+
+```
+$ cd /home/user/Bim/buildtwin && .venv/bin/pytest -q
+807 passed, 1 warning in 85.85s (0:01:25)
+
+$ .venv/bin/pytest -q tests/integration
+191 passed, 1 warning in 32.64s
+```
+
+**이 사이클은 이 저장소에서 처음으로 PostgreSQL 을 실제로 켜고 쟀다.** 앞선 여덟 사이클의 모든 수치는
+SQLite 값이었다(계획 0008 §M-4 1: *"postgres 를 켜 보지 않았다"*). 측정 환경과 탐침 출력의 정본은
+**ADR 0014 §0·§1-3·§4-1·§5-3** 이다 — 옮겨 적어 두 자리에 같은 답을 두지 않는다(CLAUDE.md §2).
+이 계획이 그 값을 인용할 때는 `[PG-*]`·`[B-*]`·`[SWAP]`·`[ORD]` 이름으로 부른다.
+
+**이 문서의 모든 `파일:줄`·커밋 참조는 HEAD `5beb954` 트리의 것이다** — HEAD 가 움직여도 갱신하지
+않는다(CLAUDE.md §3-13 첫째 갈래).
+
+---
+
+## 목표
+
+1. **§후속 10 의 착수 크기를 값으로 정한다.** 계획 0007·0008 이 둘 다 "크기를 모른다"는 이유로
+   미룬 항목이므로, **이 사이클의 첫 산출물은 그 크기다**(§과제 1).
+2. **그 크기 위에서 ADR 0014 를 쓰고, ADR 이 정한 것만 작업으로 내린다.**
+3. **§후속 10 을 한정어와 함께 닫는다** — "postgres 에서 아무 테스트도 돌지 않는다"에 한해서.
+   그 항목이 드러낸 **다른 축**(정렬 미지정 42자리의 순서 계약)은 §후속 17 로 새로 연다.
+   두 문장을 하나로 합치는 것이 이 항목이 겨냥한 결함 자신이다(§과제 3).
+
+---
+
+# 과제 1 — 착수 크기를 쟀다. **한 사이클에 들어간다**
+
+## 1-a. 어떻게 쟀는가 — 층을 갈라 각 층에 실행값을 붙였다
+
+계획 0007 §2-b 는 *"§후속 10 의 일은 「드라이버를 선언하는 것」이 아니라 「DB 를 테스트 파라미터로
+만드는 것」"* 이라고 적었지만, **그 일이 얼마나 큰지는 아무도 재지 않았다.** 재려면 postgres 를 켜야
+하는데 여덟 사이클 동안 아무도 켜지 않았다 — 그것이 크기를 모르는 이유였다.
+
+**켰다.** 측정 도구는 스크래치패드 pytest 플러그인 하나이고(커밋하지 않는다),
+`packages.core.db.get_engine` **하나만** 가로채 sqlite URL 을 postgres 스키마로 바꾼다.
+**운영 코드의 sqlite 분기 넷은 그대로 sqlite 갈래로 간다** — 그 구별이 층을 가르는 칼이다.
+
+| 층 | 질문 | 실행값 | 크기 |
+|---|---|---|---|
+| **A. SQL·ORM·정렬 호환성** | 스키마가 postgres 에 서고 지금 스위트가 도는가 | `create_all` → **24 테이블**. `pytest tests/unit tests/invariants tests/regression tests/integration` → **795 passed**. `[SWAP] engines->postgres=238 · passthrough=0 · 테스트 파일이 직접 만든 sqlite 엔진=15` | **0** — 고칠 것이 없다 |
+| **B. sqlite 분기 넷** | `DATABASE_URL` 이 진짜 postgres 면 무엇이 죽나 | `[B-3]` 시드 **0** → `[B-4]` 로그인 **401**. 시드를 우회하면 `[B2-2] RuntimeError: JWT_SECRET 환경변수가 필요합니다 (.env)` | **1자리 수정 + 1자리는 테스트가 값 주입**(ADR 0014 §2-3) |
+| **C. 픽스처 파라미터화** | sqlite 를 못박는 11자리 중 몇이 축 하나로 움직이나 | `core_db` 경유는 전부 움직였다(238 엔진). 테스트 파일이 `create_engine("sqlite://")` 을 **직접** 부르는 자리 **15회**는 축 밖 | **`tests/integration/conftest.py` 한 파일** |
+| **D. 드라이버** | 무엇이면 A 가 도나 | `psycopg[binary] 3.3.5` 하나(5.3 MB 휠). `asyncpg` 불필요 | **`pyproject.toml` 한 줄** |
+
+## 1-b. 판정 — 한 사이클이다. 그 판정을 **무엇이 바꿀 수 있었는지**도 적는다
+
+**A 층이 0 실패라는 것이 판정의 전부다.** 계획 0007 §2-c 가 두려워한 것(*"아무도 지정하지 않은 정렬
+전부가 postgres 에서 한꺼번에 드러난다"*)이 **이 스위트에서는 일어나지 않았다.** 만약 A 층이 수십 건
+실패했다면 이 사이클은 "정렬을 지정하는 사이클"과 "DB 를 파라미터로 만드는 사이클"로 쪼개야 했다 —
+그 분기점이 실측 하나(795 passed)에 달려 있었고, 그래서 **이 사이클의 첫 작업이 그 측정이었다.**
+
+남은 것은 B·C·D 이고 각각 한 파일·한 줄 규모다. 작업 여덟 개(그중 architect 넷, api 하나, qa 셋)이고
+계획 0006~0008 과 같은 크기다.
+
+*역방향 확인 — "한 사이클"이 무엇을 밖에 두나.* 세 가지를 **의도적으로** 밖에 둔다. 쪼갠 것은
+사이클이 아니라 **§후속 10 이 실제로 갖고 있던 여러 축**이고, 그 축들은 아래 §후속 16·17·18 로
+번호를 받는다.
+
+| 밖에 두는 것 | 왜 | 넘기는 자리 |
+|---|---|---|
+| `tests/unit` 을 postgres 로 | **가능함은 쟀다**(스왑으로 604 passed). 테스트 파일 네 자리가 직접 엔진을 만들어 conftest 축 하나로 안 움직인다 — `qa` 의 별도 커밋 | §후속 16 |
+| 정렬 미지정 42자리의 **순서 계약** | 이것이 §후속 10 이 실제로 연 두 번째 축이다. 초록은 그 축을 검증하지 않는다(§과제 3) | §후속 17 |
+| 데모 시드를 앱 기동에서 떼기 | `make dev`·`make api`·통합 픽스처 셋을 함께 바꾼다 | ADR 0014 §Deferred 1 / §후속 18 |
+
+---
+
+# 과제 2 — ADR 0014 가 정한 것 (요약 — **정본은 ADR 이다**)
+
+| # | 질문 | 결정 | ADR 자리 |
+|---|---|---|---|
+| 1 | 드라이버와 그 자리 | `psycopg[binary]` 를 `pyproject.toml` 의 **본 의존성**에 | §2-1 |
+| 2 | 테스트의 DB 축 | **이미 있는 이름** `BUILDTWIN_CI_POSTGRES_URL`. 새 이름을 만들지 않는다 | §2-2 |
+| 3 | 격리 | 세션마다 새 스키마 + `search_path`, 끝나면 `DROP SCHEMA … CASCADE` | §2-2 |
+| 4 | **sqlite 분기 넷** | `db.py:23`·`db.py:41`·`settings.py:38` **변경 없음**, `main.py:28` **조건을 넓힌다** | §2-3 |
+| 5 | 어떤 집합을 postgres 로 | `tests/integration`(191) | §2-4 |
+| 6 | **postgres 에서 돌았음을 값으로** | `tests/postgres.floor.json`(바닥값) + `tests/postgres.measured.json`(측정값), 강제 셋 | §2-5 |
+| 7 | CI | 통합을 **두 번** 돈다(sqlite 한 번, postgres 한 번) | §2-6 |
+
+## 2-a. `main.py:28` 데모 시드를 어떻게 하기로 했는가 (이 사이클의 유일한 운영 코드 수정)
+
+```python
+# services/api/main.py  (api 소유)
+- if url.startswith("sqlite"):
++ if url.startswith("sqlite") or settings.seed_dev_data:
+```
+
+새 설정 `Settings.seed_dev_data: bool = False`(`packages/core/settings.py`, architect 소유) +
+`.env.example` 에 `SEED_DEV_DATA=` 키 이름 등록(§3-4: 키 이름만).
+
+**왜 이 모양인가.** 실측 `[B-3]`·`[B-4]`: postgres 로 돌리면 사용자 **0명**이 시드되고 로그인이
+**401 `{"detail":"invalid credentials","code":"unauthorized"}`** 로 떨어진다. **예외가 없다.** 통합
+테스트 191건 전부가 `tokens` 픽스처의 네 역할 로그인 위에 서 있으므로(`conftest.py:57-66`), 이 분기를
+그대로 두면 postgres 잡은 "전부 401" 로 죽고 그것을 고치는 유일한 방법이 시드 조건이다.
+
+*역방향 확인 — 왜 `or` 로 **넓히기만** 하고 `if settings.seed_dev_data:` 로 갈아치우지 않나.*
+갈아치우면 sqlite 갈래가 죽는다: `make dev`·`make api` 의 로컬 개발 플로우 전부와 통합 191건.
+CLAUDE.md §6-3 의 *"조건을 바꾸면 그 결과를 소비하는 게이트까지 따라간다"* 자리다.
+
+*역방향 확인 — `or` 가 무엇을 더 들여보내나.* 운영 postgres 에 플래그를 켜면 데모 계정이 생긴다.
+그 위험은 새로 만들어지지 않는다(운영이 sqlite 면 지금도 시드된다). 기본값 `False` + `.env.example`
+등록으로 **관측 가능하게** 둔다.
+
+*역방향 확인 — `settings.py:38`(JWT) 은 왜 안 고치나.* 그 분기는 §3-4(시크릿은 `.env` 에만)를 지키는
+**안전 장치**다. 실측 `[B2-2]` 는 그것이 **옳게 죽는다**는 것을 보였다 — 답은 코드를 넓히는 것이 아니라
+**테스트 환경이 `JWT_SECRET` 을 주는 것**이다(ADR 0014 §2-3 3, Alternatives 6).
+
+## 2-b. **"postgres 에서 실제로 돌았음"을 값으로 남기는 방법**
+
+> 컨테이너를 띄우고 테스트 **한 개**만 붙여도 잡은 초록이 되고 §후속 10 은 "닫혔다"고 적을 수 있다.
+> 그것이 이 항목이 겨냥한 결함(조용히 죽는 것)의 재생산이다. **그래서 초록은 증거가 아니다.**
+
+선례를 그대로 쓴다 — `tests/metrics.json` ↔ `tests/metrics.measured.json`(강제 자리는
+`tests/regression/test_metrics.py`). 그 형식이 이미 이 저장소에서 "매핑이 조용히 0건이 되는" 실패를
+잡고 있다.
+
+| 파일 | 성격 | 내용 |
+|---|---|---|
+| `tests/postgres.floor.json` | **커밋된 바닥값** | `{"min_tests_on_postgres": 191}` — 초기값은 이 사이클의 실측 |
+| `tests/postgres.measured.json` | **커밋된 측정값**(드리프트가 diff 로 보이게) | `{"dialect": "...", "server_version": "...", "tests_on_postgres": N, "engines": M}` |
+
+postgres 모드에서 통합 세션이 끝날 때 **셋을 강제한다**:
+
+1. `dialect == "postgresql"` — 아니면 실패. *이것이 잡는 것*: conftest 가 환경변수를 못 읽어
+   **조용히 sqlite 로 떨어지는 것** = §후속 10 의 결함 자신.
+2. `tests_on_postgres >= min_tests_on_postgres` — 미달이면 실패. *이것이 잡는 것*: 한 개만 붙이고
+   초록을 부르는 것, 그리고 나중에 누군가 대부분을 sqlite 로 되돌리는 것.
+3. sqlite 모드에서는 **아무것도 쓰지 않고 아무것도 단언하지 않는다** — 로컬이 postgres 없이 돈다.
+
+*역방향 확인 — 왜 `tests_on_postgres` 이고 `engines` 가 아닌가.* 통합 conftest 의 `client` 는 세션
+스코프라 엔진이 **하나뿐**이다(실측: `tests/integration` 단독 실행에서 `[SWAP] engines->postgres=1`).
+엔진 수를 세면 바닥값이 1 이 되어 "한 개만 붙여도 초록"을 **정확히 통과시킨다.**
+
+*역방향 확인 — 이 값이 "커버리지"인가.* **아니다.** 세는 것은 그 엔진 위에서 실행된 테스트 수이고,
+그 테스트들이 postgres 특유의 결함을 잡는지는 재지 않는다 — §과제 3 의 677 이 그 구별의 실측이다.
+그러므로 이름은 커버리지가 아니라 **"조용히 줄어들지 않음"의 감시**다. `qa` 는 그 한정을 파일
+주석에 함께 적는다.
+
+*강제 자리의 열린 선택(소유자 판단).* 세션 픽스처의 finalizer 에서 `assert` 하면 **새 테스트 id 가
+생기지 않아 sqlite 기준선 807 이 그대로**이지만 실패가 teardown ERROR 로 보고된다. 별도 테스트
+파일로 빼면 실패가 깔끔한 대신 sqlite 모드에서 **skip 한 개**가 늘고 — 그 skip 은 이 저장소가 싫어하는
+"조용히 죽은 자리"의 모양이다. **계획은 계약만 못박고 기구는 `qa` 가 고른다.**
+
+---
+
+# 과제 3 — §6-2 를 **이 사이클 자신에게** 걸었다: 초록은 증거가 아니다
+
+CLAUDE.md §6-2 의 물음: **"이 단언의 기대값을, 결함 있는 코드가 그대로 만족하는가?"**
+이 사이클의 단언은 *"postgres 잡이 초록이다"* 이고, 답은 **그렇다**이다.
+
+`tests/integration` 을 postgres 위에서 돌리며 실행된 SQL 을 셌다(실행값 `[ORD]`):
+
+```
+[ORD] engines_pg=1  select_exec=12126  noorder_exec=11120  noorder_multirow_exec=677
+   236  FROM activity_document_mappings      18  FROM entity_object_mappings
+   170  FROM review_requests                  2  FROM state_transitions
+   114  FROM activity_object_mappings         2  FROM files
+    92  FROM bim_objects                      1  FROM activity_relations
+    41  FROM documents                        1  FROM activities
+```
+
+**`ORDER BY` 없이 2행 이상을 돌려준 조회가 677회 실행되고, 191 테스트가 전부 통과했다.**
+그 677회의 순서는 **이 postgres·이 데이터량·이 플래너**에서 우연히 단언이 견디는 순서였을 뿐이고,
+어느 단언도 그 순서를 계약으로 붙들지 않는다. 통계가 바뀌어 플래너가 접근 경로를 바꾸면
+(`[PG-bulk-plan]` 이 200행 + `ANALYZE` 에서 Index Scan → Seq Scan 으로 갈리는 것을 보였다)
+그중 무엇이 갈릴지 **아무도 모른다.**
+
+**그러므로 §후속 10 은 한정어와 함께 닫는다** — 닫히는 것은 *"postgres 에서 아무 테스트도 돌지
+않는다"* 하나이고, *"정렬 미지정 42자리의 순서 계약"* 은 **§후속 17 로 새로 연다.**
+
+## 3-a. 곁가지 실측 — 계획 0008 §리스크 2 가 답을 받았다
+
+계획 0008 §1-b-2 는 *"postgres 는 순서를 보장하지 않는다 — **다만 이것은 추론이고 실측이 아니다**"*,
+§리스크 2 는 *"바꾸지 않으면 그 단언이 postgres 잡에서 죽는다"* 를 열어 뒀다. **쟀다**(ADR 0014 §4-1):
+
+| 실행 | 결과 |
+|---|---|
+| `[PG-after-delete-reinsert]` 스캔 | `['R2','R1']` — **심기가 postgres 에서도 먹는다** |
+| `test_document_mapping_reviews_orders_by_created_at_not_by_db_scan_order`(postgres) | **1 passed** |
+| `tests/integration/test_20_mapping_decision_cancel.py`(postgres) | **14 passed** |
+| 위 둘 + `persistence.py:480` → `return rows` 변이, **postgres** | **2 failed, 20 passed** |
+| 같은 변이, **sqlite** | **2 failed, 20 passed**(같은 두 이름) |
+
+**계획 0008 이 붙인 정렬 계약 둘은 postgres 에서도 장식이 아니다.** 계획 0008 §M-4 1 은 **기록물이라
+고치지 않는다**(§3-13) — 정정의 자리는 이 계획과 ADR 0014 §4-1 이다.
+
+---
+
+## 영향 범위
+
+**데이터 모델(`packages/core/models/`).** 변경 **없음**. 새 필드도 새 제약도 없다.
+`orm.py:1` 의 *"SQLite·PostgreSQL 공용 … PostGIS 공간 인덱스는 Deferred"* 는 이 사이클이 처음으로
+**실행으로 확인했고 참이다**(ADR 0014 §1-4) — 참인 단정이라 고치지 않는다.
+
+**설정(`packages/core/settings.py`, architect).** `seed_dev_data: bool = False` 한 필드.
+
+**서비스.** `services/api/main.py` 조건 한 줄 + 같은 트리의 문구 셋(`api` 소유).
+`services/progress`·`services/sync`·`services/ingest` 는 **한 글자도 건드리지 않는다**.
+
+**화면.** 변경 없음. `apps/web/` 을 건드리지 않는다.
+
+**테스트(`tests/`, `qa`).** `tests/integration/conftest.py` 파라미터화 + 바닥값·측정값 파일 둘.
+
+**CI(`.github/workflows/`, `qa`).** `integration` 잡에 postgres 스텝.
+
+**의존성(`pyproject.toml`).** `psycopg[binary]` 한 줄. **소유가 §2 에 없다** — §후속 19.
+
+**문서(`docs/`·`.claude/agents/`, architect).** 이 계획 + ADR 0014 + `qa.md` 한 줄 정정.
+
+**ADR.** **필요하다 — 이 사이클이 쓴다**(`docs/adr/0014-database-as-a-test-parameter.md`).
+
+---
+
+## 작업 분배
+
+**축.** 계획 0006·0007·0008 과 같다("한 소유가 한 커밋으로 끝낼 수 있는 단위" + **낡게 만드는 자리
+두 방향**). 축을 바꾸지 않는 이유는 §6-3 9회차다 — 축을 바꾸면 무주공산은 없어지지 않고 자리를 옮긴다.
+
+*역방향 확인 — 이 축이 놓치는 것.* 이 표는 **파일**을 낡게 만드는 것을 본다. 이 사이클이 낡게 만드는
+것 중 파일이 아닌 것: **계획 0008 §M-4 1·§리스크 2 의 "postgres 를 켜 보지 않았다"** 이다. 그것은
+`architect` 자신의 문서이지만 **기록물이라 고치지 않는다** — 그래서 그 칸은 "없음"이 아니라
+**"고치지 않기로 한 것"** 으로 아래 마지막 행에 적는다. 지워 두면 다음 사이클이 그 문장을 다시 믿는다.
+
+| # | 에이전트 | 담당 파일 | 입력 | 출력 | 완료 조건 | 이 작업이 낡게 만드는 남의 자리 → 배정 | 이 작업을 낡게 만들 수 있는 작업 |
+|---|---|---|---|---|---|---|---|
+| 1 | **architect**(이 커밋) | `docs/plans/0009-*.md` | 계획 0007 §과제 2 · 계획 0008 §후속 1~15·§Deferred·§M-4 · 이 사이클의 실측 | 이 계획 문서 | §과제 1 층 표의 네 칸이 전부 실행값이고, §전수 목록 A 의 ③ 이 실제로 태워졌으며, **계획 0008 §후속 1~15 · §Deferred 1~6 · §M-4 1~10 이 번호를 유지한 채 전부 옮겨졌다** | 없음(문서만) | 작업 2 가 ADR 문안을 바꾸면 §과제 2 요약표가 어긋난다 → 작업 8 이 대조 |
+| 2 | **architect**(별도 커밋) | `docs/adr/0014-*.md` | §과제 1 실측 전부 | ADR 0014 | 결정 일곱이 각각 근거 + 역방향 확인을 갖는다. §5 한정어 표의 각 칸이 **실행값 또는 코드 인용**이다 | 없음 | 없음 |
+| 3 | **architect**(별도 커밋) | `packages/core/settings.py` · `buildtwin/.env.example` | ADR 0014 §2-3 4 | `seed_dev_data: bool = False` + `SEED_DEV_DATA=` 키 이름 | `.venv/bin/pytest -q` → **807 passed**(이 필드만으로는 아무 동작도 바뀌지 않는다 — 소비자는 작업 4 다). `make lint` exit 0 | `services/api/main.py`·`services/api/README.md`·`services/api/auth/seed.py` 가 "sqlite 일 때만 시드"라고 적는다 → **작업 4(api)** | 없음 |
+| 4 | **api** | `services/api/main.py` · `services/api/auth/seed.py` · `services/api/README.md` | ADR 0014 §2-3 4, 작업 3 | 시드 조건 `or settings.seed_dev_data` + 같은 트리 문구 셋 정정 | ① `main.py:25` docstring(*"sqlite 개발 DB 면 데모 사용자 시드"*) · `auth/seed.py:1,3`(*"settings.database_url 이 sqlite 이고 … 호출된다"*, *"운영 DB 에는 절대 적용되지 않는다"*) · `README.md:11,23,25-26`(*"sqlite 전용"*, *"PostgreSQL 등 운영 DB 에서는 시드하지 않으며"*)가 **전부 새 조건을 말한다** ② `pytest -q` → **807 passed**(sqlite 기본값 `False` 에서 동작 불변) ③ `make test` 통과 | `services/api/jobs.py:80,309`(*"SQLite 쓰기 잠금"*)은 **좁아질 뿐 거짓이 아니다** — 같은 트리·같은 소유라 판단만 커밋 본문에 적는다 | 작업 5 가 postgres 로 이 갈래를 처음 실행한다 |
+| 5 | **qa** | `pyproject.toml` · `tests/integration/conftest.py` | ADR 0014 §2-1·2-2·2-4, 작업 3·4 | `psycopg[binary]` 선언 + `BUILDTWIN_CI_POSTGRES_URL` 축 + 스키마 격리 + `JWT_SECRET` 주입 | ① 그 이름 **없이**: `pytest tests/integration -q` → **191 passed**(sqlite, 기준선 불변) ② 그 이름 **있이**: **191 passed** 이고 `[?] dialect == postgresql` ③ **빈 문자열**로 주면 sqlite 로 간다(ADR 0014 §2-2 역방향) ④ 같은 파일 머리 docstring(*"전용 임시 SQLite/저장소를 만들고"*) 갱신 ⑤ `make test` 통과 | `.github/workflows/…:130` 주석(*"테스트가 이 값을 읽어 쓸 수 있다"*)이 **과소진술**이 된다 → **작업 7(같은 소유)** | 작업 6 이 이 파일에 강제를 더할 수 있다 |
+| 6 | **qa** | `tests/postgres.floor.json` · `tests/postgres.measured.json` · 강제 자리(소유자 판단) | ADR 0014 §2-5 | 바닥값 + 측정값 + 강제 셋 | ① 통합 테스트를 **한 개만** postgres 로 돌리면 **빨개진다**(실행값을 커밋 본문에 적는다 — 이것이 §6-2 양성 케이스다) ② 축을 못 읽어 sqlite 로 떨어지면 **빨개진다** ③ sqlite 모드에서는 두 파일을 **건드리지 않고** 기준선이 그대로다 ④ 파일 주석에 **"이 값은 커버리지가 아니다"** 한정을 적는다(§2-b 역방향) | 없음(새 파일) | 없음 |
+| 7 | **qa** | `.github/workflows/buildtwin-ci.yml` | ADR 0014 §2-6 | `BUILDTWIN_CI_POSTGRES_URL` 을 잡 `env` → postgres 스텝 `env` 로 옮기고 통합 스텝 둘 | ① sqlite 스텝이 그 이름을 **보지 못한다** ② postgres 스텝이 초록이고 `postgres.measured.json` 이 `postgresql` 을 싣는다 ③ `:130` 주석을 새 사실로 고친다 ④ 잡 timeout 30분 안에 든다(실측 sqlite **32.64s** + postgres **39.40~73.34s**) | `.claude/agents/qa.md:16`(*"testcontainers 또는 sqlite+spatialite 폴백"* — **오늘도 거짓이다**, 저장소 전체 히트 1건이 그 줄뿐) → **작업 2 와 별개로 architect 가 고친다(작업 3 커밋에 붙이지 않는다)** → 아래 작업 7-b | 없음 |
+| 7-b | **architect**(별도 커밋) | `buildtwin/.claude/agents/qa.md` **한 줄** | 실측 | `:16` 의 `testcontainers 또는 sqlite+spatialite 폴백` → 실제 구조 | 루트 실행값 `grep -rni "testcontainers\|spatialite" .` 히트가 **그 줄 하나뿐**이었다는 것을 커밋 본문에 적는다. **다른 줄은 건드리지 않는다** | 없음 | 없음 |
+| 8 | **architect** | `docs/plans/0009-*.md` §사이클 마감 | 전부 | 마감(작업의 실제 결과 / 계획이 틀린 자리 / 이월) | 작업 트리에서 전량을 다시 재고 계획과 다른 자리를 전부 적는다. **§확인하지 않은 것·§후속 은 본문 목록을 번호로 옮긴다 — 새로 쓰지 않는다**(계획 0008 §M-2-2 가 세운 규칙) | — | — |
+| — | **고치지 않기로 한 것** | `docs/plans/0008-*.md` §리스크 2 · §M-4 1(*"postgres 를 켜 보지 않았다"*) · §1-b-2(*"추론이고 실측이 아니다"*) | — | — | §3-13 첫째 갈래 — 기록물은 소급 갱신하지 않는다. 정정은 §과제 3-a 와 ADR 0014 §4-1 에 있다 | — | — |
+
+**순서 제약.** 3 → 4 → 5 → 6 → 7(7-b 는 아무 때나) → 8. 작업 4 는 작업 3 의 필드 없이 import 가
+깨지고, 작업 5 는 3·4 없이 postgres 에서 401 로 죽는다(실측 `[B-4]`).
+
+**커밋 규칙(CLAUDE.md §2).** `packages/core/models/` 를 **건드리지 않는다**(이 사이클은 읽기만 했다 —
+§전수 목록 C). 작업 1·2·3·7-b·8 은 같은 소유지만 **커밋을 나눈다**: ADR·계획·설정·에이전트 정의는
+각각 독립적으로 읽혀야 리뷰어가 하나만 보고 통과·반려를 정할 수 있다. 커밋 전
+`git status --porcelain` **전문**을 루트 `/home/user/Bim` 에서 확인하고 **경로를 명시해서** add 한다.
+`git commit -a` 금지. **`make test` 통과 뒤 커밋.**
+
+**남의 트리를 만지지 않는다.** 직전 사이클들에서 `architect` 가 남의 트리를 만진 위반이 두 번 났다
+(§6-3 8·9회차). 이 사이클의 `architect` 는 `docs/` · `packages/core/settings.py` · `.env.example` ·
+`.claude/agents/qa.md` 밖으로 나가지 않는다. **탐침을 위한 임시 변이는 적용 → 측정 → 원복 → 루트
+clean 확인을 한 건씩 했고 커밋하지 않는다**(작업 1 이 `services/progress/persistence.py` 와
+`services/api/usecases.py` 에 그렇게 했다 — 두 번 다 원복 뒤 `git status --porcelain` 빈 출력 확인).
+
+---
+
+## 인터페이스 정의
+
+```python
+# packages/core/settings.py  (architect 소유 — 작업 3)
+class Settings(BaseSettings):
+    ...
+    seed_dev_data: bool = False   # 데모 사용자·프로젝트 시드를 sqlite 가 아닌 DB 에서도 켠다(ADR 0014 §2-3 4).
+                                  # 기본 False. 운영에서 켜면 데모 계정이 생긴다 — .env 로만 켠다(§3-4).
+```
+
+```python
+# services/api/main.py  (api 소유 — 작업 4)
+def init_database() -> None:
+    url = settings.database_url
+    core_db.init_db(...)
+    if url.startswith("sqlite") or settings.seed_dev_data:   # ← 이 한 줄
+        ...seed...
+```
+
+```python
+# tests/integration/conftest.py  (qa 소유 — 작업 5). 계약이지 구현이 아니다.
+#   BUILDTWIN_CI_POSTGRES_URL 이 설정돼 있고 **비어 있지 않으면** 그 DB + 세션 전용 스키마,
+#   아니면 지금처럼 임시 sqlite. postgres 갈래에서는 JWT_SECRET 과 SEED_DEV_DATA 를 함께 준다.
+```
+
+```jsonc
+// tests/postgres.floor.json      (qa 소유 — 작업 6, 커밋되는 바닥값)
+{ "min_tests_on_postgres": 191 }
+// tests/postgres.measured.json   (qa 소유 — 작업 6, 커밋되는 측정값)
+{ "dialect": "postgresql", "server_version": "...", "tests_on_postgres": 191, "engines": 1 }
+```
+
+**계약 세 줄**(강제가 붙드는 명제):
+
+1. postgres 모드에서 `dialect` 는 `postgresql` 이다 — 조용히 sqlite 로 떨어지면 **빨개진다**.
+2. postgres 위에서 실행된 테스트 수가 바닥값 미만이면 **빨개진다**.
+3. sqlite 모드에서는 이 계약이 **아무것도 하지 않는다**.
+
+---
+
+## 전수 목록 (§6-1 ①②③ — 전부 저장소 루트 `/home/user/Bim` 에서 만들었다)
+
+### 목록 A — **DB 방언에 기대는 자리**
+
+① **기준**: 표기 **9종**을 대소문자 무시로.
+```
+$ cd /home/user/Bim && grep -rniE 'sqlite|postgres|postgis|psycopg|asyncpg|pg8000|5432|dialect|DATABASE_URL' . \
+    --exclude-dir=.git --exclude-dir=.venv --exclude-dir=node_modules --exclude-dir=__pycache__ \
+    --exclude-dir=.mypy_cache --exclude-dir=docs -l
+→ 파일 **34개**. 잡음 2: tests/fixtures/sample.ply(좌표 숫자 5432) · tsconfig.tsbuildinfo(다른 프로젝트)
+```
+계획 0007 §2-b 의 6종 기준을 물려받되 `dialect`·`DATABASE_URL` 을 더했다.
+
+② **이 기준이 놓치는 것**(§6-1 ②를 **이 새 기준에 대해 처음부터 다시 답한다** — CLAUDE.md §6-1
+*역방향 확인* 이 요구하는 것이다):
+- ⓐ **표기가 아니라 동작으로만** 방언에 기대는 자리 — 곧 **`ORDER BY` 를 지정하지 않은 SELECT** 다.
+  그 42자리는 위 아홉 표기 어디에도 걸리지 않는다. **이 사이클의 심장이 이 칸에 있다.**
+- ⓑ 방언을 `engine.dialect.name` 이나 예외 타입(`sqlite3.IntegrityError`)으로 가르는 자리
+  — `dialect` 는 표기에 넣었지만 예외 타입은 넣지 않았다.
+- ⓒ 값이 저장소에 없고 **런타임 환경**에만 있는 경로(운영 서버의 `.env`). 저장소로는 볼 수 없다.
+- ⓓ `--exclude-dir=docs` 라 계획·ADR 이 이 축에 대해 하는 단정. **의도적이다**(세는 대상은
+  코드·설정이지 문서가 아니다 — 계획 0007 §2-a 가 문서 포함 시 9/10 이 자기 문서임을 실측했다).
+- ⓔ `URL.create(...)` 처럼 dialect 를 **객체로 조립**하는 자리(계획 0007 §2-b 의 ③ 그대로).
+
+③ **태웠다 — ⓐ 와 ⓑ 를 실제로 실행했다.**
+
+**ⓑ**: `grep -rnE 'dialect\.name|sqlite3\.(Integrity|Operational|Programming)Error' buildtwin/packages
+buildtwin/services --include='*.py'` → **`exit=1`, 히트 0**. 이 트리에서 분기 넷은 전수다.
+
+**ⓐ**: postgres 를 켜고 전 스위트를 돌려 **795 passed** 를 얻은 뒤, 그 실행 중 **`ORDER BY` 없이
+2행 이상을 돌려준 조회를 셌다 → 677회**(§과제 3). **초록인데 그 677이 검증되지 않는다**는 것이
+이 블라인드 스팟을 태워서 나온 값이고, §후속 17 이 그 값 위에 선다.
+
+**그리고 이 기준이 첫 기준(코드 분기 grep)보다 실제로 더 잡은 것 — 여섯 자리, 전부 분기가 아니다:**
+
+| # | 자리 | 무엇 | 이 사이클과의 관계 |
+|---|---|---|---|
+| 1 | `.claude/agents/qa.md:16` | *"`tests/integration/` — DB(**testcontainers 또는 sqlite+spatialite 폴백**)"* | **오늘도 거짓이다.** 루트 전체에서 `testcontainers`·`spatialite` 히트가 **이 줄 하나**뿐이고 둘 다 존재하지 않는다 → **작업 7-b(architect)** |
+| 2 | `services/api/README.md:11,23,25-26` | *"(sqlite) 데모 사용자 시드"*, *"**sqlite 전용**"*, *"PostgreSQL 등 운영 DB 에서는 **시드하지 않으며**"* | 작업 4 가 거짓으로 만든다 → **작업 4(api, 같은 트리)** |
+| 3 | `services/api/auth/seed.py:1,3` | *"**settings.database_url 이 sqlite 이고** … 호출된다"*, *"운영 DB 에는 **절대** 적용되지 않는다"* | 같음 → **작업 4** |
+| 4 | `services/progress/persistence.py:433` | *"실측(**SQLite, 이 저장소 통합 테스트 환경**)"* | 그 환경이 더는 sqlite 전용이 아니게 된다. **한정어가 붙어 있어 거짓이 되지는 않는다**(그 값이 SQLite 값이라는 진술은 계속 참) → **관측만, §후속 20** |
+| 5 | `services/api/jobs.py:80,309` | *"SQLite 쓰기 잠금 충돌 방지"* | **좁아질 뿐 거짓이 아니다** → 작업 4 가 커밋 본문에 판단만 적는다 |
+| 6 | `buildtwin/README.md:28` | *"개발용 시드 계정(**SQLite일 때** 자동 생성)"* | 과소진술이 된다. **`README.md` 는 §2 에 소유가 없다** → §후속 19 |
+
+**§6-1 이 이 목록에 대해 요구한 것은 이 표다.** 첫 기준(`startswith("sqlite")` 두 표기 → 4자리)은
+**코드 분기만** 보는 기준이라 위 여섯이 통째로 밖이었고, 그중 하나(`qa.md:16`)는 **프로젝트 시작부터
+거짓인 채로 서 있었으며 `qa` 가 자기 정의로 읽는 문장**이다.
+
+### 목록 B — 이월 목록의 **열린 항목 전수 재측정** (§6-1 12회차가 요구하는 것)
+
+①기준 = 계획 0008 §후속 1~15 중 취소선이 없는 것 전부. ②놓치는 것·③태운 결과는 §후속 머리말과
+아래 표에 있다. **각 칸은 `5beb954` 실행값이다.**
+
+| 항목 | 재측정 명령 | 값 | 판정 |
+|---|---|---|---|
+| 2. `"rejected"` 리터럴 전수 감사(qa) | `ls buildtwin/tests/invariants/` · `grep -rln "rejected" buildtwin/tests/invariants/` | 파일 둘(`test_identity_drift_cause_contract.py`·`test_invariants.py`), grep **`exit=1` 히트 0** | **열려 있다** |
+| 3. `client.ts` 수작업 code 동기화 TODO(qa) | `sed -n '1,20p' … \| grep -n TODO` | `12: * TODO(round-6+): 이 목록은 서버의 에러 코드 테이블과 수작업으로 동기화된다.` | **열려 있다** |
+| 4. 검토요청 *승인*의 사유 요건 | — | 필요한 것은 **운영 실측**(승인 1건당 note 비율)이고 저장소에 없다 | **열려 있다** |
+| 6. `docs/api.md` 오류 절 열거(api) | `grep -n "ERROR_ENVELOPE_SECTION" -A 14 …/gen_api_doc.py` | `:24-26` 열거가 여전히 다섯(`InvalidTransitionError`·`RevocationReasonRequiredError`·`TransitionBlockedByReviewError`·`ObjectNotFoundError`·`ReviewRejectionReasonRequiredError`) — 계획 0006 의 예외 둘이 없다 | **열려 있다** |
+| 10. PostgreSQL 경로(qa + architect) | `grep -nE 'psycopg\|asyncpg\|postgres\|pg8000' buildtwin/pyproject.toml` | `exit=1`(0건) | **열려 있다 — 이 사이클의 대상** |
+| 11. 확정 축 `expert_review_logs` 무보호(qa) | `usecases.py::_confirm_document_mapping_row` 의 `record_expert_review(...)` **두 줄 삭제** → `.venv/bin/pytest -q` | **807 passed**(기준선과 동일, 하나도 죽지 않는다) | **열려 있다** |
+| 12. 단위 파일 머리 *"다음 여섯 항목"*(qa) | `sed -n '1,10p' …/test_document_mapping_review_lifecycle.py` · `grep -c "^def test_"` | 머리는 여전히 *"다음 **여섯** 항목을 못 박는다"*, 실측 **`def test_` 8개** | **열려 있다** |
+| 13. `test_20_*.py:29` 표 행에 트리 없음(qa) | `sed -n '25,33p' …` | 그 행은 *"그 전에는 **805 passed**"* 로 **트리를 인라인으로 적지 않는다**(형제 두 행은 `df37433`·`716d67d` 를 적는다) | **열려 있다** |
+| 14. 같은 파일 *"이 사이클(기준선 807)"*(qa) | `sed -n '700,712p' …` | *"이 사이클(기준선 807)에서 **807 passed**"* — **기준선 숫자는 트리 식별자가 아니다** | **열려 있다** |
+| 15. §6-1 12회차 행을 ②(항목 상실)까지 넓힐지(architect) | 판단 항목 | 관측이 **여전히 1건**(계획 0008 §M-2-2). 이 사이클은 §6-1 을 편집하지 않으므로 관측이 늘지 않았다 | **열려 있다 — 문턱 미달** |
+
+*이 재측정의 한계.* ① **§Deferred 1~6 은 재측정하지 않았다**(계획 0008 §2-b ③ 한계 ① 그대로 —
+그 목록은 닫힘 판정이 아니라 관측이 필요하고 대부분 운영 데이터를 요구한다). ② 각 항목을 **한 가지
+방법으로만** 쟀다. ③ 재측정은 *"항목이 여전히 열려 있는가"* 만 답하고 *"그 사이에 항목의 내용이
+바뀌었는가"* 는 답하지 않는다. ④ **닫힌 항목(1·5·7·8·9)은 다시 열렸는지 재지 않았다** — 이월 축이
+"열린 것만 재측정"이라 그 방향은 목록 밖이다(**새 한계, 이번에 처음 적는다**).
+
+### 목록 C — 이름 붙은 블라인드 스팟(`packages/core/models/` 의 주석)
+
+① **기준**: 이 사이클의 축으로 만든 표기 — `sqlite|postgres|dialect|드라이버|DB 엔진|스캔 순서`.
+```
+$ grep -rniE 'sqlite|postgres|dialect|드라이버|DB 엔진|스캔 순서' buildtwin/packages/core/models/*.py
+packages/core/models/orm.py:1: """SQLAlchemy ORM. JSON 컬럼으로 … (SQLite·PostgreSQL 공용). PostGIS 공간 인덱스는 Deferred(ADR)."""
+```
+**히트 1건.** 그리고 그것은 **자기 파일 밖에 대한 단정**이다(§6-1 이 이 디렉터리에 명시적으로 요구하는
+확인 대상). **여덟 사이클 동안 아무도 실행하지 않았고, 이 사이클이 처음 태웠다 — 둘 다 참이다**:
+`create_all` 이 postgres 16.13 에 **24 테이블**을 세우고, 그 클러스터에는 PostGIS 가 설치돼 있지 않을
+뿐 아니라 `pg_available_extensions` 에도 **없다**. 참인 단정이므로 **고치지 않는다.**
+
+② 이 기준이 놓치는 것: 방언을 말하지 않으면서 **JSON 컬럼 타입**에 기대는 단정
+(`JSON` ↔ `JSONB`). 그 축은 ADR 0014 §Deferred 6 으로 등록했다.
+③ 태웠다: 위 실행값이 그것이다(주석이 하는 두 단정을 각각 실행으로 확인했다).
+
+---
+
+## 검증 시나리오 (§6-2 — 각 시나리오에 **"결함 있는 코드가 이 기대값을 그대로 만족하는가"** 를 물었다)
+
+| # | 층 | 배역 | 단언 | **결함 코드가 만족하는가** |
+|---|---|---|---|---|
+| **S1** | 통합(postgres) | `BUILDTWIN_CI_POSTGRES_URL` 을 주고 통합을 돈다 | ⓐ 191 통과 ⓑ `dialect == "postgresql"` | **ⓐ만이면 그렇다 — 그래서 ⓑ 가 필요하다.** conftest 가 이름을 못 읽어 sqlite 로 떨어져도 **191 통과**다(그 값이 지금의 기준선이다). ⓑ 없이는 결함 코드와 옳은 코드가 **구별 불가능**하다 |
+| **S2** | 통합(postgres) | 통합 테스트를 **한 개만** postgres 로 붙인다 | 바닥값 미달로 **실패** | **아니다.** 바닥값이 없으면 초록이고, 그 초록으로 §후속 10 을 닫을 수 있다 — 이 항목이 겨냥한 결함의 재생산 |
+| **S3** | 통합(postgres) | 작업 4 를 **하지 않은** 트리에서 postgres 로 돈다 | 로그인이 **401** 로 죽는다 | **아니다 — 갈린다.** 실측 `[B-3]` 시드 0 · `[B-4]` 401. 시드 조건을 넓힌 트리에서는 통과한다 |
+| **S4** | 통합(postgres) | 작업 5 가 `JWT_SECRET` 을 **주지 않은** 트리에서 postgres 로 돈다 | `RuntimeError: JWT_SECRET 환경변수가 필요합니다` | **아니다 — 갈린다.** 실측 `[B2-2]`. *다만 이 시나리오는 S3 가 고쳐진 뒤에만 관측된다* — 시드가 없으면 401 이 먼저 나서 JWT 분기에 닿지 못한다(그 **순서**가 실측이다) |
+| **N1** | 통합(sqlite) | 이름을 **주지 않고** 돈다 | 191 통과, 바닥값·측정값 파일을 **건드리지 않는다** | — **음성 대조군(DB 축).** 이 칸이 없으면 이 사이클이 로컬 개발을 깨뜨리고도 CI 만 보고 초록이라 부른다 |
+| **N2** | 통합(sqlite) | 이름을 **빈 문자열**로 준다 | sqlite 로 간다 | — **음성 대조군(축 판정).** `is not None` 으로 짠 구현은 여기서 `create_engine("")` 로 죽는다 |
+| **N3** | 전체(sqlite) | 작업 3 만 올린 트리 | **807 passed** | — **음성 대조군(설정 축).** 새 필드가 기본값에서 아무것도 바꾸지 않음 |
+
+*§6-2 3(음성 대조군을 한 축에만 몰지 않는다) 확인.* 판정 경로가 셋이므로 각 축에 양성·음성을 뒀다 —
+**DB 축**(S1 ↔ N1·N2), **증거 축**(S2 ↔ N1), **분기 축**(S3·S4 ↔ N3).
+
+*§6-2 4(두 사실이 함께여야 의미가 있으면 함께 단언한다) 확인.* S1 의 ⓐ+ⓑ 가 그것이다 —
+"초록이다"와 "postgres 에서 초록이다"는 다른 문장이고, 하나만 고정하면 다른 하나가 사라져도 초록이다.
+
+*§6-2 2(발화의 **결과**까지 값이 갈리게) 확인.* S2 는 "바닥값이 있다"가 아니라 **"미달이면 빨개진다"**
+를 단언한다. 작업 6 의 완료 조건 ①이 그 실행값을 커밋 본문에 요구하는 이유다.
+
+---
+
+## 한정어 역방향 확인 표 (§6-3 산출물 — 각 칸은 **실행값 또는 코드 인용**이고 다른 절 참조가 아니다)
+
+| 한정어 | 이 단어를 빼면 무엇이 더 들어오나 | 이 단어 때문에 무엇이 빠지나 | 실행값 / 인용 |
+|---|---|---|---|
+| **"한 사이클에 들어간다"**(§1-b) | 무조건 들어간다고 읽힌다 | **A 층이 0 실패였기 때문**이다. 수십 건이었으면 쪼개야 했다 | postgres 795 passed / `create_all` 24 테이블 |
+| **"§후속 10 을 닫는다"**(§목표 3) | postgres 가 검증됐다고 읽힌다 | 닫히는 것은 *"아무 테스트도 돌지 않는다"* 하나 | `[ORD] noorder_multirow_exec=677` — 무정렬 다중행 조회 677회가 아무 단언에도 걸리지 않는다 |
+| **"조건을 넓힌다"**(§2-a, `or`) | 갈아치우기도 넓히기로 읽힌다 | 갈아치우면 sqlite 갈래가 죽는다 = 통합 191 + `make dev` | `tests/integration/conftest.py:57-66` 의 `tokens` 픽스처가 `ROLES` 넷으로 로그인하고 `assert r.status_code == 200` |
+| **"변경 없음"**(분기 셋) | 셋이 postgres 에서 옳게 돈다고 읽힌다 | `settings.py:38` 은 **옳게 죽는다** — 답이 코드가 아니라 테스트 환경일 뿐 | `[B2-2] login raised RuntimeError: JWT_SECRET 환경변수가 필요합니다 (.env)` |
+| **"분기 넷"**(§과제 2) | 방언에 기대는 모든 자리 | 문서·docstring·에이전트 정의 **여섯 자리**(전부 분기가 아니다) | 목록 A ③ 표 — `qa.md:16` 은 **오늘도 거짓**이고 저장소 전체 히트가 그 줄뿐이다 |
+| **"통합만"**(§2 결정 5) | 스위트 전체가 간다고 읽힌다 | `tests/unit`(가능함을 쟀다) · `tests/e2e` | 스왑으로 `tests/unit tests/invariants tests/regression` → **604 passed**. 그래도 이번이 아닌 이유는 직접 엔진 **15회** |
+| **"191"**(바닥값) | 커버리지로 읽힌다 | 그 191이 postgres 특유의 결함을 잡는가는 재지 않았다 | `[ORD]` 677 |
+| **"두 번 돈다"**(CI) | 어느 순서든 상관없다고 읽힌다 | 두 스텝이 **같은 잡**이라 앞 실패가 뒤를 가린다 | `.github/workflows/buildtwin-ci.yml:106-148` 의 `integration` 잡은 스텝을 순서대로 돈다(`:147-148` 이 지금의 유일한 pytest 스텝) → ADR 0014 §Deferred 3 |
+| **"심기가 postgres 에서도 먹는다"**(§3-a) | 모든 재배치가 순서를 바꾼다고 읽힌다 | **UPDATE 만으로는 안 바뀌었다** — 그 기전(HOT)은 확인하지 않았다 | `[PG-after-update-R2] scan = ['R2','R1']`(변화 없음) ↔ `[PG-after-delete-reinsert] scan = ['R2','R1']`(뒤집힘) |
+| **"이월 목록 재측정"**(목록 B) | 계획 0008 의 모든 목록이 대상이 된다 | **§Deferred 1~6 과 닫힌 항목**은 재측정하지 않았다 | 목록 B 한계 ①·④ |
+| **"저장소 루트"**(§0) | `buildtwin/` 을 루트로 읽으면 `.github/workflows/` 가 통째로 밖이다 | — (좁히면 실제로 놓쳤다 — 계획 0007 §0 의 선례) | 이 문서의 목록 A·B·C 는 전부 `cd /home/user/Bim` 에서 돌렸다 |
+
+*같은 문서의 인접 절과 교차 확인(§6-3).* §과제 1 은 A 층을 *"0 실패"* 로, §과제 3 은 같은 실행을
+*"아무것도 검증하지 않았다"* 로 적는다. 정면 충돌처럼 보여서 **실행으로 갈랐다**: 두 문장은 서로 다른
+것을 센다 — 앞은 **실패 수**(0), 뒤는 **순서를 단언하는 조회 수**(0 / 677). 둘 다 참이고, 그 동시성이
+§2-b 의 바닥값 계약이 존재하는 이유다. — 그리고 §영향 범위 는 `orm.py:1` 을 *"참이라 고치지 않는다"*
+로, 목록 A 는 여섯 자리를 *"거짓이라 고친다"* 로 적는다. 이것도 갈랐다: `orm.py:1` 은 스키마에 대한
+단정(실행으로 참), 여섯은 **시드 조건과 테스트 구조**에 대한 단정(실행으로 거짓)이다.
+
+---
+
+## 열린 질문 / 리스크
+
+1. **CI 의 postgres 는 내가 잰 postgres 가 아니다.** 나는 로컬 PostgreSQL **16.13**(PostGIS 없음)에서
+   쟀고 CI 는 `postgis/postgis:16-3.4` 다. 마이너 버전·확장·기본 설정이 다르면 플래너가 다른 경로를
+   고를 수 있고, 그러면 §과제 3 의 677 중 무엇이 갈릴지 모른다. **작업 7 의 첫 CI 실행이 이 리스크의
+   유일한 관측점이다.**
+2. **바닥값 191 이 언제 낡는가.** 통합 테스트가 늘면 바닥값도 올려야 하는데, **올리지 않아도
+   빨개지지 않는다**(부등호가 `>=` 다). 즉 이 감시는 **줄어드는 것**만 잡고 **따라오지 않는 것**은
+   못 잡는다. `tests/metrics.json` 이 갖는 것과 같은 한계다.
+3. **세션 스코프 픽스처가 하나라서 격리 단위가 거칠다.** 통합 191건이 한 스키마를 공유한다
+   (지금 sqlite 파일 하나를 공유하는 것과 같은 구조). 병렬 실행(`pytest -n`)을 도입하면 이 설계가
+   깨진다 — 지금 이 저장소는 병렬로 돌지 않는다.
+4. **`seed_dev_data` 는 "두 갈래 중 한 갈래만 실행된다"를 만드는 장치다** — §후속 10 이 겪은 것과
+   같은 종류의 위험이다. 그래서 ADR 0014 §3 7 이 **두 갈래를 둘 다 CI 에서 돌리는 것**을 완화책으로
+   못박았다(sqlite 스텝 = 꺼진 갈래, postgres 스텝 = 켜진 갈래).
+5. **강제 자리를 정하지 않았다**(§2-b 마지막 문단). finalizer 냐 별도 테스트냐에 따라 sqlite 기준선이
+   807 그대로냐 808(skip 1)이냐가 갈린다. **`qa` 가 고르고 마감이 실제 값을 적는다.**
+6. **`[ORD]` 677 은 통합 한 트리의 값이다.** `tests/unit` 을 포함하면 더 크다 — 재지 않았다.
+
+---
+
+## ADR 필요 여부
+
+**필요하다. 이 사이클이 쓴다** — `docs/adr/0014-database-as-a-test-parameter.md`.
+계획 0007 §과제 2 와 계획 0008 §후속 10 이 둘 다 "ADR 이 필요한 결정"이라고 적었고, 실제로 그렇다:
+① 드라이버의 **자리**(본 의존성 ↔ dev extra)는 운영 이미지와 pyproject 의 관계를 정하는 결정,
+② **`main.py:28` 조건을 넓히는 것**은 "운영 DB 에 데모 계정이 생길 수 있는 플래그"를 만드는 결정,
+③ **바닥값 파일 둘**은 새 감시 기구를 저장소에 들이는 결정이다. 셋 다 다음 사이클이 근거 없이
+뒤집으면 안 되는 것들이다. **계획의 작업은 ADR 이 정한 것만 내려간다**(§과제 2 표가 그 대응이다).
+
+---
+
+## 후속 — 다음 사이클로 넘기는 것
+
+**이월 규칙.** 계획 0008 §후속 **1~15**(본문 1~11 + §M-5 12~15)를 **번호를 유지한 채** 옮긴다.
+닫힌 항목은 지우지 않고 취소선 + 닫은 근거를 남긴다. **열린 항목은 `5beb954` 에서 전부 재측정했다**
+(목록 B 가 그 표다 — CLAUDE.md §6-1 12회차가 근거). 신규는 **16번부터** 잇는다.
+
+*계획 0008 §M-2-2 가 세운 규칙을 이 목록에 건다*: **본문 목록을 번호로 옮긴다, 새로 쓰지 않는다.**
+빠진 항목은 닫힌 것과 달리 `git log -S` 로 되찾을 수 없다.
+
+1. ~~**§6-2·§6-4 압축**(architect).~~ → **닫혔다**(계획 0007 §과제 1, 실측으로). 다시 여는 조건은
+   그 항목에 적혀 있다(근거 표면이 §6 문자의 5% 이상인 절에서 초안을 태워 **줄과 문자가 둘 다** 줄 때).
+2. **`"rejected"` 값 리터럴의 전수 감사**(qa). `5beb954` 재측정: `tests/invariants/` 에 그 감사
+   **0건**(`grep -rln "rejected" buildtwin/tests/invariants/` → `exit=1`).
+3. **`apps/web/src/api/client.ts:12` 의 TODO**(수작업 code 동기화, qa 소유). `5beb954` 재측정:
+   `TODO(round-6+)` 그대로 있다.
+4. **검토요청 *승인*의 사유 요건**(ADR 0011 §Deferred 1 / ADR 0012 §Deferred 1 그대로). 필요한 실측:
+   검측 승인 1건당 CM 이 실제로 note 를 남기는 비율. **저장소로는 답할 수 없다**(운영 데이터).
+5. ~~**취소의 내구 감사를 붙드는 회귀 + V8 docstring**(qa).~~ → **닫혔다(`716d67d`, 계획 0006 사이클).**
+   실측과 상세는 계획 0008 §과제 2 에 있다.
+6. **`docs/api.md` 오류 절의 예외 열거와 `internal_error`**(api). `5beb954` 재측정: 생성 스크립트 상수
+   `ERROR_ENVELOPE_SECTION`(`services/api/scripts/gen_api_doc.py:21-33`)의 열거가 여전히 다섯이고
+   계획 0006 의 예외 둘(`MappingDecisionNotCancellableError`·`MappingDecisionCancelReasonRequiredError`)이
+   없다. 열거를 유지할지(§6-1: 열거는 길이가 곧 개수다) 부재 단정·grep 으로 바꿀지는 소유자의 판단이다.
+7. ~~**`cancelled_review_request_id` 의 갱신 갈래**(progress-engine).~~ → **닫혔다**(`662e91a` + `3ba9226`).
+8. ~~**`find_document_mapping_review` 의 `ORDER BY created_at DESC` 가 무보호**(qa).~~ → **닫혔다**
+   (`3ba9226`, 계획 0007 §과제 3 이 실측으로 기록). **한정: 잰 것은 줄 삭제 변이 하나뿐이다.**
+9. ~~**`document_mapping_reviews` 의 `sorted(...)`**(qa).~~ → **닫혔다**(`7d44cca`, 계획 0008 §과제 1).
+   **이 사이클이 더하는 실측**: 그 두 테스트는 **postgres 에서도 장식이 아니다**(§과제 3-a).
+10. **PostgreSQL 경로가 비어 있다**(qa + architect) — **이 사이클의 대상.** 마감에서 판정한다.
+    닫는 범위는 *"postgres 에서 아무 테스트도 돌지 않는다"* 하나이고, 그 항목이 실제로 열고 있던
+    다른 축은 아래 16·17·18 로 나눈다.
+11. **확정 축의 `expert_review_logs` 도 무보호**(qa). `5beb954` 재측정:
+    `services/api/usecases.py::_confirm_document_mapping_row` 의 `record_expert_review(...)` **두 줄**을
+    지우고 `.venv/bin/pytest -q` → **807 passed**(기준선과 동일). 취소 축은 `716d67d` 가 닫았고 확정
+    축은 열려 있다. 어느 파일에 둘지가 이 항목의 첫 질문이다.
+    *한정 — 잰 것은 두 줄 삭제 변이 하나뿐이다*(계획 0008 §M-5 가 단 한정 그대로). 인자를 바꾸는
+    변이나 호출 위치를 옮기는 변이는 재지 않았다.
+12. **`tests/unit/progress/test_document_mapping_review_lifecycle.py:5-6` 의 "다음 여섯 항목"**(qa).
+    `5beb954` 재측정: 머리는 여전히 *"여섯"*, 실측 `def test_` **8개**. §6-1 회차 9 가 답을 갖고 있다 —
+    **개수를 세지 말고 부재 단정 + 그 자리에서 도는 grep 으로.**
+13. **`tests/integration/test_20_*.py:29` 의 표 행이 트리를 인라인으로 적지 않는다**(qa).
+    `5beb954` 재측정: *"그 전에는 805 passed"* 그대로이고 형제 두 행은 `df37433`·`716d67d` 를 적는다.
+    같은 파일 `:796` 이 `` `136e66f` 실측 805 passed `` 로 제대로 돼 있으니 표 행에도 `136e66f` 를 넣으면 된다.
+14. **같은 파일 `:705` 의 "이 사이클(기준선 807)"**(qa). `5beb954` 재측정: 그대로다.
+    **기준선 숫자는 트리 식별자가 아니다** — 다음 사이클이 `7d44cca` 를 넣어 줄 수 있는 자리다.
+    그리고 **자기 커밋 해시를 자기 커밋에 못박을 수 없다는 것이 이 규약의 구조적 한계**이므로,
+    그 한계를 규약 옆에 한 줄로 적는 것까지가 이 항목이다.
+15. **§6-1 12회차 행의 "밀려난 것" 칸을 ②(항목 상실)까지 넓힐지**(architect). `5beb954` 재측정:
+    관측이 **여전히 1건**이다 — 이 사이클은 CLAUDE.md §6-1 을 편집하지 않았으므로 관측이 늘지 않았다.
+    §6-5 문턱("두 사이클 이상")에 미달이라 이번에도 넓히지 않는다.
+
+**신규(이 사이클이 연다):**
+
+16. **`tests/unit` 을 postgres 로 돌린다**(qa). **가능함은 쟀다** — 엔진 스왑으로
+    `tests/unit tests/invariants tests/regression` → **604 passed**. 막는 것은 테스트 파일 네 자리가
+    직접 `create_engine("sqlite://")` 을 부르는 것이다(`unit/ingest/test_persistence.py:28` ·
+    `unit/ingest/test_document_identity_persistence.py:43` ·
+    `unit/ingest/test_document_register_reupload.py:28` · `unit/knowledge/conftest.py:17`).
+    CI 는 `unit` 잡에 서비스 컨테이너를 붙여야 한다.
+17. **정렬을 지정하지 않은 42자리의 순서 계약**(architect + progress-engine + api). §후속 10 이
+    실제로 연 **두 번째 축**이고 이 사이클이 닫지 않는다. 이 사이클의 실측: 서버 트리 `select(` **63**
+    중 `order_by` 미지정 **42**(상한 — 휴리스틱이 다른 줄의 `.order_by(...)` 를 과대 계상한다), 그리고
+    postgres 통합 실행에서 **`ORDER BY` 없이 2행 이상을 돌려준 조회 677회**(§과제 3). **첫 질문은
+    "42 중 몇이 순서를 계약으로 갖는가"** 이고, 42 전부에 `order_by` 를 붙이는 것은 답이 아니다
+    (계약이 없는 자리에 정렬을 붙이면 그 정렬이 다시 무보호가 된다 — §후속 9 가 겪은 모양).
+18. **데모 시드를 앱 기동에서 떼어낸다**(api + qa, ADR 0014 §Deferred 1). `seed_dev_data` 플래그는
+    완화책이지 답이 아니다. `make dev`·`make api`·통합 픽스처 셋을 함께 바꾼다.
+19. **소유가 §2 에 없는 파일들**(architect). 이 사이클이 실제로 부딪힌 것: `pyproject.toml`(작업 5 가
+    건드린다) · `buildtwin/README.md`(목록 A 6) · `Dockerfile` · `docker-compose.yml`(ADR 0014
+    §Deferred 5) · `buildtwin/.env.example`(작업 3 이 건드린다). **CLAUDE.md §2 트리에 이 다섯이
+    없다** — 이번에는 계획의 배정으로 처리했고(그 배정은 소유가 아니다 — §2), 소유를 세우려면
+    CLAUDE.md 를 편집해야 하므로 **한 번에 한 절씩** 규칙에 따라 별도 사이클로 넘긴다.
+20. **`services/progress/persistence.py:433` 의 *"실측(SQLite, 이 저장소 통합 테스트 환경)"***
+    (progress-engine). 한정어가 붙어 있어 **거짓이 되지는 않지만**, 이 사이클 뒤로 "이 저장소 통합
+    테스트 환경"이 두 DB 를 뜻하게 된다. 그 값을 postgres 에서도 재서 나란히 적을지가 이 항목이다.
+
+---
+
+## Deferred — 이 사이클이 보고 고치지 않는 것 (계획 0008 §Deferred 1~6 이월, 재측정하지 않았다)
+
+1. **객체가 검측 루프를 떠난 뒤에도 닫히지 않는 inspection 요청.** 고치려면 ADR 0001 §6 의 시스템
+   `on_hold` 사유 집합을 셋째로 넓혀야 한다.
+2. **반려된 2D↔3D 매핑이 뷰어 계약에 계속 실린다**(sync-2d3d 소유, 별도 ADR 필요).
+3. **확정↔취소 반복의 누적.** 반복할 때마다 닫힌 `document_mapping` 요청 행이 하나씩 쌓인다.
+   운영에서 문제가 되는지 실측이 없다.
+4. **`confirm_mapping_row` 의 `.first()`**(`services/sync/review_queue.py`). 오늘 파이프라인은 한 핸들에
+   여러 행을 만들지 않는다 — 관측으로만 남긴다.
+5. **`on_hold` 에 공백만 note 를 보내면 `"   "` 가 그대로 저장된다**(ADR 0012 §Deferred 2 그대로).
+6. **ADR 0013 §Deferred 1~8** 은 그 ADR 이 소유한다 — 이 계획이 옮겨 적어 두 자리에 같은 답을 두지
+   않는다(CLAUDE.md §2).
+
+**신규 — ADR 0014 §Deferred 1~6** 은 **그 ADR 이 소유한다.** 여기 옮겨 적지 않는다(같은 이유).
+그중 행동이 필요한 둘은 위 §후속 18·19 로 번호를 받았다.
+
+---
+
+## 이 계획이 확인하지 않은 것
+
+**계획 0008 §M-4 1~10 을 번호를 유지한 채 옮기고**(§M-2-2 규칙 — 새로 쓰지 않는다), 이 사이클이
+처분한 것은 처분을 적는다. 이 사이클이 새로 더한 것은 **11번부터** 잇는다.
+
+1. ~~postgres 를 켜 보지 않았다.~~ → **켰다.** PostgreSQL 16.13 로컬 클러스터에서 `create_all` 24 테이블,
+   전 스위트 795 passed, 통합 191 passed, 정렬 계약 둘의 postgres 실행과 변이까지 쟀다(§과제 1·3-a).
+   *다만* **CI 의 `postgis/postgis:16-3.4` 에서는 아무것도 재지 않았다**(§리스크 1).
+2. **정렬 축을 바꾸는 변이는 계획 0008 §M-2-1 이 잰 하나(`review_request_id`)뿐이고**, 역순 정렬·다른
+   키는 이 사이클도 재지 않았다.
+3. **`persistence.py:455`(§후속 8)의 `.desc()`→`.asc()` 변이는 이번에도 재지 않았다**(계획 0007 §후속 8
+   한정 그대로).
+4. **§Deferred 1~6 을 재측정하지 않았다**(목록 B 한계 ①).
+5. **웹을 태우지 않았다.** `vitest` 를 이 문서 시점에 돌리지 않았다 — 이 사이클이 `apps/web/` 을 한
+   글자도 건드리지 않기 때문이다. **작업 4·5 가 `make test` 로 웹까지 함께 태운다**(§3 규칙 1).
+6. **`make lint` 를 이 문서 시점에 돌리지 않았다.** 작업 1·2 의 산출물은 `docs/` 뿐이라 lint 대상이
+   아니다. 작업 3 부터가 `make lint` 를 태운다.
+7. **§6-5 · §6-1 · §6-3 의 근거 표면을 재지 않았다**(계획 0007 §M-4 → 계획 0008 §M-4 7 그대로 이월).
+   이 사이클은 CLAUDE.md 를 **한 글자도 편집하지 않으므로**, 다음 사이클이 `211242c` 를 기준으로 잰다.
+8. **qa 가 보고한 서버 변이 14건을 재현하지 않았다**(출처 계획 0006 §M-6). 이 사이클이 직접 태운
+   서버 변이는 **둘**이다(`persistence.py:480` 정렬 삭제 · `usecases.py` 확정 축 로그 삭제).
+9. **`df37433`·`716d67d` 직전 트리를 체크아웃해 803·804 를 재현하지 않았다.** 커밋 귀속은 `git log -S`
+   로만 확인했다(이 사이클은 그것도 하지 않았다 — 계획 0008 의 기록을 그대로 인용했다).
+10. **§6-1 12회차 외 다른 행의 관측값을 재현하지 않았다.** 회차 1~11 의 관측값이 오늘 트리에서
+    재현되는지는 여전히 아무도 재지 않았다.
+
+**신규(이 사이클이 더한다):**
+
+11. **`postgis/postgis:16-3.4` 이미지에서 재지 않았다** — 내가 켠 것은 PostGIS 없는 소박한
+    PostgreSQL 16.13 이다. 확장·설정 차이가 플래너를 바꾸는지 모른다(§리스크 1).
+12. **`[PG-after-update-*]` 가 순서를 바꾸지 않은 **기전**을 확인하지 않았다.** HOT update 가
+    그럴듯한 설명이지만 `pg_stat_*` 의 HOT 카운터를 읽지 않았다(ADR 0014 §4-2).
+13. **`tests/e2e` 를 postgres 로 돌려 보지 않았다.** 서브프로세스 uvicorn 이라 환경 전달 경로가 다르다
+    (`tests/e2e/conftest.py:165`). `make e2e` Playwright 스모크도 실행하지 않았다.
+14. **`[ORD]` 677 은 `tests/integration` 한 트리의 값이다.** `tests/unit` 을 포함한 값은 재지 않았다.
+15. **바닥값 191 이 CI 에서 실제로 그 수가 되는지 재지 않았다.** 내가 잰 191 은 로컬 실행값이고,
+    CI 의 수집 결과가 같다는 보장은 워크플로가 처음 도는 순간에만 관측된다.
+16. **`psycopg` 를 `pyproject.toml` 에 실제로 넣고 `pip install -e ".[dev]"` 를 돌려 보지 않았다.**
+    드라이버는 `--target` 으로 별도 디렉터리에 깔고 `PYTHONPATH` 로만 붙였다(그래서 계획 0007 §2-a 의
+    *"`.venv` 에도 0건"* 이 지금도 참이다). 해석 충돌은 작업 5 가 처음 관측한다.
