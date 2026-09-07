@@ -5,6 +5,7 @@ export default {
   h1: "면적 안분",
   lede: "총액을 면적 비율로 나눕니다. 우리 몫이 얼마인지 바로 나옵니다.",
   indexLabel: "면적 안분",
+  group: "정비사업·공동주택",
   indexDesc: "총액 · 면적 → 세대 부담액",
   body: `
 <section class="tool">

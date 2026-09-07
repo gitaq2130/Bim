@@ -5,6 +5,7 @@ export default {
   h1: "부가세 계산",
   lede: "어느 쪽 금액을 알든 나머지가 나옵니다. 합계액에서 거꾸로 뽑는 계산도 됩니다.",
   indexLabel: "부가세 계산",
+  group: "세무·금액",
   indexDesc: "공급가액 ↔ 합계액 양방향",
   body: `
 <section class="tool">

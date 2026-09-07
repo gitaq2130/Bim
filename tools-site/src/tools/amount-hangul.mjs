@@ -5,6 +5,7 @@ export default {
   h1: "금액 한글 표기",
   lede: "계약서에 손으로 적던 금액입니다. 숫자만 넣으면 그대로 옮겨 적을 수 있습니다.",
   indexLabel: "금액 한글 표기",
+  group: "세무·금액",
   indexDesc: "숫자 → 계약서용 한글",
   body: `
 <section class="tool">

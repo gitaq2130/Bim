@@ -5,6 +5,7 @@ export default {
   h1: "설계변경 증감률",
   lede: "당초와 변경 금액만 넣으면 증감액·증감률이 나옵니다. 보고서에 쓰는 부호 표기 그대로 나옵니다.",
   indexLabel: "설계변경 증감률",
+  group: "건설 공무",
   indexDesc: "당초 · 변경 금액 → 증감",
   body: `
 <section class="tool">

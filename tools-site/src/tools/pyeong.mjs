@@ -5,6 +5,7 @@ export default {
   h1: "평 ↔ 제곱미터",
   lede: "도면은 제곱미터인데 이야기는 평으로 합니다. 양쪽을 한 번에 봅니다.",
   indexLabel: "평 ↔ 제곱미터",
+  group: "세무·금액",
   indexDesc: "면적 단위 변환",
   body: `
 <section class="tool">

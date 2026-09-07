@@ -5,6 +5,7 @@ export default {
   h1: "공사기간 계산",
   lede: "착공일과 준공일만 넣으면 됩니다. 달력일과 주말 제외 일수를 같이 봅니다.",
   indexLabel: "공사기간",
+  group: "건설 공무",
   indexDesc: "착공·준공일 → 일수",
   body: `
 <section class="tool">

@@ -5,6 +5,7 @@ export default {
   h1: "기성금 청구액",
   lede: "기성률에서 이번에 실제로 청구할 금액까지 한 번에 나옵니다.",
   indexLabel: "기성금 청구액",
+  group: "건설 공무",
   indexDesc: "기성률 · 선금정산 → 청구액",
   body: `
 <section class="tool">

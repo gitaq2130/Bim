@@ -5,6 +5,7 @@ export default {
   h1: "하도급률",
   lede: "원도급액과 하도급액만 넣으면 됩니다. 검토서에 그대로 옮겨 적을 수 있는 형식으로 나옵니다.",
   indexLabel: "하도급률",
+  group: "건설 공무",
   indexDesc: "원도급액 · 하도급액 → 비율",
   body: `
 <section class="tool">

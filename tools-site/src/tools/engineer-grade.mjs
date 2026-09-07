@@ -5,6 +5,7 @@ export default {
   h1: "건설기술인 배치기준",
   lede: "공사예정금액만 넣으면 배치 자격이 나옵니다. 경력으로 인정되는 대체 요건까지 함께 봅니다.",
   indexLabel: "건설기술인 배치기준",
+  group: "건설 공무",
   indexDesc: "공사금액 → 자격·경력 요건 (별표5)",
   body: `
 <section class="tool">

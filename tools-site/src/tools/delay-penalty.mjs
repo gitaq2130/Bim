@@ -5,6 +5,7 @@ export default {
   h1: "지체상금",
   lede: "계약서에 정한 요율을 넣으면 금액이 나옵니다. 계약금액 대비 몇 %인지도 같이 봅니다.",
   indexLabel: "지체상금",
+  group: "건설 공무",
   indexDesc: "계약금액 · 지체일수 → 금액",
   body: `
 <section class="tool">

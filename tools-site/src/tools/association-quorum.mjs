@@ -5,6 +5,7 @@ export default {
   h1: "조합 총회 직접출석 요건",
   lede: "총회 전에 몇 명이 더 와야 하는지 바로 나옵니다. 미달이면 부족한 인원까지 보여줍니다.",
   indexLabel: "조합 총회 직접출석 요건",
+  group: "정비사업·공동주택",
   indexDesc: "총원 · 직접출석 → 충족 여부",
   body: `
 <section class="tool">

@@ -40,19 +40,37 @@ function toolPage(tool) {
   });
 }
 
+/** 색인에 뜨는 분류 순서. 여기 없는 group 은 뒤에 나온 순서대로 붙는다. */
+const GROUP_ORDER = ["건설 공무", "정비사업·공동주택", "노무", "세무·금액"];
+
+function groupTools(tools) {
+  const byGroup = new Map();
+  for (const t of tools) {
+    const g = t.group || "기타";
+    if (!byGroup.has(g)) byGroup.set(g, []);
+    byGroup.get(g).push(t);
+  }
+  const rank = (g) => {
+    const i = GROUP_ORDER.indexOf(g);
+    return i === -1 ? GROUP_ORDER.length : i;
+  };
+  return [...byGroup.entries()].sort((a, b) => rank(a[0]) - rank(b[0]));
+}
+
 function indexPage(tools) {
-  const list = tools.map((t) => `  <li><a href="/${encodeURI(t.slug)}/"><b>${t.indexLabel}</b><span>${t.indexDesc}</span></a></li>`).join("\n");
+  const sections = groupTools(tools).map(([group, items]) => {
+    const list = items.map((t) => `  <li><a href="/${encodeURI(t.slug)}/"><b>${t.indexLabel}</b><span>${t.indexDesc}</span></a></li>`).join("\n");
+    return `<h2 class="group">${group}</h2>\n<ul class="index-list">\n${list}\n</ul>`;
+  }).join("\n");
   const body = `<header class="top">
 <span class="kicker">${SITE.name}</span>
 <h1>${SITE.tagline}</h1>
-<p>건설 공무·정비사업 실무에서 자주 다시 계산하게 되는 값들. 숫자만 넣으면 바로 나옵니다.</p>
+<p>건설 공무·정비사업·노무 실무에서 자주 다시 계산하게 되는 값들. 숫자만 넣으면 바로 나옵니다. 도구마다 근거 조문을 함께 적어 두었습니다.</p>
 </header>
-<ul class="index-list">
-${list}
-</ul>`;
+${sections}`;
   return page({
-    title: `${SITE.name} | 건설 공무·정비사업 실무 계산 도구`,
-    description: "건설기술인 배치기준, 하도급률, 조합 총회 직접출석 요건 등 현장에서 자주 쓰는 계산을 모았습니다.",
+    title: `${SITE.name} | 건설 공무·정비사업·노무 실무 계산 도구`,
+    description: "건설기술인 배치기준, 하도급률, 조합 총회 직접출석 요건, 퇴직금·주휴수당·일용직 소득세 등 실무에서 자주 쓰는 계산을 근거 조문과 함께 모았습니다.",
     canonical: "/",
     body,
   });

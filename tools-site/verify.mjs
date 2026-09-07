@@ -153,5 +153,82 @@ eq("한글 1억 관행(일억 유지)", toHangul(100000000,false), "일억");
 eq("한글 12000 관행", toHangul(12000,false), "만이천");
 eq("한글 10001 관행", toHangul(10001,false), "만일");
 
+/* --- 일용직 소득세 --- */
+function dayTax(pay){
+  const basis=Math.max(0,pay-150000);
+  const raw=Number((basis*0.06*(1-0.55)).toFixed(6));   // (1-0.55) 부동소수점 오차를 유효자리로 정리
+  let income=Math.floor(raw);
+  if(income<1000) income=0;
+  const local=Math.floor(income*0.1);
+  return {income, local, total:income+local};
+}
+eq("일용 일당 20만 소득세", dayTax(200000).income, 1350);
+eq("일용 일당 20만 지방세", dayTax(200000).local, 135);
+eq("일용 일당 20만 합계", dayTax(200000).total, 1485);
+eq("일용 일당 18만 소액부징수", dayTax(180000).total, 0);
+eq("일용 187,037원 경계 아래", dayTax(187037).income, 0);
+eq("일용 187,038원 경계 위", dayTax(187038).income, 1000);
+eq("일용 일당 15만 공제 후 0", dayTax(150000).total, 0);
+eq("일용 일당 10만(공제 초과)", dayTax(100000).total, 0);
+
+/* --- 주휴수당 --- */
+function weekly(h,w){
+  if(h<15) return {ok:false, pay:0, holidayHours:0, monthHours:0};
+  const holidayHours=Math.min(h,40)/40*8;
+  const monthHours=(h+holidayHours)*365/12/7;
+  return {ok:true, pay:Math.floor(holidayHours*w), holidayHours, monthHours:Math.round(monthHours)};
+}
+eq("주휴 주40시간 시급10320", weekly(40,10320).pay, 82560);
+eq("주휴 주40시간 월환산시간", weekly(40,10320).monthHours, 209);
+eq("주휴 209시간 × 최저임금 = 고시 월환산액", 209*10320, 2156880);
+eq("주휴 주20시간 비례", weekly(20,10320).holidayHours, 4);
+eq("주휴 주15시간 발생", weekly(15,10000).holidayHours, 3);
+eq("주휴 주14시간 미발생", weekly(14,10000).ok, false);
+eq("주휴 주48시간 상한 8시간", weekly(48,10000).holidayHours, 8);
+
+/* --- 연장·야간·휴일 가산 --- */
+function overtime(w,ot,nt,hl,small){
+  const hol8=Math.min(hl,8), holOver=Math.max(hl-8,0);
+  const rOT=small?1:1.5, rH8=small?1:1.5, rHO=small?1:2, rN=small?0:0.5;
+  return Math.floor(ot*w*rOT + hol8*w*rH8 + holOver*w*rHO + nt*w*rN);
+}
+eq("연장 10h 시급1만", overtime(10000,10,0,0,false), 150000);
+eq("휴일 10h (8h 1.5배 + 2h 2배)", overtime(10000,0,0,10,false), 160000);
+eq("야간 겹친 연장 10h = 2배", overtime(10000,10,10,0,false), 200000);
+eq("5인미만 연장 10h 가산없음", overtime(10000,10,0,0,true), 100000);
+eq("5인미만 야간 가산없음", overtime(10000,0,10,0,true), 0);
+eq("휴일 8h 정확히", overtime(10000,0,0,8,false), 120000);
+
+/* --- 퇴직금 --- */
+const MS=86400000;
+function minusMonths(dt,m){
+  const t=new Date(dt.getFullYear(), dt.getMonth()-m, 1);
+  const last=new Date(t.getFullYear(), t.getMonth()+1, 0).getDate();
+  t.setDate(Math.min(dt.getDate(), last));
+  return t;
+}
+function isoOf(dt){
+  return dt.getFullYear()+"-"+String(dt.getMonth()+1).padStart(2,"0")+"-"+String(dt.getDate()).padStart(2,"0");
+}
+function severance(joinISO, quitISO, wage3, bonus, annual, ordinary){
+  const J=new Date(joinISO+"T00:00:00"), Q=new Date(quitISO+"T00:00:00");
+  const start=minusMonths(Q,3);
+  const periodDays=Math.round((Q-start)/MS);
+  const served=Math.round((Q-J)/MS);
+  const avg=(wage3 + bonus*3/12 + annual*3/12)/periodDays;
+  const daily=Math.max(avg, ordinary||0);
+  return {periodDays, served, avg, daily, pay: served<365 ? 0 : Math.floor(daily*30*(served/365))};
+}
+eq("평균임금 산정기간 말일 보정(5/31-3개월)", isoOf(minusMonths(new Date("2026-05-31T00:00:00"),3)), "2026-02-28");
+eq("평균임금 산정기간 일수(9/1 기준)", severance("2023-03-02","2026-09-01",10500000,0,0,0).periodDays, 92);
+let sv=severance("2023-03-02","2026-09-01",10500000,4000000,600000,0);
+eq("퇴직금 재직일수", sv.served, 1279);
+eq("퇴직금 1일 평균임금(반올림)", Math.round(sv.avg), 126630);   // (10,500,000 + 상여 1,000,000 + 연차 150,000) ÷ 92일
+eq("퇴직금 금액", sv.pay, 13311807);
+eq("상여·연차 반영 시 평균임금이 커진다", sv.avg > severance("2023-03-02","2026-09-01",10500000,0,0,0).avg, true);
+eq("1년 미만은 0", severance("2026-01-01","2026-06-01",6000000,0,0,0).pay, 0);
+let sv2=severance("2023-03-02","2026-09-01",10500000,0,0,200000);
+eq("통상임금이 크면 통상임금 채택", sv2.daily, 200000);
+
 console.log("\n"+pass+" passed, "+fail+" failed");
 process.exit(fail?1:0);

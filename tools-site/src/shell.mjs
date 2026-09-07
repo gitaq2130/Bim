@@ -57,7 +57,8 @@ details.more summary{cursor:pointer;font-size:.8125rem;color:var(--brand);font-w
 .explain{margin-top:1.5rem;font-size:.875rem;color:var(--ink-2)}
 .explain h2{font-size:1rem;font-weight:700;color:var(--ink);margin:1.25rem 0 .4rem}
 .explain p{margin:0 0 .6rem;max-width:62ch}
-.index-list{list-style:none;margin:1.25rem 0 0;padding:0;display:grid;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:3px;overflow:hidden}
+h2.group{margin:1.75rem 0 0;font-size:.6875rem;letter-spacing:.16em;color:var(--ink-3);font-weight:700}
+.index-list{list-style:none;margin:.5rem 0 0;padding:0;display:grid;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:3px;overflow:hidden}
 .index-list li{background:var(--card)}
 .index-list a{display:block;padding:.9rem 1.1rem;text-decoration:none;color:inherit}
 .index-list a:hover{background:var(--brand-bg)}
