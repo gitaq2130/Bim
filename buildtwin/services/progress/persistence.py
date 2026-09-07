@@ -422,11 +422,37 @@ def find_document_mapping_review(session: Session, project_id: str, activity_id:
 
     확정된 매핑의 검토요청은 이미 `approved`로 닫혀 있다 — 재계산이 그 확정을 더 이상 뒷받침하지
     못하게 되면(`document_mapper._reopen_reviews_for_invalidated_confirmations`) `approved` 상태인 이
-    행을 다시 찾아 `open`으로 되돌려야 하므로, `status == "open"` 필터를 걸지 않는 버전이 필요하다."""
+    행을 다시 찾아 `open`으로 되돌려야 하므로, `status == "open"` 필터를 걸지 않는 버전이 필요하다.
+
+    **`created_at` 내림차순으로 정렬해 그 쌍의 가장 최근 행을 돌려준다.** 정렬이 필요해진 것은 ADR 0013
+    규칙 7(취소 무제한) 뒤다 — 그 전에는 한 쌍에 요청 행이 사실상 하나였고, 지금은 취소마다 새 행이
+    쌓인다(`document_mapping_reviews` 의 docstring 과 같은 사실). 정렬이 없으면 어느 행이 돌아오는지가
+    **DB 스캔 순서**에 달리고, 그 행을 되여는 것은 `resolved_by`·`resolved_at`·`resolution_note` 를
+    지우는 일이라 **이미 대체된 옛 결정의 감사가 지워진다.**
+
+    실측(SQLite, 이 저장소 통합 테스트 환경). 확정1 → 취소 → 확정2 로 닫힌 행을 둘 만든 뒤 Activity 를
+    바꿔 재오픈을 태웠다. 튜플은 `(요청 id 앞 8자, status, resolution_note)`:
+
+        [P-after-confirm2] [('a6f66d51','approved','확정2'), ('86e9f3c0','approved','확정1')]
+        [P-after-reopen]   [('a6f66d51','approved','확정2'), ('86e9f3c0','open','')]
+
+    정렬 없이는 **옛 행**(`86e9f3c0`, 확정1)이 열리고 그 감사가 지워졌다 — 무효화된 것은 확정2 인데
+    되열린 것은 확정1 의 행이다. 내림차순 정렬 뒤에는 `a6f66d51` 이 열린다.
+
+    **왜 `status == "open"` 우선이 아니라 `created_at` 인가.** 한 쌍에 열린 행은 언제나 하나이고
+    (`_sync_pending_document_mapping_reviews`·`cancel_document_mapping_review`·이 함수의 호출부가 모두
+    "열려 있으면 새로 만들지 않는다"를 지킨다), 그 하나는 **가장 최근 행**이다 — 새 행은 언제나 맨 뒤에
+    생기고, 되여는 행도 이 정렬 뒤에는 맨 뒤 행이다. 그러므로 축을 하나만 둔다: 형제 조회
+    `document_mapping_reviews` 와 같은 `created_at` 이다. **이 정렬이 기대는 것**은 위 불변식이고,
+    그것이 깨지면(열린 행이 둘) 이 함수는 그중 최근 것을 돌려준다.
+
+    *같은 `created_at` 을 갖는 두 행은 이 정렬로 갈리지 않는다* — 그 경우 순서는 다시 스캔 순서다.
+    이 저장소에서 한 쌍의 두 요청 행이 같은 마이크로초에 생기는 경로는 없다(취소는 CM 의 요청 하나당
+    하나씩 만든다)."""
     stmt = select(ReviewRequestRow).where(
         ReviewRequestRow.project_id == project_id,
         ReviewRequestRow.kind == "document_mapping", ReviewRequestRow.activity_id == activity_id,
-    )
+    ).order_by(ReviewRequestRow.created_at.desc())
     for row in session.scalars(stmt):
         if (row.conflicting_sources or {}).get("doc_id") == doc_id:
             return row

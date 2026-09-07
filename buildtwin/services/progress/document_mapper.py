@@ -739,7 +739,13 @@ def cancel_document_mapping_review(session: Session, project_id: str, activity_i
         # 로 열려 있는 상태에서 그 확정을 취소하면 여기 온다. 하나 더 만들면 ADR 0007 §4 규칙 6 "중복 생성
         # 금지"를 깨고, 같은 쌍에 열린 요청이 둘이면 CM 이 하나를 닫아도 큐에 남는다. 그래서 그 행을
         # 취소의 요청으로 갱신한다 — 이것은 규칙 2 의 "옛 행을 손대지 않는다"에 걸리지 않는다: 그 규칙이
-        # 지키는 것은 **닫힌 결정의 감사**(`resolved_by`·`resolution_note`)이고 이 행은 닫힌 적이 없다.
+        # 지키는 것은 **닫힌 결정의 감사**(`resolved_by`·`resolution_note`)인데, 이 행은 **지금** 닫혀 있지
+        # 않고 그 행의 옛 감사는 취소가 아니라 **재오픈이 이미 지웠다**. 이 갈래가 스스로 이름 붙인 경로
+        # (재확인 요청이 열린 확정의 취소)에서 그 행은 **닫힌 적이 있다** —
+        # `_reopen_reviews_for_invalidated_confirmations` 가 `status="open"`·`resolved_by=None`·
+        # `resolved_at=None`·`resolution_note=None` 으로 되돌린 것뿐이다. ADR 0013 개정 1 이 그 전이를
+        # 실행값으로 적어 두었다(`[P2-after-confirm]` 의 `approved`·처리자·사유 → `[P2-after-reopen]` 의
+        # `open`·None·None). 결론(취소가 감사를 지우지 않는다)은 그대로 참이다.
         new_review_id = open_review.review_request_id
         open_review.title, open_review.confidence = title, row.confidence
         open_review.evidence = evidence.model_dump(mode="json")
