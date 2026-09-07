@@ -44,6 +44,10 @@
    실패 테스트는 `read_floor()` 가 아니라 **지어낸 값**을 쓴다(축과 무관하게 순수 함수만 태우려고
    일부러 그렇게 했다). 그래서 바닥값을 낮추는 변경은 아무 테스트도 죽이지 않는다 —
    그 한계와 실측은 `tests/postgres.floor.json` 의 `_comment` (3) 에 있다.
+   **닫힌 것은 그 값이 아니라 그 값의 「복창」이다**: 이 파일과 `tests/helpers/postgres_axis.py` ·
+   `.github/workflows/buildtwin-ci.yml` 이 바닥값을 산문에 숫자로 적는데, 그 셋이 정본 파일과
+   갈리는 것은 이제 `tests/invariants/test_postgres_floor_recitation.py` 가 죽인다(계획 0012 §후속 54).
+   **바닥값 자신이 옳은지는 여전히 아무 테스트도 보지 않는다.**
 3. **자식이 CI 러너에서 얼마를 더하는가.** 로컬에서만 쟀다(계획 0010 §확인하지 않은 것 24).
    로컬 실측(잰 트리 `f6ad00e`, 각 N=2): 이 파일 단독 **2.56 / 2.59s** ↔ 아래 셋을 `--deselect` 하면
    **0.89 / 0.90s** = **+≈1.7s**. 리뷰어가 같은 트리에서 기구를 **삭제**해 잰 값은 4.46/4.17s ↔
@@ -460,7 +464,7 @@ def test_the_below_floor_child_left_the_measured_file_alone(wiring_child, wiring
 
 @pytest.fixture(scope="module")
 def below_floor_child(tmp_path_factory) -> tuple[subprocess.CompletedProcess, Path]:
-    """엔진을 **관측한** 부분집합의 배역 — `dialect=postgresql` 인데 수가 바닥값 아래(3 < 181).
+    """엔진을 **관측한** 부분집합의 배역 — `dialect=postgresql` 인데 수가 바닥값 아래(3 < 187).
 
     위 `wiring_child` 는 `dialect is None` 이라 계약 ①에서 죽어 계약 ②(바닥값)가 **실제 세션에서**
     발화하는 것을 보여 주지 못한다. 이 자식이 그 자리다: 저장소의 파이널라이저·훅을 그대로 import 한
