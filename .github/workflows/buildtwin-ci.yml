@@ -147,23 +147,34 @@ jobs:
         run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
       - name: make fixtures
         run: python scripts/fetch_fixtures.py
+      # 두 스텝은 **같은 플래그**로 돈다 — 한쪽만 자세하면 두 로그를 나란히 읽을 수 없다.
+      # `-rfE` = 실패·에러의 짧은 요약(어느 테스트인지), `--tb=short` = 예외 타입과 자리.
+      # 이 둘이 있어야 "컨테이너가 죽었다"(psycopg.OperationalError: connection refused)와
+      # "단언이 깨졌다"(AssertionError)가 로그에서 갈린다 — 지금은 둘 다 그냥 빨간 잡이다.
       - name: pytest integration (sqlite — 로컬 make test 와 같은 갈래, seed_dev_data 는 꺼진 채로)
-        run: pytest tests/integration -q
+        run: pytest tests/integration -q -rfE --tb=short
       # 두 스텝이 같은 잡이라 앞 스텝의 실패가 뒤를 가린다(ADR 0014 §Deferred 3 이 qa 판단으로 남긴 자리).
       # !cancelled() 로 그 가림만 없앤다 — 잡을 나누면 setup(deps·fixtures)을 두 번 하게 되고,
       # 대가는 설치 스텝이 죽은 실행에서도 이 스텝이 한 번 더 죽어 로그가 시끄러워지는 것이다.
+      # junit xml 은 **저장소 밖**(runner.temp)에 쓴다 — 작업 트리를 더럽히지 않으려고. 이것이 있어야
+      # 다음 흔들림에서 "어느 테스트가 어떤 예외로 죽었는지"를 로그를 눈으로 훑지 않고 집어낼 수 있다
+      # (계획 0009 작업 5·6 에서 미식별로 남은 1회가 이 기구가 없어서 생긴 공백이다).
       - name: pytest integration (postgres — 서비스 컨테이너 + 세션 전용 스키마)
         if: ${{ !cancelled() }}
         env:
           BUILDTWIN_CI_POSTGRES_URL: postgresql://buildtwin:buildtwin@localhost:5432/buildtwin_test
-        run: pytest tests/integration -q
+        run: pytest tests/integration -q -rfE --tb=short --junit-xml=${{ runner.temp }}/postgres-junit.xml
       # tests/postgres.measured.json 은 postgres 스텝이 덮어쓴다 — 커밋된 값과의 드리프트를 아티팩트로 남긴다.
-      - name: Upload measured postgres axis
+      # 같은 값이 **잡 로그에도 한 줄**로 찍힌다(접두사 `[db-axis]`, tests/integration/conftest.py 의
+      # pytest_terminal_summary) — 아티팩트를 내려받지 않아도 tests_on_postgres 의 실제 수가 보인다.
+      - name: Upload measured postgres axis (+ junit)
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: postgres-measured
-          path: buildtwin/tests/postgres.measured.json
+          path: |
+            buildtwin/tests/postgres.measured.json
+            ${{ runner.temp }}/postgres-junit.xml
           if-no-files-found: warn
 
   e2e:
