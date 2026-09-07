@@ -909,3 +909,74 @@ M-3 마지막 문단에서 qa 로 넘겼다.
    `ERROR_ENVELOPE_SECTION` 의 열거가 이번 예외 둘을 담지 않는다. 열거를 유지할지(§6-1: 열거는 길이가
    곧 개수다) 부재 단정·grep 으로 바꿀지는 소유자의 판단이다. 같은 자리에서 `internal_error` 가 표에
    없는 것도 함께 본다(M-4).
+
+---
+
+# 종결 (architect, 2026-09-07)
+
+## Z-0. 이 종결의 실측이 나온 자리 (재현 방법)
+
+**작업 트리** `/home/user/Bim/buildtwin`, 브랜치 `claude/buildtwin-initial-setup-ubulzb`,
+**HEAD `df37433`**(심사 잔여 M1·M2 를 닫은 뒤). 저장소 루트 `/home/user/Bim` 에서
+`git status --porcelain` **전문이 빈 출력**이다(모든 탐침·변이 전후로 확인했다).
+
+```
+$ cd /home/user/Bim/buildtwin && .venv/bin/pytest -q      # 임시 탐침 제외
+804 passed, 1 warning in 61.99s (0:01:01)
+
+$ cd /home/user/Bim/buildtwin/apps/web && npx vitest run
+ Test Files  28 passed (28)
+      Tests  283 passed (283)
+
+$ cd /home/user/Bim/buildtwin && make lint ; echo "exit=$?"
+exit=0
+```
+
+실측은 `tests/integration/test_zzprobe_0006_final.py`(임시 탐침 — 잰 뒤 지웠다)를 세션 픽스처로 태워
+얻었고 라벨은 `[P-m4-*]` · `[P-corner-*]` 다. **이 절의 `파일:줄`·심볼 참조는 `df37433` 트리의 것이고,
+위 §0 의 `99d3721` · M-0 의 `61dcc3c` 참조는 갱신하지 않는다**(CLAUDE.md §3-13 첫째 갈래).
+
+## Z-1. 이 종결이 닫은 것 — 전부 architect 소유 문서 셋
+
+| 무엇 | 어디 | 결론이 바뀌었는가 |
+|---|---|---|
+| 규칙 5 전수 표에 `RoleNotAllowedError` 누락 | ADR 0013 규칙 5(행 추가 + "남긴 아홉이" → "남긴 열이") | **아니다.** raise 소유 1(progress) → 서비스 트리. 10/10 이 같은 규칙을 따른다 |
+| 개정 1 정본 ②의 한정어가 한 칸 모자람 | ADR 0013 규칙 7(개정 2 문단) · `docs/glossary.md` "취소가 여는 요청" | **아니다.** 무제한의 근거는 착지점 하나이고 개정 2 는 그것을 건드리지 않는다 |
+| `cancelled_review_request_id` 가 갱신 갈래에서 다른 결정의 행을 가리킴 | ADR 0013 §Deferred 8(신규) · 규칙 2 문구 좁힘 · glossary | **문구가 바뀐다.** 값(코드)은 progress-engine 소유라 §후속 7 로 넘긴다 |
+
+## Z-2. 후속(계획 §후속 · M-7 에 이어서)
+
+7. **`cancelled_review_request_id` 의 갱신 갈래**(progress-engine). ADR 0013 §Deferred 8 에 실행값과
+   제안 형태가 있다: 갱신 갈래에서 그 값을 `None` 으로 둔다. 함께 좁힐 문구 둘도 같은 소유다 —
+   `services/progress/document_mapper.py:727` 의 "`cancelled_review_request_id` 는 **마지막으로 닫힌**
+   요청이다 — … 지금 취소하는 결정을 기록한 것이 그 행이다" 와
+   `services/progress/persistence.py:469` 의 "취소는 … **마지막으로 닫힌** 행을 골라야 한다"(둘 다
+   `df37433` 좌표). 뒤 절이 갱신 갈래에서 거짓이다. **고치면 그 자리를 메우려고 새로 쓰는 문장에도
+   §6-2·§6-3 을 건다** — 이번 사이클이 그것을 해서 거짓 하나를 잡았고(개정 1), 안 해서 하나를 놓쳤다.
+8. **새 `ORDER BY created_at DESC` 자체가 무보호다**(qa). `services/progress/persistence.py:455`
+   (`find_document_mapping_review`). 직접 태운 값: 그 한 줄만 지우고
+   `.venv/bin/pytest -q` → **804 passed**. 그런데 그 정렬이 막고 있는 것은 실해다 — 정렬 없이는 재오픈이
+   **엉뚱한 옛 행**을 열어 이미 대체된 옛 결정의 `resolution_note` 가 지워진다(ADR 0013 §Deferred 8 의
+   `[P-corner-*]` 대조값). 붙들려면 한 쌍에 **닫힌 요청 행이 둘 이상**인 배역이 필요하고, 그것은
+   `test_20` 의 기존 프로젝트 픽스처 밖이다(qa 가 심사에서 정직하게 넘긴 그 이유).
+9. **`document_mapping_reviews` 의 `sorted(...)` 도 무보호다**(qa). `services/progress/persistence.py:476`.
+   직접 태운 값: `return sorted(rows, key=lambda r: r.created_at)` → `return rows` 로 바꾸고
+   `.venv/bin/pytest -q` → **804 passed**. **SQLite 의 스캔 순서가 우연히 삽입 순서와 같아서**이고,
+   **Postgres 에서는 아무도 재지 않았다**(CLAUDE.md §1 의 기본 DB 는 PostgreSQL 이다). 이 정렬은
+   `closed[-1]`(= 취소가 싣는 id)이 기대는 바로 그 순서다.
+
+**다음 사이클의 순서는 §후속 1 하나다.** 리뷰어 판정: **§6-2·§6-4 압축이 세 사이클 연속 미이행**이고
+(계획 0005 §후속 1 → 계획 0006 §후속 1 → 이 종결), 다음 사이클은 **그 하나만** 한다. §6-1 압축의 실측
+이득이 **줄 -17 / 문자 -141** 이었다는 상한을 알고 시작하고, 한 번에 한 절, 대조표와 함께 한다.
+위 7·8·9 는 그 다음이다. 이 종결이 CLAUDE.md 를 **한 줄도 늘리지 않은** 이유도 같다 — 리뷰어 판정
+그대로 "늘려야 할 것은 §6 이 아니라 단언이다".
+
+## Z-3. 이 종결이 확인하지 않은 것
+
+- **갱신 갈래에 드는 경로의 전수를 세지 않았다.** ADR 0013 §Deferred 8 의 제안(`None`)은 "그 갈래의
+  열린 행은 언제나 재오픈된 행"에 기대는데, 그 전수는 소유자(progress-engine)가 센다.
+- **Postgres 에서 아무것도 재지 않았다.** 위 8·9 의 "804 passed" 는 전부 SQLite 값이다.
+- **웹을 태우지 않았다.** vitest 283 은 재실행만 했다(M-6 과 같다).
+- **`ORDER BY` 정렬이 `_reopen_reviews_for_invalidated_confirmations` 밖의 호출자에게 무엇을 바꿨는지**
+  는 보지 않았다. `find_document_mapping_review` 의 호출부 전수는 progress-engine 이 정렬을 넣으며
+  본 것으로 두었다.

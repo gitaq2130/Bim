@@ -11,6 +11,17 @@
     그리고 **닫힌 요청 행은 감사의 정본이 아니다** — 닫힌 행이 하나도 없는 취소 경로가 있다(§0-a `[P2-*]`).
     고치는 자리: 불변식 5 표 셋째 행 · 규칙 3 · 규칙 7 · §"이 불변식을 지금 무엇이 붙들어 주는가" ·
     §Alternatives 8 · §Deferred 6·7.
+  - **개정 2**(2026-09-07, 계획 0006 종결 — **문서만 고친다. 결정도 코드도 바뀌지 않는다**):
+    ① 규칙 5 의 전수 표에 `RoleNotAllowedError` 한 행이 빠져 있었다. 루트 grep 은 그것을 뽑았고
+    (정규식 alternation 에 `PermissionError` 가 있다) 거른 것은 **그 뒤의 분류 기준**이다
+    (CLAUDE.md §6-1 8회차와 같은 모양). **결론은 바뀌지 않는다.**
+    ② 규칙 7 개정 1 정본 ②의 한정어가 한 칸 모자랐다: 갱신 갈래에서는 행으로 센 **횟수**만이 아니라
+    그 행의 `cancel_note` **값**도 덮인다(§0-b `[P-m4-*]`).
+    ③ 규칙 2 의 `cancelled_review_request_id`("어느 결정을 취소한 것인가")가 한 코너에서 거짓이다
+    (§0-b `[P-corner-*]`). 이 사이클이 `find_document_mapping_review` 에 넣은 `ORDER BY created_at DESC`
+    가 만든 자리이므로 CLAUDE.md §6-4 1 이 걸린다 — 고치는 코드는 progress-engine 소유라 이 개정은
+    **문구를 좁히고 형태를 제안**한다(§Deferred 8, 계획 0006 §후속 7).
+    고치는 자리: 규칙 5 표 + 그 아래 문장 · 규칙 7 개정 1 ② · 규칙 2 · §Deferred 8(신규) · §0-b(신규).
 - 작성: architect
 - 날짜: 2026-09-06
 - 관련: **ADR 0007 §Deferred "매핑 확정 취소(unconfirm)"·"매핑 반려 취소(unreject)"**(이 ADR 이 그 둘을
@@ -69,6 +80,33 @@ DB 직접 조작이 필요한 칸(곱 표의 네 칸)은 `packages.core.db.sessi
 세션 픽스처로 태워 얻었고 라벨은 `[P1-*]`(닫힌 행이 있는 경로) · `[P2-*]`(닫힌 행이 없는 경로) ·
 `[P3-*]`(반려 → 취소) · `[P4-*]`(반복 취소)다. **개정 1 이 새로 적는 `파일:줄`·심볼 참조는 `61dcc3c`
 트리의 것이고, 위 §0 이 못박은 `516949a` 참조는 갱신하지 않는다**(CLAUDE.md §3-13 첫째 갈래).
+
+### 0-b. 개정 2 의 실측이 나온 자리 (재현 방법)
+
+**개정 2 의 수치는 또 다른 트리에서 났다**: 같은 작업 트리·같은 브랜치, **HEAD `df37433`**(심사 잔여
+M1·M2 를 닫은 뒤). 저장소 루트 `/home/user/Bim` 에서 `git status --porcelain` **전문이 빈 출력**이고
+(탐침·변이 전후로 확인했다), 기준선은 직접 쟀다:
+
+```
+$ cd /home/user/Bim/buildtwin && .venv/bin/pytest -q      # 임시 탐침 제외
+804 passed, 1 warning in 61.99s (0:01:01)
+
+$ cd /home/user/Bim/buildtwin/apps/web && npx vitest run
+ Test Files  28 passed (28)
+      Tests  283 passed (283)
+
+$ cd /home/user/Bim/buildtwin && make lint ; echo "exit=$?"
+exit=0
+```
+
+실측은 `tests/integration/test_zzprobe_0006_final.py`(임시 탐침 — 잰 뒤 지웠다)를 세션 픽스처
+(`client`/`auth`/`user_ids`)로 태워 얻었고, 라벨은 `[P-m4-*]`(같은 행 하나를 두 번 취소) ·
+`[P-corner-*]`(닫힌 옛 행이 남은 채 갱신 갈래로 드는 취소)다. 두 탐침 모두 **자기 프로젝트를 새로
+만들고** 공정표·대장을 정상 순서로 올린다(다른 배역과 섞이지 않게). 요청 행을 찍는 줄의 튜플은 모두
+`(요청 id 앞 8자, status, resolution_note, cancel_note, cancelled_review_request_id)` 이고 `created_at`
+오름차순이다. **요청 id 는 실행마다 새로 나므로 아래 각 블록은 한 실행의 값이다** — 블록을 가로질러
+id 를 맞추지 않는다. **개정 2 가 새로 적는 `파일:줄`·심볼 참조는 `df37433` 트리의 것이고, 위 §0 의 `516949a`
+와 §0-a 의 `61dcc3c` 참조는 갱신하지 않는다**(CLAUDE.md §3-13 첫째 갈래).
 
 ---
 
@@ -277,7 +315,8 @@ evidence.extra 에서 반려 표시 4키 제거
   가 정확히 반대를 하고 있다는 코드 인용(§Context 2)이고, 그 모양은 ADR 0011·0012 가 세운 축의 정반대다.
 - **새 행**: `ReviewRequest(kind="document_mapping", status="open")` 를 취소와 **같은 트랜잭션**에서
   만든다. `conflicting_sources` 는 기존 계약(`doc_id`)에 두 키를 더한다 —
-  `cancelled_review_request_id`(어느 결정을 취소한 것인가) · `cancel_note`(왜).
+  `cancelled_review_request_id`(어느 결정을 취소한 것인가 — **개정 2 가 좁힌다: 취소가 이미 열린 요청을
+  갱신하는 갈래에서는 이 값이 그 물음에 답하지 못한다**, §Deferred 8) · `cancel_note`(왜).
   근거는 §Context 4 의 `[C3-*]` 실측이다: 재계산을 기다리면 readiness 와 큐가 서로 다른 말을 한다.
 
 *역방향 확인 — "그 자리에서 연다"가 미는 것.* 재계산이 열어 줄 때까지의 공백을 뺀다. **더 들어오는
@@ -375,6 +414,7 @@ $ for e in <위 목록의 각 타입>; do grep -rn "raise $e(" --include=*.py . 
 | `RevocationReasonRequiredError` | `packages/core/models/state.py:75` | `state.py:220` | **0**(같음) |
 | `ReviewRejectionReasonRequiredError` | `packages/core/models/review.py:102` | `services/progress/state_machine.py:156` · `services/api/usecases.py:446` | **2**(progress·api) |
 | `ObjectNotFoundError` | `services/progress/state_machine.py:48` | `state_machine.py:123,199` | 1(progress) |
+| `RoleNotAllowedError` | `services/progress/state_machine.py:52` | `state_machine.py:104` | 1(progress) |
 | `TransitionBlockedByReviewError` | `services/progress/state_machine.py:63` | `state_machine.py:213` | 1(progress) |
 | `UnsafeConfigOverrideError` | `services/progress/config_loader.py:41` | `config_loader.py:71,99` | 1(progress) |
 | `MappingTargetNotFoundError` | `services/sync/errors.py:18` | `services/sync/review_queue.py:96` | 1(sync-2d3d) |
@@ -396,7 +436,18 @@ $ for e in <위 목록의 각 타입>; do grep -rn "raise $e(" --include=*.py . 
 `TransitionResponse`·`DailyReportResponse`·`ExpertReviewLogMiddleware`) **그중 예외는 하나도 없다.**
 0건이라는 결과가 기준을 정당화하지는 않으므로(§6-1) 기준의 한계는 그대로 적어 둔다.
 
-**남긴 아홉이 예외 없이 한 규칙을 따른다: 예외의 자리는 raise 자리의 소유 집합이 정한다.** 소유가 하나면 그
+**(개정 2) 이 표에 `RoleNotAllowedError` 한 행이 빠져 있었다.** 루트 grep 은 그것을 뽑았고(위 정규식의
+alternation 에 `PermissionError` 가 있다) 거른 것은 **그 뒤의 분류 기준**이다 — §6-1 8회차와 같은 모양이다.
+그 예외는 표의 포함 기준("raise 자리와 처리 자리의 소유가 다를 수 있는 도메인 예외")에 정확히 맞는다:
+progress 가 던지고(`state_machine.py:104`) api 가 받는다(`services/api/usecases.py:211`). **결론은 바뀌지
+않는다** — raise 소유가 하나(progress)이므로 그 서비스 트리에 있는 지금 자리가 이 규칙 그대로다.
+좌표는 §0 이 못박은 `516949a` 와 개정 2 의 `df37433` 에서 **같다**(두 트리 모두 `class` 52행 · `raise`
+104행 — 같은 grep 을 `git grep … 516949a` 로 한 번, HEAD 트리에서 한 번 돌려 비교했다).
+이 행을 더하면 **표 + 위 다섯 무리가 루트 grep 출력 전부를 덮는다**: `516949a` 에서 정의 25 = 표 10 +
+무리 15, `df37433` 에서 27 = 표 10 + 무리 15 + 이 ADR 이 만든 둘(`MappingDecision*Error`). 개수를 여기서
+단정하는 이유는 **이 자리의 결론이 전수성에 기대기 때문**이다(§6-1 9회차 — 열거는 길이가 곧 개수다).
+
+**남긴 열이 예외 없이 한 규칙을 따른다: 예외의 자리는 raise 자리의 소유 집합이 정한다.** 소유가 하나면 그
 서비스 트리, 정의 파일 자신이 raise 하면 그 파일, **둘 이상일 때만** 공통 상위(`packages/core`)다.
 `packages/core/models/` 에 있는 셋 중 둘은 그 디렉터리 안에서 raise 되고, 나머지 하나가 ADR 0012 가
 말한 "소유가 여럿" 사례다.
@@ -536,6 +587,28 @@ apps/web/src services/api | grep -v test` → **출력 없음, 종료코드 1**)
 ② 의 셈에는 한정어가 하나 붙는다(*역방향 확인*): 취소가 **이미 열린 요청을 갱신**하는 경로에서는 새 행이
 생기지 않으므로(§테스트 `test_cancelling_while_a_reopened_request_is_already_open_…`) 행으로 센 횟수는
 **하한**이다. 취소마다 정확히 한 행인 것은 ① 뿐이다.
+
+**개정 2 — 그 한정어가 한 칸 모자랐다: 갱신 갈래가 덮는 것은 횟수만이 아니라 값이다.** 그 갈래는
+`open_review.conflicting_sources = {**(open_review.conflicting_sources or {}), **sources}`
+(`services/progress/document_mapper.py:752`, `df37433`)라 **그 행의 `cancel_note` 가 새 사유로 바뀐다** —
+옛 사유는 ② 에서 남지 않는다. 실행값(§0-b `[P-m4-*]` — 확정 → Activity 내용 변경(재오픈) → 취소 →
+확정 → 다시 재오픈 → 취소. 취소는 둘, 요청 행은 하나다):
+
+```
+[P-m4-after-cancel1] [('ed1b4b14', 'open', None, '1차 취소 사유', None)]
+[P-m4-after-cancel2] [('ed1b4b14', 'open', None, '2차 취소 사유', None)]
+[P-m4-counts] rows: 1 cancels: 2
+[P-m4-logs]   total: 4 | cancel logs: 2 | notes: ['1차 취소 사유', '2차 취소 사유']
+```
+
+(`[P-m4-logs]` 는 같은 실행에서 그 쌍의 `expert_review_logs` 를 읽은 것이다 — `final` 에
+`cancelled_review_opened` 가 있는 행이 취소이고, `notes` 는 그 행들의 `final.evidence.note` 다.
+요청 id 는 실행마다 새로 나므로 위 네 줄은 **한 실행의 값**이다.)
+
+그러므로 ② 가 남기는 것은 **횟수의 하한 + 사유의 최신값 하나**다. 취소 **사유 전부**가 남는 자리는
+① 뿐이고, 그 대비를 이 개정이 **같은 실행에서** 쟀다(행 1 · 취소 2 · 취소 로그 2 · 사유 둘 다 보존).
+이 정정이 규칙 7 의 결론(무제한)을 바꾸지 않는 이유는 개정 1 과 같다 — 결론은 착지점 하나에 기대고,
+여기서 달라지는 것은 **반복을 누가 볼 수 있는가** 뿐이다.
 
 *역방향 확인 — 무제한이 실제로 미는 것.* 확정↔취소를 반복하면 그 쌍의 닫힌 `document_mapping` 요청 행이
 계속 늘어난다(규칙 2 가 매번 새 행을 만든다). 그 누적이 운영에서 문제가 되는지는 **실측이 없다** —
@@ -797,3 +870,49 @@ unknown` ↔ 없음) 또는 `drawing_approval` blocker 의 **존재**까지 봐�
    응답에 실리지만 그리는 화면이 없다(실행값 `grep -rn "cancel_note\|cancelled_review_request_id"
    apps/web/src services/api | grep -v test` → 출력 없음, 종료코드 1). 규칙 7 의 관측 가능성이 **DB 감사
    수준**에 머무는 이유이고, 여는 순서는 **읽는 라우트 → 화면**이다(보존이 아니라 — §Alternatives 8).
+8. **(개정 2) `cancelled_review_request_id` 가 갱신 갈래에서 *다른* 결정의 행을 가리킨다.**
+   구현은 `closed[-1]`(그 쌍의 마지막으로 닫힌 행 — `services/progress/document_mapper.py:729-730`,
+   `df37433`)인데, **갱신 갈래**(재확인 요청이 열린 채인 확정의 취소)에서 *지금 취소하는 결정을 기록한
+   행은 열려 있는 그 행 자신*이고 그 행의 감사는 재오픈이 이미 지웠다(개정 1 `[P2-*]`). 그 쌍에 닫힌
+   옛 행이 남아 있으면 `closed[-1]` 은 **그 앞 결정의 행**이다. 실행값(§0-b `[P-corner-*]` —
+   확정1 → 취소1 → 확정2 → Activity 내용 변경(재오픈) → 취소2):
+
+   ```
+   [P-corner-after-confirm2] [('7d3a8191','approved','확정1',None,None), ('1a20de0d','approved','확정2','취소1','7d3a8191')]
+   [P-corner-after-reopen]   [('7d3a8191','approved','확정1',None,None), ('1a20de0d','open',None,'취소1','7d3a8191')]
+   [P-corner-after-cancel2]  [('7d3a8191','approved','확정1',None,None), ('1a20de0d','open',None,'취소2','7d3a8191')]
+   [P-cancelled-id] [('1a20de0d', '7d3a8191')]
+   ```
+
+   취소2 가 되돌린 것은 **확정2**(그 결정을 기록한 행은 `1a20de0d`)인데 실린 id 는 `7d3a8191` = **확정1**
+   의 행이고, 그 확정1 은 **취소1 이 이미 되돌린** 결정이다. 이름이 말하는 것과 값이 다르므로
+   `None`("모른다")보다 나쁘다(CLAUDE.md §6-4 2 — 모르는 값을 흔한 값으로 떨어뜨리는 폴백을 두지 않는다).
+   **도달 가능하다**: 위 다섯 단계는 전부 정상 라우트다(확정·취소는 CM 의 라우트, Activity 내용 변경은
+   공정표 재업로드). DB 직접 조작이 없다.
+
+   **이 자리는 이 사이클이 만들었다.** 정렬(`find_document_mapping_review` 의 `ORDER BY created_at DESC`
+   — `services/progress/persistence.py:455`, `df37433`) 이전에는 재오픈이 **엉뚱한 옛 행**을 열었고,
+   그 덕에 닫힌 채 남은 행이 확정2 의 행이라 `closed[-1]` 이 **우연히** 맞았다. 정렬만 빼고 같은 탐침을
+   태운 값:
+
+   ```
+   [P-corner-after-reopen]  [('1b723b16','open',None,None,None), ('3b54f851','approved','확정2','취소1','1b723b16')]
+   [P-cancelled-id] [('1b723b16', '3b54f851')]
+   ```
+
+   `1b723b16`(확정1)의 `resolution_note` 가 `'확정1'` → `None` 으로 지워졌다 — **정렬이 막은 실해가
+   이것**이고(이미 대체된 옛 결정의 감사가 사라진다), 정렬은 그것을 고치면서 이 한 칸을 옮겼다.
+   그러므로 CLAUDE.md §6-4 1("사실과 다른 문구는 그것을 만든 사이클이 고친다")이 걸린다 — 이 개정이
+   **문구를 좁히고**(규칙 2 · `docs/glossary.md` "취소가 여는 요청") **형태만 제안**한다. 코드를 고치지
+   않는 이유는 소유다: `services/progress/` 는 progress-engine 이다.
+
+   **제안하는 형태**(progress-engine 판단 — 계획 0006 §후속 7): 갱신 갈래에서는 이 값을 **`None`** 으로
+   둔다. 근거는 그 갈래에 **이미 있는 계약**이다 — 닫힌 행이 하나도 없는 같은 갈래에서 지금도 `None`
+   이고(`tests/integration/test_20_mapping_decision_cancel.py::
+   test_cancelling_while_a_reopened_request_is_already_open_does_not_create_a_second_request` 의
+   `sources["cancelled_review_request_id"] is None` — "닫힌 결정이 없다 — 지어내지 않는다"), 그 쌍에 닫힌
+   옛 행이 있고 없고는 **지금 취소하는 결정이 어디에 기록됐는가**를 바꾸지 않는다.
+   *역방향 확인 — `None` 이 미는 것*: "확정2 를 취소했다"를 이 필드로 아는 길이 없어진다. 그것은 이미
+   그렇다 — 재오픈이 그 행의 `resolution_note` 를 지웠고(개정 1), 취소의 내구 정본은 `expert_review_logs`
+   행이다(개정 1 정본 ①). *이 제안이 기대는 것*: 갱신 갈래에 드는 경로가 "재오픈된 행"뿐이라는 것.
+   그 전수는 **이 종결이 세지 않았다** — 세는 것은 소유자의 몫이고, 다른 경로가 있으면 제안이 바뀐다.
