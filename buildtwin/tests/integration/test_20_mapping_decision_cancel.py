@@ -18,6 +18,7 @@ ADR 0013 §"이 불변식을 지금 무엇이 붙들어 주는가"가 스스로 
 | 취소 이력 append → 덮어쓰기 | `test_v9_...`(2회 취소 후 길이 2) |
 | 제목의 방향 낱말을 **반전**(`what` 삼항의 두 갈래 맞바꿈) | `test_v1_...`·`test_v2_...` 의 **부재 단언**(확정 취소 뒤 "반려를"이 없다 / 반려 취소 뒤 "확정을"이 없다). 이 사이클에 추가 — 그 전에는 **804 passed**, 즉 CM 이 다음 행동을 고르는 문구가 무보호였다(CLAUDE.md §6-4). 문장을 통째로 베끼지 않으므로 제목 전면 재작성(방향은 옳게)에서는 죽지 않는다 — 태워서 확인했다 |
 | `cancelled_review_request_id` 를 **첫** 닫힌 행으로(`closed[-1]` → `closed[0]`) | `test_v9_...`(닫힌 행이 둘 쌓인 뒤에야 갈린다 — 하나뿐이면 두 구현이 같은 id 를 낸다). 이 사이클에 추가 |
+| **갱신 갈래에서도** `cancelled_review_request_id` 를 닫힌 행으로(계획 0006 §후속 7 이전 구현 — `closed[-1]`) | `test_cancelling_again_while_a_reopened_request_is_open_...`(닫힌 옛 행이 **남은 채** 갱신 갈래로 드는 배역이라야 갈린다 — 형제 테스트의 배역에는 닫힌 행이 없어 두 구현이 같은 `None` 을 낸다). 계획 0006 §후속 7 로 추가 |
 | 검사 순서 맞바꿈(사유 검사를 앞으로) | `test_v7_...` 의 **두 요건 동시 위반** 칸(취소할 결정이 없는 CM 에게 "적을 수 없는 사유"를 요구하면 죽는다) |
 | `usecases.py::cancel_document_mapping_review` 의 `record_expert_review(...)` 세 줄 삭제 | `test_cancelling_leaves_a_durable_expert_review_log_row_...`(계획 0006 §후속 5 로 이 사이클에 추가 — 그 전에는 **803 passed**, 즉 감사의 정본이 무보호였다) |
 
@@ -33,12 +34,12 @@ ADR 0013 §"이 불변식을 지금 무엇이 붙들어 주는가"가 스스로 
 
 | Activity | 무엇에 쓰는가 |
 |---|---|
-| `A100` | 확정 → 취소(V1·V3·V4) — 값 축이 움직이는 방향 |
+| `A100` | 확정 → 취소(V1·V3·V4) — 값 축이 움직이는 방향. 그리고 파일 맨 뒤에서 **확정2 → 재오픈 → 취소2**(계획 0006 §후속 7) — 닫힌 옛 행이 남은 채 갱신 갈래로 드는 유일한 배역이다 |
 | `A400` | 반려 → 취소(V2) — 값 축이 **안** 움직이는 방향 |
 | `A300` | 사유 요건(V5) → 무제한 취소(V9) |
 | `A200` | 취소할 결정이 없는 대조군(V7) · 인가(V6) · 404 |
 | `A110` | 재확인으로 **이미 열린 요청**이 있는 상태의 취소(중복 방지) |
-| `A120` | 취소의 **내구 감사**(`expert_review_logs` 행) — 재계산을 한 번 더 부르므로 이 파일 마지막 |
+| `A120` | 취소의 **내구 감사**(`expert_review_logs` 행) — 재계산을 한 번 더 부르므로 뒤쪽에 둔다(맨 뒤는 공정표를 다시 올리는 §후속 7 테스트다) |
 
 **테스트 순서가 계약의 일부다**(test_15 와 같은 모양): 같은 프로젝트를 순서대로 공유하고, 대장·공정표
 재업로드처럼 프로젝트 전체를 재계산하는 시나리오는 **맨 뒤**에 둔다. 재계산은 미확정(=취소된) 매핑의
@@ -738,3 +739,89 @@ def test_cancelling_leaves_a_durable_expert_review_log_row_that_survives_recompu
     assert logs2[1].entity_type == "activity_document_mapping" and logs2[1].reviewer == user_ids["cm"]
     assert [x.final["evidence"]["note"] for x in logs2] == [first_note, second_note]
     assert [x.proposal["reviewed_by"] for x in logs2] == [user_ids["cm"], user_ids["cm"]]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 계획 0006 §후속 7 — 갱신 갈래의 `cancelled_review_request_id`
+# (ADR 0013 §Deferred 8 `[P-corner-*]`). 이 파일에서 **유일하게 닫힌 행이 남은 채** 갱신 갈래로 드는
+# 배역이라 공정표를 다시 올린다 — 그래서 자리는 맨 뒤다.
+# ═══════════════════════════════════════════════════════════════════════════
+def test_cancelling_again_while_a_reopened_request_is_open_does_not_name_an_already_cancelled_decision(
+        client, auth, cancel_project, user_ids, tmp_path: Path):
+    """재확인으로 **다시 열린** 요청이 있는 상태의 취소는, 그 쌍에 닫힌 옛 행이 남아 있어도 그 행을
+    "취소한 결정"으로 지목하지 않는다.
+
+    형제 테스트(`test_cancelling_while_a_reopened_request_is_already_open_...`)는 같은 갈래를 **닫힌 행이
+    하나도 없는** 배역으로 태운다 — 거기서는 `None` 이 유일한 답이라 "지어내지 않는다"만 붙든다. 이
+    배역은 닫힌 행이 **남아 있다**: `test_v1_...` 의 확정1 을 닫은 행이 그대로 있고, 그 결정은 같은
+    테스트의 취소가 **이미 되돌렸다**. 그 상태에서 확정2 → 재오픈 → 취소를 하면 `closed[-1]` 구현은
+    **확정1 의 행**을 싣는다 — 이름("어느 결정을 취소한 것인가")과 값이 다르므로 `None`("모른다")보다
+    나쁘다(CLAUDE.md §6-4 2). 취소2 가 되돌린 것은 확정2 이고, 그 결정을 기록한 행은 **열려 있는 그 행
+    자신**이다(재오픈이 그 행의 `resolved_by`·`resolution_note` 를 이미 지웠다).
+
+    §6-2 물음 — **결함 있는 코드가 이 기대값을 그대로 만족하는가.**
+
+    | 단언 | 무엇이 죽는가 / 왜 그 조합이어야 하는가 |
+    |---|---|
+    | 닫힌 행이 **남아 있고** 그 감사(`resolved_by`·`resolution_note`)가 그대로다 | 이 칸이 없으면 `is None` 이 **닫힌 행이 없어서** 참일 수 있다(형제 테스트와 같은 배역이 되어 코너를 못 잡는다). 그리고 취소가 옛 행을 되열어 쓰는 구현이 여기서 죽는다 |
+    | 실린 id 가 그 닫힌 행이 **아니다** | `closed[-1]`(이 사이클 이전 구현)과 `closed[0]` 이 둘 다 죽는다 — 이 배역에서 두 값이 같기 때문에 하나만 골라 비교하면 갈리지 않는다. **특정 id 를 고정하지 않고 "확정1 의 행을 가리키지 않는다"만 붙든다** |
+    | 실린 id 가 `None` 이다 | 갱신 갈래의 계약(형제 테스트와 같은 답). *이 단언이 죽는 정당한 개정이 하나 있다* — 열린 그 행 자신의 id 를 싣기로 바꾸는 개정. 그때는 위 두 단언이 그대로 살아 코너를 계속 붙든다 |
+    | 새 행을 만들지 않는다(행 2개, 열린 것 하나) | 갱신 갈래를 벗어나는 구현(새 요청을 여는)이 죽는다 — 그 구현에서는 `closed[-1]` 이 옳은 답이 되므로 위 단언들이 의미를 잃는다. 갈래 자체를 함께 고정한다(§6-2 4) |
+    """
+    pid = cancel_project
+    doc_id = _doc_id_for(client, auth, pid, A_CONFIRM)
+
+    # ── 시작 상태(V1 이 남긴 것): 확정1 을 닫은 행 하나 + 그 취소가 연 행 하나.
+    closed_before = _closed_reviews(client, auth, pid, A_CONFIRM)
+    assert len(closed_before) == 1, closed_before
+    first_decision_row = closed_before[0]["review_request_id"]      # V1 의 취소가 **이미 되돌린** 결정의 행
+    open_before = _open_reviews(client, auth, pid, A_CONFIRM)
+    assert len(open_before) == 1, open_before
+    second_decision_row = open_before[0]["review_request_id"]
+    assert second_decision_row != first_decision_row
+
+    # ── 확정2: 열려 있던 그 행이 닫히며 **지금 서 있는 결정**을 기록한다.
+    _confirm(client, auth, pid, A_CONFIRM, doc_id, "확정2")
+    rows = _reviews(client, auth, pid, A_CONFIRM)
+    assert {r["review_request_id"]: r["status"] for r in rows} == {
+        first_decision_row: "approved", second_decision_row: "approved"}, rows
+
+    # ── Activity 내용을 바꿔 재확인을 유도한다(형제 테스트와 같은 방법). 재오픈은 **가장 최근 행**을
+    #    열어야 한다 — 확정2 를 기록한 그 행이다.
+    original = (FIXTURES / "schedule.csv").read_text(encoding="utf-8")
+    lines = []
+    for line in original.splitlines():
+        if line.startswith(f"{A_CONFIRM},"):
+            cols = line.split(",")
+            cols[1] = "완전히 다른 작업 내용 — 재확인 유도"
+            line = ",".join(cols)
+        lines.append(line)
+    modified = tmp_path / "schedule.csv"          # 같은 stem 이어야 같은 schedule_id 로 교체된다
+    modified.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    up, job = upload(client, auth("contractor"), pid, modified)
+    assert up["kind"] == "csv" and job["status"] == "done", job
+
+    reopened = _open_reviews(client, auth, pid, A_CONFIRM)
+    assert [r["review_request_id"] for r in reopened] == [second_decision_row], reopened
+    assert _mapping(client, auth, pid, doc_id, A_CONFIRM)["needs_review"] is False   # 매핑은 확정 그대로
+
+    # ── 취소2.
+    r = _cancel(client, auth, pid, A_CONFIRM, doc_id, note="확정2 를 취소한다")
+    assert r.status_code == 200, r.text
+
+    rows = _reviews(client, auth, pid, A_CONFIRM)
+    assert len(rows) == 2, rows                                     # 갱신 갈래 — 새 행을 만들지 않는다
+    open_rows = _open_reviews(client, auth, pid, A_CONFIRM)
+    assert [x["review_request_id"] for x in open_rows] == [second_decision_row], open_rows
+
+    # 확정1 의 행은 **여전히 닫혀 있고 감사가 그대로다** — 그러므로 아래 `is None` 은 "닫힌 행이 없어서"가
+    # 아니다(그 배역은 형제 테스트가 이미 태운다).
+    still_closed = _closed_reviews(client, auth, pid, A_CONFIRM)
+    assert [x["review_request_id"] for x in still_closed] == [first_decision_row], still_closed
+    assert still_closed[0]["resolved_by"] == user_ids["cm"] and still_closed[0]["resolution_note"]
+
+    sources = open_rows[0]["conflicting_sources"]
+    assert sources["cancel_note"] == "확정2 를 취소한다"
+    assert sources["cancelled_review_request_id"] != first_decision_row, sources
+    assert sources["cancelled_review_request_id"] is None, sources
+    assert _row_fields(pid, A_CONFIRM, doc_id) == (True, None)
