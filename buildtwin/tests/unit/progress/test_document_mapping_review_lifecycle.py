@@ -27,14 +27,14 @@ document_mapper 모듈 자체의 계약을 고정하는 자리라 기존 관례(
 읽는 값인데(ADR 0013 규칙 2), 그 줄을 `return rows` 로 바꿔도 기준선이 그대로였다(계획 0007 §후속 9,
 `136e66f` 실측 **805 passed**). 이유는 테스트가 없어서가 아니라 **배역이 장식이어서**다 — SQLite 의 스캔
 순서가 곧 삽입 순서이고 삽입 순서가 곧 `created_at` 순서라 두 구현이 같은 값을 낸다. 항목 8 은 두 순서를
-어긋나게 **심어** 그 전제를 깬다. 소비자 쪽(취소가 실제로 싣는 id)은
+어긋나게 **만들어** 그 전제를 깬다(그 어긋냄을 힙 배치로 만들지 않는다 — ADR 0015). 소비자 쪽(취소가 실제로 싣는 id)은
 `tests/integration/test_20_mapping_decision_cancel.py` 가 같은 사이클에서 붙든다.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import literal_column, select, text
 
 from packages.core.models.document import ActivityDocumentMapping
 from packages.core.models.orm import ActivityDocumentMappingRow, FileRow, ReviewRequestRow
@@ -278,27 +278,72 @@ def test_rejection_pinned_to_doc_id_survives_recompute_but_not_a_renamed_title(s
 
 
 # ── 8(계획 0008 §과제 1, S1). `document_mapping_reviews` 의 반환 순서 축은 `created_at` 이고 ────────
-#    DB 스캔 순서가 아니다 — 두 순서를 **어긋나게 심어** 그 정렬을 관측 가능하게 만든다 ────────────
-def _plant_row_at_end_of_scan(session, review_request_id: str) -> None:
-    """그 요청 행을 **컬럼 값을 하나도 바꾸지 않고** 지웠다 같은 값으로 다시 넣는다.
+#    DB 스캔 순서가 아니다 — 두 순서를 **어긋나게 만들어** 그 정렬을 관측 가능하게 한다 ─────────────
+def _heap_probe(session, labelled: dict[str, str]) -> str:
+    """힙 배치 진단(ADR 0015 §2-4) — **postgres 축에서만 값을 갖는다.**
 
-    SQLite 에서 그 행은 새 rowid 를 받아 `ORDER BY` 없는 SELECT 의 스캔 **맨 뒤**로 간다.
+    이 트리의 `tests/unit` 은 오늘 sqlite 다(계획 0009 §후속 16 이 그것을 여는 항목이다). 그래서 이
+    함수는 오늘 언제나 빈 문자열을 돌려준다 — **없는 값을 지어내지 않는다**(CLAUDE.md §6-4 2).
+    통합 짝(`tests/integration/test_20_mapping_decision_cancel.py::_heap_probe`)과 같은 모양으로 두는
+    이유는 §후속 16 이 이 트리를 postgres 로 옮기는 순간 같은 진단이 필요하기 때문이다.
+    """
+    if session.get_bind().dialect.name != "postgresql":
+        return ""
+    rows = dict(session.execute(
+        select(ReviewRequestRow.review_request_id, literal_column("ctid::text"))
+        .where(ReviewRequestRow.review_request_id.in_(list(labelled.values())))).all())
+    stats = session.execute(text(
+        "SELECT n_dead_tup, autovacuum_count, vacuum_count FROM pg_stat_all_tables "
+        "WHERE relid = 'review_requests'::regclass")).first()
+    place = " ".join(f"{label}={rows.get(rid, '없음')}" for label, rid in labelled.items())
+    counters = "pg_stat 행 없음" if stats is None else \
+        f"n_dead_tup={stats[0]} autovacuum_count={stats[1]} vacuum_count={stats[2]}"
+    return f"{place} {counters}"
+
+
+def _make_scan_order_disagree_with_created_at(session, earlier_id: str, later_id: str) -> str:
+    """두 요청 행을 **컬럼 값을 하나도 바꾸지 않고**(`created_at` 포함) 지웠다 `created_at` **역순**으로
+    다시 넣어, `ORDER BY` 없는 조회가 **늦은 행을 이른 행보다 먼저** 돌려주게 만든다.
+
+    **이름이 착지를 약속하지 않는다**(ADR 0015 §2-1). 옛 이름 `_plant_row_at_end_of_scan` 은 그 행이
+    스캔 **맨 뒤**에 앉는다고 약속했는데, 그것은 SQLite 사실(새 rowid 는 증가한다)이지
+    **PostgreSQL 계약이 아니다** — 되돌아온 line pointer 를 다음 `INSERT` 가 먼저 집으면 그 행이
+    **앞으로** 간다(계획 0010 §1-b: 통합 짝에서 강제 `VACUUM` 아래 대상 `ctid` 가 `(0,7)` → `(0,4)`,
+    N=5 · 5/5 적색. 잰 트리 `743bcb9`; 이 커밋의 부모 `a9b85d3` 에서 N=1 로 같은 값을 다시 쟀다).
+    오늘 이 트리는 sqlite 라 무해하지만 계획 0009 §후속 16 이 열리는 순간 같은 결함이 여기로 온다.
+
+    그래서 만드는 것은 **두 행의 상대 순서**뿐이다: 둘을 함께 지우고 **늦은 행 → 이른 행** 순으로 다시
+    넣는다. **이것도 보장은 아니다**(postgres 에서 두 번째 `INSERT` 가 FSM 을 통해 앞 페이지로 갈 수
+    있다 — 계획 0010 §1-c). 그래서 만들어졌는지를 **호출부가 그 자리에서 단언하고**(ADR 0015 §2-2),
+    이 함수는 그 단언이 실을 **진단**을 돌려준다(§2-4).
+
     `created_at` 을 **고쳐서** 어긋나게 하는 대안은 기각됐다(계획 0008 §1-b-1): 그 배역에서는 옳은
     구현이 **이미 취소된 옛 결정의 행**을 지목하게 되어, 형제 테스트
     (`tests/integration/test_20_mapping_decision_cancel.py::test_cancelling_again_while_a_reopened_
     request_is_open_does_not_name_an_already_cancelled_decision`)가 "내면 안 된다"고 붙들어 둔 값을
-    이 파일이 계약으로 고정하게 된다. **어긋나게 하는 축은 값이 아니라 물리 위치다.**
+    이 파일이 계약으로 고정하게 된다.
     """
-    row = session.get(ReviewRequestRow, review_request_id)
-    assert row is not None, review_request_id
-    snapshot = {c.name: getattr(row, c.name) for c in ReviewRequestRow.__table__.columns}
-    session.delete(row)
+    labelled = {"이른행": earlier_id, "늦은행": later_id}
+    before = _heap_probe(session, labelled)
+    snapshots = []
+    for rid in (later_id, earlier_id):            # 다시 넣는 순서 = `created_at` 역순
+        row = session.get(ReviewRequestRow, rid)
+        assert row is not None, rid
+        snapshots.append({c.name: getattr(row, c.name) for c in ReviewRequestRow.__table__.columns})
+        session.delete(row)
+    assert snapshots[1]["created_at"] < snapshots[0]["created_at"], \
+        "인자가 (이른 행, 늦은 행) 순서가 아니다 — 이 헬퍼가 만드는 것은 `created_at` 의 역순이다"
     session.flush()
     session.expunge_all()
-    session.add(ReviewRequestRow(**snapshot))
-    session.flush()
+    for snapshot in snapshots:
+        session.add(ReviewRequestRow(**snapshot))
+        session.flush()
+    after = _heap_probe(session, labelled)
     session.commit()
     session.expire_all()
+    if not before and not after:
+        return "힙 진단 없음(sqlite 축 — `ctid` 도 `pg_stat_all_tables` 도 없다)"
+    return f"재배치 전 [{before}] · 재배치 뒤 [{after}]"
 
 
 def _raw_scan_ids(session, project_id: str, activity_id: str, doc_id: str) -> list[str]:
@@ -313,18 +358,20 @@ def _raw_scan_ids(session, project_id: str, activity_id: str, doc_id: str) -> li
 
 
 def test_document_mapping_reviews_orders_by_created_at_not_by_db_scan_order(session):
-    """확정1 → 취소1 → 확정2 로 닫힌 행 둘을 만든 뒤 **확정1 의 행만 스캔 맨 뒤로** 옮기고,
-    그래도 반환이 오래된 것부터인지 본다.
+    """확정1 → 취소1 → 확정2 로 닫힌 행 둘을 만든 뒤 두 행의 **스캔 순서를 `created_at` 역순으로
+    어긋나게** 하고, 그래도 반환이 오래된 것부터인지 본다.
 
-    **왜 이 배역이어야 하는가(CLAUDE.md §6-2 1).** 심지 않으면 SQLite 의 스캔 순서가 곧 삽입 순서이고
-    삽입 순서가 곧 `created_at` 순서라, `return sorted(rows, key=...)` 와 `return rows` 가 **같은 값**을
-    낸다 — 그 배역으로 세운 단언은 결함 있는 코드도 그대로 만족한다(장식). 실측(계획 0008 §1-b 2×2 표,
-    이 사이클에서 재측정): 심지 않은 대조군은 두 구현 모두 옳은 답을 내고, 심은 배역에서만 갈린다.
+    **왜 이 배역이어야 하는가(CLAUDE.md §6-2 1).** 어긋나게 하지 않으면 SQLite 의 스캔 순서가 곧 삽입
+    순서이고 삽입 순서가 곧 `created_at` 순서라, `return sorted(rows, key=...)` 와 `return rows` 가
+    **같은 값**을 낸다 — 그 배역으로 세운 단언은 결함 있는 코드도 그대로 만족한다(장식).
+    실측(계획 0008 §1-b 2×2 표): 어긋나게 하지 않은 대조군은 두 구현 모두 옳은 답을 내고, 어긋난
+    배역에서만 갈린다.
 
-    **심기가 먹혔다는 것을 이 테스트가 스스로 단언한다**(§1-b-3). 인덱스·플래너·DB 가 바뀌어 스캔
+    **어긋났다는 것을 이 테스트가 스스로 단언한다**(§1-b-3). 인덱스·플래너·DB 가 바뀌어 스캔
     순서가 그대로면 위 대조군으로 떨어져 두 구현이 다시 구별되지 않는데, 그때 테스트는 **조용히
-    장식이 된다** — 이 저장소의 지배적 실패 모드다. 그래서 심기 전후의 raw 스캔 순서를 함께 단언한다.
-    이 트리의 실행값: 심기 전 `['R1','R2']` · 심기 뒤 `['R2','R1']`, 함수 반환은 **양쪽 다** `['R1','R2']`.
+    장식이 된다** — 이 저장소의 지배적 실패 모드다. 그래서 재배치 전후의 raw 스캔 순서를 함께 단언하고
+    (ADR 0015 §2-2), 실패 메시지에 힙 진단을 싣는다(§2-4 — 오늘 이 트리는 sqlite 라 비어 있다).
+    이 트리의 실행값: 재배치 전 `['R1','R2']` · 재배치 뒤 `['R2','R1']`, 함수 반환은 **양쪽 다** `['R1','R2']`.
 
     **이 층만으로는 과잉 고정이다** — 정렬을 지우고 소비자에서 `max(key=created_at)` 로 옮긴 구현은
     여기서만 죽고 계약은 지켜진다. 그것이 의도다(계획 0008 §1-c 역방향 확인): 지금 계약을 지키는 것은
@@ -354,19 +401,20 @@ def test_document_mapping_reviews_orders_by_created_at_not_by_db_scan_order(sess
     assert [r.review_request_id for r in db.document_mapping_reviews(session, PROJECT_ID, m.activity_id,
                                                                      m.doc_id)] == [r1, r2]
 
-    # ⓐ 심기 **전**: 스캔 순서 = 삽입 순서 = created_at 순서. 이 칸이 곧 "심지 않으면 두 구현이
-    #    구별되지 않는다"의 관측값이다.
+    # ⓐ 재배치 **전**: 스캔 순서 = 삽입 순서 = created_at 순서. 이 칸이 곧 "어긋나게 하지 않으면 두
+    #    구현이 구별되지 않는다"의 관측값이다.
     assert _raw_scan_ids(session, PROJECT_ID, m.activity_id, m.doc_id) == [r1, r2]
     created_before = {r.review_request_id: r.created_at
                       for r in db.document_mapping_reviews(session, PROJECT_ID, m.activity_id, m.doc_id)}
     assert created_before[r1] < created_before[r2]
 
-    _plant_row_at_end_of_scan(session, r1)
+    heap = _make_scan_order_disagree_with_created_at(session, r1, r2)
 
-    # ⓑ 심기가 **먹혔다**: 스캔 순서만 뒤집혔다. 이 단언이 없으면 심기가 안 먹었을 때 아래 ⓒ 가
+    # ⓑ 스캔 순서가 **어긋났다**: 순서만 뒤집혔다. 이 단언이 없으면 어긋나지 않았을 때 아래 ⓒ 가
     #    조용히 장식이 된다.
     assert _raw_scan_ids(session, PROJECT_ID, m.activity_id, m.doc_id) == [r2, r1], \
-        "심기가 먹지 않았다 — 스캔 순서가 그대로면 이 테스트는 정렬 유무를 구별하지 못한다"
+        ("스캔 순서를 어긋나게 하지 못했다 — 순서가 `created_at` 그대로면 이 테스트는 정렬 유무를 "
+         f"구별하지 못한다. 힙 진단(ADR 0015 §2-4): {heap}")
 
     # ⓒ 값은 하나도 바뀌지 않았다(`status`·`resolved_by` 를 건드렸다면 `closed` 필터 자체가 달라져
     #    무엇이 갈렸는지 모른다).

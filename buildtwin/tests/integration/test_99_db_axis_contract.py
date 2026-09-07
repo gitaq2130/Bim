@@ -21,19 +21,33 @@
 **아무것도 하지 않는다**는 것을 붙들지 않으면 그 무동작이 조용히 깨진다, ADR 0014 §2-5 3).
 `skip` 을 쓰지 않는 것은 의도다 — skip 은 이 저장소가 싫어하는 "조용히 죽은 자리"의 모양이다.
 
-*강제 셋 자신에 대해 이 파일이 **못** 잡는 것 둘* — 여기 적는다, 다른 문서를 가리키지 않는다:
+**배선 둘은 이제 이 파일이 잡는다**(계획 0010 작업 5, 계획 0009 §M-5 28). 그 둘은 순수 함수 단언으로는
+잡히지 않는다 — 함수가 **아무 데서도 불리지 않아도** 위 표의 모든 함수가 초록이기 때문이다. 그래서
+저장소의 배선을 그대로 import 한 세션을 **자식 pytest** 로 돌리고 종료코드·출력을 읽는다:
 
-1. `conftest.db_axis_contract` 파이널라이저에서 `check_contract(...)` **호출 자체**를 지우는 변이.
-   정적으로는 초록과 구별되지 않는다(그 변이에 sqlite 전량·postgres 전량 둘 다 통과). 갈리는 자리는
-   바닥값을 넘지 못하는 postgres 실행뿐이다 — 실측(잰 트리 = 통합 203건 시점의 작업 트리, `ac9417d`
-   직전): `pytest tests/integration/test_01_auth.py` 를 postgres 축으로 돌리면 호출이 있을 때
-   **12 passed, 1 error**, 호출을 지우면 **12 passed**(초록).
+| 지우는 것 | 죽이는 함수 | 지운 트리의 실행값 |
+|---|---|---|
+| `conftest.db_axis_contract` 파이널라이저의 `check_contract(...)` **호출** | `test_the_finalizer_actually_calls_the_axis_contract` | 이 파일 **1 failed, 18 passed**(그 한 함수만) |
+| `conftest.pytest_terminal_summary` **훅 통째** | `test_the_terminal_summary_hook_actually_prints_the_axis_line` | 이 파일 **1 failed, 18 passed**(그 한 함수만) |
+
+*그래도 이 파일이 **못** 잡는 것* — 여기 적는다, 다른 문서를 가리키지 않는다:
+
+1. **자식을 돌리는 것 자체를 지우는 변이.** 이 파일에서 `wiring_child` 와 그것을 읽는 셋을 통째로
+   지우면 아무 테스트도 죽지 않는다. **축을 바꾸면 무주공산은 없어지지 않고 자리를 옮긴다**
+   (CLAUDE.md §6-3 9회차) — 계획 0009 §M-5 28 이 이 재귀를 이미 이름 붙였고, 이 사이클은 그것을
+   **알고** 연다.
 2. **바닥값 파일의 값 자체**. `test_floor_file_declares_a_positive_integer` 는 `> 0` 만 보고, 위 두
    실패 테스트는 `read_floor()` 가 아니라 **지어낸 값**을 쓴다(축과 무관하게 순수 함수만 태우려고
    일부러 그렇게 했다). 그래서 바닥값을 낮추는 변경은 아무 테스트도 죽이지 않는다 —
    그 한계와 실측은 `tests/postgres.floor.json` 의 `_comment` (3) 에 있다.
+3. **자식이 CI 러너에서 얼마를 더하는가.** 로컬에서만 쟀다(계획 0010 §확인하지 않은 것 24).
 """
 from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -107,10 +121,19 @@ def test_sqlite_noop_check_passes_when_the_measured_file_is_untouched():
 def test_sqlite_noop_check_fails_when_the_measured_file_changed():
     """ADR 0014 §2-5 3. 이 단언이 없으면 "축을 가리지 않고 쓰는" 변이가 sqlite 축에서 **살아남는다**
     (작업 6 실측 M9 — 잰 트리는 통합 203건 시점의 작업 트리(`ac9417d` 직전): 203 passed 인데 파일은 덮여 있었다)."""
-    with pytest.raises(AssertionError, match="sqlite 모드가"):
+    with pytest.raises(AssertionError, match="달라졌다"):
         axis.check_sqlite_noop(measured_now=b"rewritten", measured_at_import=b"committed")
-    with pytest.raises(AssertionError, match="sqlite 모드가"):
+    with pytest.raises(AssertionError, match="달라졌다"):
         axis.check_sqlite_noop(measured_now=b"created", measured_at_import=None)
+
+    # 문구는 **관측한 것만** 말한다(CLAUDE.md §6-4 2, 계획 0009 §후속 22). 문장을 통째로 베끼지 않고
+    # (베끼면 다음 정정이 이 계약을 깨는 대신 거짓 문구를 고정한다 — §6-4 3), 그 상황에서 **참일 수
+    # 없는 말이 없다**를 단언한다: 이 함수는 두 스냅샷의 차이만 보고 누가 썼는지는 보지 않는다.
+    with pytest.raises(AssertionError) as caught:
+        axis.check_sqlite_noop(measured_now=b"rewritten", measured_at_import=b"committed")
+    message = str(caught.value)
+    assert axis.MEASURED_PATH.name in message
+    assert "관측하지 않았다" in message, message
 
 
 def test_report_line_carries_every_field_the_ci_log_needs():
@@ -159,4 +182,118 @@ def test_axis_mode_matches_the_environment(client):
         assert settings.database_url.startswith("sqlite:")
         assert settings.seed_dev_data is False     # 시드는 `or` 의 **좌변**으로 켜진다 — 축이 넓혀지지 않았다
         now = axis.MEASURED_PATH.read_bytes() if axis.MEASURED_PATH.exists() else None
-        assert now == axis.MEASURED_AT_IMPORT, "sqlite 모드가 postgres.measured.json 을 건드렸다 (ADR 0014 §2-5 3)"
+        # 문구는 **관측한 것만** 말한다 — 이 실행 전후로 파일이 달라졌다. 쓴 주체(이 실행인가, 밖에서
+        # 고친 사람인가)는 관측하지 않았으므로 지목하지 않는다(CLAUDE.md §6-4 2, 계획 0009 §후속 22).
+        assert now == axis.MEASURED_AT_IMPORT, \
+            "sqlite 축 실행의 전후로 postgres.measured.json 이 달라졌다 — 쓴 주체는 관측하지 않았다 (ADR 0014 §2-5 3)"
+
+
+# ------------------------------------------------------------------ 강제 셋의 **배선** (하위 프로세스 pytest)
+# 위 함수들은 `postgres_axis` 의 **순수 함수**를 태운다. 그 함수들이 아무 데서도 **불리지 않아도**
+# 전부 초록이다 — 그것이 계획 0009 §M-5 28 이 번호를 준 공백이고(이 파일 머리말이 "못 잡는 것 둘"로
+# 적어 두던 자리), 아래 넷이 그 공백을 닫는다. 붙드는 방법은 **자식 pytest 한 번**이다:
+# 저장소의 배선 둘(`db_axis_contract` 파이널라이저 · `pytest_terminal_summary` 훅)을 **그대로 import 한**
+# 세션을 자식 프로세스로 돌리고, 부모가 자식의 종료코드와 출력을 단언한다. DB 에는 붙지 않는다.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CHILD_MEASURED_ENV = "BUILDTWIN_CHILD_MEASURED"
+#: 자식이 축을 **켜진 것으로** 읽게 하는 값. 연결은 일어나지 않는다(자식에 `client` 를 쓰는 테스트가 없다).
+CHILD_PG_URL = "postgresql://buildtwin@127.0.0.1:1/no_such_database"
+
+CHILD_CONFTEST = '''"""자식 pytest 의 conftest — **저장소의 배선을 그대로 import 해서** 태운다.
+
+여기서 새로 정의하는 것은 하나도 없다: `db_axis_contract`(파이널라이저 안의 `check_contract` 호출)와
+`pytest_terminal_summary`(축 한 줄) 둘 다 `tests/integration/conftest.py` 의 것이고, 그 둘 중 하나가
+지워지면 이 자식 세션의 종료코드 또는 출력이 달라진다.
+
+측정 파일은 부모가 준 tmp 로 돌린다 — 자식이 저장소의 `tests/postgres.measured.json` 을 덮으면
+그 자체가 트리를 더럽힌다(계획 0010 §후속 29).
+"""
+import os
+import pathlib
+
+from tests.helpers import postgres_axis as axis
+
+axis.MEASURED_PATH = pathlib.Path(os.environ["BUILDTWIN_CHILD_MEASURED"])
+
+import tests.integration.conftest as parent  # noqa: E402
+from tests.integration.conftest import RECORDER, db_axis_contract  # noqa: E402,F401
+
+# 훅은 **있으면** 다시 내건다. `from … import pytest_terminal_summary` 로 적으면 훅을 지운 트리에서
+# 자식이 **수집 오류**로 죽어, 부모의 세 단언이 전부 같은 이유로 빨개진다 — 그러면 배선 ②의 실제
+# 모양(*"두 축 다 초록인 채 `[db-axis]` 줄만 사라진다"*, 계획 0009 §M-5 28)이 재현되지 않는다.
+if hasattr(parent, "pytest_terminal_summary"):
+    pytest_terminal_summary = parent.pytest_terminal_summary
+
+assert RECORDER.is_postgres, "부모가 축 이름을 실어 보내지 않았다"
+'''
+
+CHILD_TEST = '''def test_child_session_does_nothing_but_end():
+    """자식은 아무것도 하지 않는다 — 재는 것은 **세션의 끝**에서 배선이 무엇을 하는가다."""
+'''
+
+
+@pytest.fixture(scope="module")
+def wiring_child(tmp_path_factory) -> subprocess.CompletedProcess:
+    """배선 둘을 import 한 자식 pytest 를 **한 번** 돌리고 결과를 아래 셋이 나눠 읽는다.
+
+    자식의 축은 켜져 있고(`CHILD_PG_URL`) 엔진은 하나도 관측되지 않으므로 `RECORDER.dialect is None`
+    이다 — 그래서 배선 ①(`check_contract` 호출)이 살아 있으면 파이널라이저가 계약 ①에서 죽고 세션이
+    **teardown ERROR** 로 끝난다. 호출을 지우면 그 자리가 조용히 초록이 된다(리뷰어 실측, 계획 0009
+    §M-5 28). 두 상태가 **자식의 종료코드**로 갈린다.
+
+    *이 기구 자신의 무보호 자리*(CLAUDE.md §6-3 9회차 — 축을 바꾸면 무주공산은 자리를 옮긴다):
+    ① 이 픽스처가 자식을 **부르지 않게** 되면(예: 상수 `CHILD_*` 를 지우면) 아래 셋이 수집 오류로
+    죽으므로 그것까지는 붙들린다. ② 그러나 **부모가 자식을 돌리는 것 자체**를 지우는 변이(이 파일에서
+    아래 넷을 통째로 삭제)는 어느 테스트도 죽이지 않는다 — 그 자리를 붙드는 기구는 이 저장소에 없고,
+    같은 종류의 재귀는 계획 0009 §M-5 28 이 이미 이름 붙였다. ③ 자식의 `pytest` 는 부모와 같은
+    인터프리터·같은 트리를 쓰므로 **CI 러너에서 얼마를 더하는지는 재지 않았다**(계획 0010
+    §확인하지 않은 것 24).
+    """
+    work = tmp_path_factory.mktemp("axis-wiring")
+    (work / "conftest.py").write_text(CHILD_CONFTEST, encoding="utf-8")
+    (work / "test_child_session.py").write_text(CHILD_TEST, encoding="utf-8")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(REPO_ROOT)
+    env[axis.ENV_NAME] = CHILD_PG_URL
+    env[CHILD_MEASURED_ENV] = str(work / "measured.json")
+    return subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--tb=short", str(work)],
+        cwd=str(REPO_ROOT), env=env, capture_output=True, text=True, timeout=300, check=False)
+
+
+def test_the_child_session_ran_at_all(wiring_child):
+    """음성 대조군 — 자식이 수집조차 못 했다면 아래 둘은 아무것도 말하지 않는다.
+
+    이 칸이 없으면 *"import 가 깨져서 빨갛다"* 와 *"배선이 살아 있어서 빨갛다"* 가 구별되지 않는다
+    (CLAUDE.md §6-2 1: 결함 있는 코드가 그대로 만족하는 기대값을 세우지 않는다).
+    """
+    out = wiring_child.stdout + wiring_child.stderr
+    assert "1 passed" in out, out
+
+
+def test_the_finalizer_actually_calls_the_axis_contract(wiring_child):
+    """배선 ① — 파이널라이저의 `check_contract(...)` **호출**. 지우면 자식이 초록으로 끝난다.
+
+    종료코드만 보지 않고 **어느 자리에서 죽었는지**도 본다(§6-2 4): 종료코드 하나만 고정하면 자식이
+    다른 이유로 죽어도 초록이라 배선을 붙들지 못한다. 문구를 통째로 베끼지 않고 **심볼 이름**으로
+    본다 — 메시지가 바뀌어도 배선이 살아 있으면 초록이어야 한다(§6-4 3).
+    """
+    out = wiring_child.stdout + wiring_child.stderr
+    assert wiring_child.returncode != 0, out
+    assert "check_contract" in out, out
+    assert "error" in out.strip().splitlines()[-1], out
+
+
+def test_the_terminal_summary_hook_actually_prints_the_axis_line(wiring_child):
+    """배선 ② — `pytest_terminal_summary` 훅. 통째로 지우면 두 축 다 초록인 채 `[db-axis]` 줄만
+    조용히 사라진다(리뷰어 실측, 계획 0009 §M-5 28). 형제 함수
+    `test_report_line_carries_every_field_the_ci_log_needs` 는 그 줄의 **내용**을 붙들지만
+    **찍히는지**는 붙들지 못한다 — 이 함수가 그 자리다.
+    """
+    out = wiring_child.stdout + wiring_child.stderr
+    printed = [ln for ln in out.splitlines() if ln.startswith(axis.LOG_PREFIX)]
+    assert len(printed) == 1, out
+    # 자식의 측정 파일은 부모가 준 tmp 라 **이름이 다르다** — 그래서 파일 이름이 아니라 `report_line`
+    # 이 싣는 **필드가 다 있는가**를 본다(형제 함수가 그 목록의 정본이다).
+    for field in ("dialect=", "server_version=", "tests_on_postgres=", "engines=", "floor=", "measured_file="):
+        assert field in printed[0], (field, printed[0])

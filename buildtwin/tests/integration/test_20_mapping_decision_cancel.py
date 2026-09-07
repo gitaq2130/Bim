@@ -26,7 +26,7 @@ ADR 0013 §"이 불변식을 지금 무엇이 붙들어 주는가"가 스스로 
 | `cancelled_review_request_id` 를 **첫** 닫힌 행으로(`closed[-1]` → `closed[0]`) | `test_v9_...`(닫힌 행이 둘 쌓인 뒤에야 갈린다 — 하나뿐이면 두 구현이 같은 id 를 낸다). `df37433` 에 추가 |
 | **갱신 갈래에서도** `cancelled_review_request_id` 를 닫힌 행으로(계획 0006 §후속 7 이전 구현 — `closed[-1]`) | `test_cancelling_again_while_a_reopened_request_is_open_...`(닫힌 옛 행이 **남은 채** 갱신 갈래로 드는 배역이라야 갈린다 — 형제 테스트의 배역에는 닫힌 행이 없어 두 구현이 같은 `None` 을 낸다). 계획 0006 §후속 7 로 추가 |
 | 검사 순서 맞바꿈(사유 검사를 앞으로) | `test_v7_...` 의 **두 요건 동시 위반** 칸(취소할 결정이 없는 CM 에게 "적을 수 없는 사유"를 요구하면 죽는다) |
-| `persistence.py::document_mapping_reviews` 의 `sorted(rows, key=lambda r: r.created_at)` → `return rows` | `test_cancel_names_the_decision_by_created_at_...`(계획 0008 §과제 1 로 추가 — 그 전에는 **805 passed** = 기준선 그대로였다. 단위 짝은 `tests/unit/progress/test_document_mapping_review_lifecycle.py::test_document_mapping_reviews_orders_by_created_at_...`). **닫힌 행 둘을 만든 뒤 확정1 의 행만 스캔 맨 뒤로 심어야** 갈린다 — 심지 않으면 SQLite 의 스캔 순서가 곧 `created_at` 순서라 두 구현이 같은 id 를 낸다(실행값은 그 테스트 docstring 의 2×2 표) |
+| `persistence.py::document_mapping_reviews` 의 `sorted(rows, key=lambda r: r.created_at)` → `return rows` | `test_cancel_names_the_decision_by_created_at_...`(계획 0008 §과제 1 로 추가 — 그 전에는 **805 passed** = 기준선 그대로였다, 잰 트리 `136e66f`. 단위 짝은 `tests/unit/progress/test_document_mapping_review_lifecycle.py::test_document_mapping_reviews_orders_by_created_at_...`). **닫힌 행 둘을 만든 뒤 두 행의 스캔 순서를 `created_at` 역순으로 어긋나게 해야** 갈린다 — 어긋나게 하지 않으면 SQLite 의 스캔 순서가 곧 `created_at` 순서라 두 구현이 같은 id 를 낸다(실행값은 그 테스트 docstring 의 2×2 표). **그 어긋냄을 힙 배치로 만들지 않는다** — ADR 0015, `_make_scan_order_disagree_with_created_at` |
 | `usecases.py::cancel_document_mapping_review` 의 `record_expert_review(...)` 세 줄 삭제 | `test_cancelling_leaves_a_durable_expert_review_log_row_...`(계획 0006 §후속 5 로 `716d67d` 에 추가 — 그 커밋 **직전** 트리에서 **803 passed**, 즉 감사의 정본이 무보호였다) |
 
 **반려 방향을 값(`drawing_approval`·`score`)으로 단언하지 않는다.** 실측상 반려 전후가 0.5/0.625 로
@@ -44,7 +44,7 @@ ADR 0013 §"이 불변식을 지금 무엇이 붙들어 주는가"가 스스로 
 | `A100` | 확정 → 취소(V1·V3·V4) — 값 축이 움직이는 방향. 그리고 파일 맨 뒤에서 **확정2 → 재오픈 → 취소2**(계획 0006 §후속 7) — 닫힌 옛 행이 남은 채 갱신 갈래로 드는 유일한 배역이다 |
 | `A400` | 반려 → 취소(V2) — 값 축이 **안** 움직이는 방향 |
 | `A300` | 사유 요건(V5) → 무제한 취소(V9) |
-| `A200` | 취소할 결정이 없는 대조군(V7) · 인가(V6) · 404. 그 뒤 **확정1 → 취소1 → 확정2 → 심기 → 취소2**(계획 0008 §과제 1) — 이 쌍에 **처음으로** 결정을 세우므로 앞의 어떤 단언도 낡게 만들지 않는다 |
+| `A200` | 취소할 결정이 없는 대조군(V7) · 인가(V6) · 404. 그 뒤 **확정1 → 취소1 → 확정2 → 스캔 순서 어긋냄 → 취소2**(계획 0008 §과제 1) — 이 쌍에 **처음으로** 결정을 세우므로 앞의 어떤 단언도 낡게 만들지 않는다 |
 | `A110` | 재확인으로 **이미 열린 요청**이 있는 상태의 취소(중복 방지) |
 | `A120` | 취소의 **내구 감사**(`expert_review_logs` 행) — 재계산을 한 번 더 부르므로 뒤쪽에 둔다(맨 뒤는 공정표를 다시 올리는 §후속 7 테스트다) |
 
@@ -59,7 +59,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import literal_column, select, text
 
 from packages.core.db import session_scope
 from packages.core.models.orm import ActivityDocumentMappingRow, ExpertReviewLogRow, ReviewRequestRow
@@ -225,18 +225,83 @@ def _raw_review_scan(project_id: str, activity_id: str, doc_id: str) -> list[tup
                 if (r.conflicting_sources or {}).get("doc_id") == doc_id]
 
 
-def _plant_row_at_end_of_scan(review_request_id: str) -> None:
-    """그 요청 행을 **컬럼 값을 하나도 바꾸지 않고**(`created_at` 포함) 지웠다 같은 값으로 다시 넣는다.
-    SQLite 에서 그 행은 새 rowid 를 받아 `ORDER BY` 없는 SELECT 의 스캔 **맨 뒤**로 간다."""
+def _heap_probe(session, labelled: dict[str, str]) -> str:
+    """힙 배치 진단(ADR 0015 §2-4) — **postgres 축에서만 값을 갖는다.**
+
+    싣는 것은 각 행의 `ctid` 와 그 시점의 `n_dead_tup`·`autovacuum_count`·`vacuum_count` 다. 다음
+    발생에서 계획 0009 §M-5 21 의 세 축(ⓐ 컨테이너 사망 ⓑ 재배치 비결정성 ⓒ 그 밖)이 **재현 없이**
+    출력 한 줄로 갈리게 하는 것이 이 함수의 전부다 — 어떤 단언의 **기대값**도 아니다(ADR 0015 §2-1
+    역방향 확인: 금지되는 것은 관측이 아니라 기댐이다).
+
+    sqlite 축에는 `ctid` 도 `pg_stat_all_tables` 도 없다. **없는 값을 지어내지 않고 빈 문자열을
+    돌려준다**(CLAUDE.md §6-4 2 — 모르는 값은 모른다고 적고 폴백을 두지 않는다). 호출부가 그 빈
+    문자열을 "진단 없음"이라고 말한다.
+    """
+    if session.get_bind().dialect.name != "postgresql":
+        return ""
+    rows = dict(session.execute(
+        select(ReviewRequestRow.review_request_id, literal_column("ctid::text"))
+        .where(ReviewRequestRow.review_request_id.in_(list(labelled.values())))).all())
+    stats = session.execute(text(
+        "SELECT n_dead_tup, autovacuum_count, vacuum_count FROM pg_stat_all_tables "
+        "WHERE relid = 'review_requests'::regclass")).first()
+    place = " ".join(f"{label}={rows.get(rid, '없음')}" for label, rid in labelled.items())
+    counters = "pg_stat 행 없음" if stats is None else \
+        f"n_dead_tup={stats[0]} autovacuum_count={stats[1]} vacuum_count={stats[2]}"
+    return f"{place} {counters}"
+
+
+def _make_scan_order_disagree_with_created_at(earlier_id: str, later_id: str) -> str:
+    """두 요청 행을 **컬럼 값을 하나도 바꾸지 않고**(`created_at` 포함) 지웠다 `created_at` **역순**으로
+    다시 넣어, `ORDER BY` 없는 조회가 **늦은 행을 이른 행보다 먼저** 돌려주게 만든다.
+
+    **이름이 착지를 약속하지 않는다**(ADR 0015 §2-1). 옛 이름 `_plant_row_at_end_of_scan` 은 "그 행이
+    스캔 맨 뒤에 앉는다"를 약속했는데 그것은 **postgres 에서 계약이 아니다**: 재배치 직전에
+    `VACUUM review_requests` 가 한 번 돌면(autovacuum 이 하는 일과 같다) 되돌아온 line pointer 를 다음
+    `INSERT` 가 먼저 집어 그 행이 **앞으로** 간다. 실행값(로컬 PostgreSQL 16.13, **잰 트리 `a9b85d3`**
+    = 이 커밋의 부모): 강제 `VACUUM` 아래 대상 `ctid` 가 `(0,7)` → **`(0,4)`** 로 가고 아래 단언이
+    죽는다(N=1 — 계획 0010 §1-b 가 같은 조건으로 N=5, 5/5 적색을 쟀다). `VACUUM` 이 없으면 `(0,10)`.
+
+    그래서 만드는 것은 **두 행의 상대 순서**뿐이다: 둘을 함께 지우고 **늦은 행 → 이른 행** 순으로 다시
+    넣는다. 먼저 넣은 행이 먼저 자리를 잡으므로 늦은 행이 앞선다 — 이 트리의 실행값(같은 강제 `VACUUM`
+    조건, **N=10 · 10/10 초록**): 늦은 행 `(0,4)`(되돌아온 line pointer) · 이른 행 `(1,1)`(그 페이지에
+    자리가 없어 **다음** 페이지). sqlite 에서는 새 rowid 가 증가하므로 같은 결과다.
+    **이것도 보장은 아니다** — 두 번째 `INSERT` 가 FSM 을 통해 **앞 페이지**로 갈 수 있다(계획 0010
+    §1-c). 그래서 만들어졌는지를 **호출부가 그 자리에서 단언하고**(ADR 0015 §2-2), 이 함수는 그 단언이
+    실을 **진단**을 돌려준다(§2-4).
+
+    `created_at` 을 **고쳐서** 어긋나게 하는 대안은 기각됐다(계획 0008 §1-b-1): 그 배역에서는 옳은
+    구현이 **이미 취소된 옛 결정의 행**을 지목하게 되어, 아래 형제 테스트가 "내면 안 된다"고 붙들어
+    둔 값을 이 파일이 계약으로 고정한다.
+
+    *무정렬 조회가 실제로 무엇을 따라가는가*(계획 0010 §확인하지 않은 것 3 이 `qa` 에게 이 작업에서
+    재라고 배정한 칸). 이 배역의 `EXPLAIN` 실행값은 **`Seq Scan` 이 아니다**:
+    `Index Scan using ix_review_requests_kind … Index Cond: kind = 'document_mapping'`.
+    그런데도 반환이 `ctid` 오름차순인 것은 btree 가 같은 키의 중복을 **heap TID 순서**로 담기
+    때문이다(PostgreSQL 12+). 같은 실행의 값: 재배치 전 `(0,7) (0,9)` → 재배치 뒤 `(0,10) (1,1)`
+    (강제 `VACUUM` 없는 조건, N=1). 즉 이 어긋냄이 서 있는 자리는 **그 인덱스**이고, 인덱스가 바뀌면
+    다시 재야 한다 — 그때 아래 단언이 그 자리에서 죽는다.
+    """
     with session_scope() as session:
-        row = session.get(ReviewRequestRow, review_request_id)
-        assert row is not None, review_request_id
-        snapshot = {c.name: getattr(row, c.name) for c in ReviewRequestRow.__table__.columns}
-        session.delete(row)
+        labelled = {"이른행": earlier_id, "늦은행": later_id}
+        before = _heap_probe(session, labelled)
+        snapshots = []
+        for rid in (later_id, earlier_id):            # 다시 넣는 순서 = `created_at` 역순
+            row = session.get(ReviewRequestRow, rid)
+            assert row is not None, rid
+            snapshots.append({c.name: getattr(row, c.name) for c in ReviewRequestRow.__table__.columns})
+            session.delete(row)
+        assert snapshots[1]["created_at"] < snapshots[0]["created_at"], \
+            "인자가 (이른 행, 늦은 행) 순서가 아니다 — 이 헬퍼가 만드는 것은 `created_at` 의 역순이다"
         session.flush()
         session.expunge_all()
-        session.add(ReviewRequestRow(**snapshot))
-        session.flush()
+        for snapshot in snapshots:
+            session.add(ReviewRequestRow(**snapshot))
+            session.flush()
+        after = _heap_probe(session, labelled)
+    if not before and not after:
+        return "힙 진단 없음(sqlite 축 — `ctid` 도 `pg_stat_all_tables` 도 없다)"
+    return f"재배치 전 [{before}] · 재배치 뒤 [{after}]"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -786,19 +851,20 @@ def test_cancelling_leaves_a_durable_expert_review_log_row_that_survives_recompu
 # ═══════════════════════════════════════════════════════════════════════════
 def test_cancel_names_the_decision_by_created_at_even_when_the_db_scan_order_is_reversed(
         client, auth, cancel_project, user_ids):
-    """확정1 → 취소1 → 확정2 로 **닫힌 행 둘 · 열린 행 0** 을 만든 뒤 **확정1 의 행만 스캔 맨 뒤로**
-    옮기고 취소2 를 친다. 실린 `cancelled_review_request_id` 는 **확정2 의 행**이어야 한다.
+    """확정1 → 취소1 → 확정2 로 **닫힌 행 둘 · 열린 행 0** 을 만든 뒤 두 행의 **스캔 순서를
+    `created_at` 역순으로 어긋나게** 하고 취소2 를 친다. 실린 `cancelled_review_request_id` 는
+    **확정2 의 행**이어야 한다.
 
-    §6-2 물음 — **결함 있는 코드가 이 기대값을 그대로 만족하는가.** 심지 않으면 **그렇다**:
+    §6-2 물음 — **결함 있는 코드가 이 기대값을 그대로 만족하는가.** 어긋나게 하지 않으면 **그렇다**:
     SQLite 의 스캔 순서가 곧 삽입 순서이고 삽입 순서가 곧 `created_at` 순서라
     `services/progress/persistence.py::document_mapping_reviews` 의 `sorted(...)` 를 지우고
-    `return rows` 로 바꿔도 같은 값이 나온다. 그것이 이 사이클 이전의 상태였다 —
-    그 변이에 **기준선이 그대로**(`136e66f` 실측 805 passed, 계획 0007 §후속 9). 이 사이클에서 다시 쟀다:
+    `return rows` 로 바꿔도 같은 값이 나온다. 그것이 계획 0008 이전의 상태였다 —
+    그 변이에 **기준선이 그대로**(`136e66f` 실측 805 passed, 계획 0007 §후속 9).
 
-    | | 정렬 있음(HEAD) | `return rows`(변이) |
+    | | 정렬 있음 | `return rows`(변이) |
     |---|---|---|
-    | **심지 않음** | 확정2 의 행(옳다) | 확정2 의 행(옳다) ← 두 구현이 구별되지 않는다 = 장식 |
-    | **심음**(이 테스트) | 확정2 의 행(옳다) | **확정1 의 행(틀렸다)** ← 갈린다 |
+    | **어긋나게 하지 않음** | 확정2 의 행(옳다) | 확정2 의 행(옳다) ← 두 구현이 구별되지 않는다 = 장식 |
+    | **어긋나게 함**(이 테스트) | 확정2 의 행(옳다) | **확정1 의 행(틀렸다)** ← 갈린다 |
 
     **틀린 값이 무엇인가가 이 테스트의 무게다.** 확정1 의 행은 **취소1 이 이미 되돌린 결정**의 행이다.
     CM 은 "확정2 를 취소했다"는 화면에서 확정1 의 요청 id 를 받는다 — 이름("어느 결정을 취소한
@@ -806,15 +872,19 @@ def test_cancel_names_the_decision_by_created_at_even_when_the_db_scan_order_is_
     갈래에서 정확히 같은 결함을 계획 0006 §후속 7 이 닫았고(아래 테스트), 새 요청 갈래에는 그 정렬
     하나만 서 있었다.
 
-    **어긋나게 하는 축은 `created_at` 값이 아니라 물리 위치다**(계획 0008 §1-b-1). 값을 고쳐
-    (`확정1.created_at = 확정2.created_at + 10분`) 심으면 **옳은 구현이 확정1 의 행을 지목**하게 되어,
-    아래 형제 테스트가 "내면 안 된다"고 붙들어 둔 값을 이 파일이 계약으로 고정한다.
+    **어긋나게 하는 축은 `created_at` 값이 아니다**(계획 0008 §1-b-1). 값을 고쳐
+    (`확정1.created_at = 확정2.created_at + 10분`) 만들면 **옳은 구현이 확정1 의 행을 지목**하게 되어,
+    아래 형제 테스트가 "내면 안 된다"고 붙들어 둔 값을 이 파일이 계약으로 고정한다. 그렇다고 축이
+    **힙 배치**인 것도 아니다(ADR 0015 §2-1) — 만드는 것은 두 행의 **상대 순서**뿐이고,
+    `_make_scan_order_disagree_with_created_at` 의 docstring 이 그 방법과 그 방법의 한계를 적는다.
 
-    **심기가 먹혔다는 것을 이 테스트가 스스로 단언한다**(§1-b-3): 심기 뒤 스캔이 `[확정2, 확정1]` 이고,
-    두 스캔의 `(status, resolved_by, created_at)` 집합이 **같다**. 심기가 안 먹으면(플래너·인덱스·DB 가
-    바뀌면) 위 표의 왼쪽 열로 떨어져 두 구현이 다시 구별되지 않는데, 그때 이 테스트는 조용히 장식이
-    되는 대신 **그 자리에서 죽는다**. *심기 **전** 순서는 단언하지 않는다* — 그것은 SQLite 사실이고
-    PostgreSQL 축에서는 갱신이 튜플을 옮겨 심기 전에 이미 뒤집혀 있을 수 있다(아래 주석의 10회 실측).
+    **어긋났다는 것을 이 테스트가 스스로 단언한다**(§1-b-3): 재배치 뒤 스캔이 `[확정2, 확정1]` 이고,
+    두 스캔의 `(status, resolved_by, created_at)` 집합이 **같다**. 어긋나지 않으면(FSM 이 앞 페이지를
+    주면 · 플래너·인덱스·DB 가 바뀌면) 위 표의 왼쪽 열로 떨어져 두 구현이 다시 구별되지 않는데, 그때
+    이 테스트는 조용히 장식이 되는 대신 **그 자리에서 죽고**(ADR 0015 §2-2) 실패 메시지가 `ctid` 와
+    `autovacuum_count` 를 실어 다음 사람이 **재현 없이** 귀속하게 한다(§2-4).
+    *재배치 **전** 순서는 단언하지 않는다* — 그것은 SQLite 사실이고 PostgreSQL 축에서는 갱신이 튜플을
+    옮겨 그 전에 이미 뒤집혀 있을 수 있다(아래 주석의 10회 실측).
 
     **셋을 함께 단언한다**(§6-2 4): ⓐ 실린 id 가 확정2 의 행이다 ⓑ 확정1 의 행이 **아니다**
     ⓒ 취소2 가 **새 요청을 열었다**(= 갱신 갈래가 아니라 `closed[-1]` 을 읽는 갈래로 들었다).
@@ -847,23 +917,24 @@ def test_cancel_names_the_decision_by_created_at_even_when_the_db_scan_order_is_
     closed = _closed_reviews(client, auth, pid, A_PENDING)
     assert {c["review_request_id"] for c in closed} == {first_decision_row, second_decision_row}, closed
 
-    # ── 심기 전 스캔. **SQLite 에서는** 스캔 순서 = 삽입 순서 = created_at 순서이고, 그것이 "심지 않으면
-    #    두 구현이 구별되지 않는다"의 관측값이다(위 표 왼쪽 열). **PostgreSQL 에서는 그 순서가 보장되지
-    #    않는다** — 확정·취소가 이 행들을 갱신하고, 갱신이 튜플을 다른 페이지로 옮기면 심기 전에 이미
-    #    뒤집혀 있다. 계획 0009 작업 5 실측(로컬 PostgreSQL 16.13 / **잰 트리는 이 좁힘을 넣기 직전의
-    #    작업 트리 = 통합 203건**, `ac9417d` 가 커밋한 205건 트리에 계약 테스트 둘이 들어오기 전이다):
-    #    `tests/integration` 을 postgres 축으로 **10회 돌려 2회**가
+    # ── 재배치 전 스캔. **SQLite 에서는** 스캔 순서 = 삽입 순서 = created_at 순서이고, 그것이 "어긋나게
+    #    하지 않으면 두 구현이 구별되지 않는다"의 관측값이다(위 표 왼쪽 열). **PostgreSQL 에서는 그
+    #    순서가 보장되지 않는다** — 확정·취소가 이 행들을 갱신하고, 갱신이 튜플을 다른 페이지로 옮기면
+    #    재배치 전에 이미 뒤집혀 있다. 계획 0009 작업 5 실측(로컬 PostgreSQL 16.13 / **잰 트리는 이
+    #    좁힘을 넣기 직전의 작업 트리 = 통합 203건**, `ac9417d` 가 커밋한 205건 트리에 계약 테스트 둘이
+    #    들어오기 전이다): `tests/integration` 을 postgres 축으로 **10회 돌려 2회**가
     #    이 테스트에서 죽었고, 출력을 잡아 둔 1회의 실패 지점이 **이 칸**이었다 — `before` 가 이미
     #    `[확정2, 확정1]`). 그래서 이 칸은 **순서가 아니라 집합**만 단언한다 —
-    #    이 테스트가 붙드는 것은 심기 **뒤**의 순서이고 그 단언은 바로 아래에 그대로 있다.
+    #    이 테스트가 붙드는 것은 재배치 **뒤**의 순서이고 그 단언은 바로 아래에 그대로 있다.
     before = _raw_review_scan(pid, A_PENDING, doc_id)
     assert {x[0] for x in before} == {first_decision_row, second_decision_row}, before
 
-    _plant_row_at_end_of_scan(first_decision_row)
+    heap = _make_scan_order_disagree_with_created_at(first_decision_row, second_decision_row)
 
     after = _raw_review_scan(pid, A_PENDING, doc_id)
     assert [x[0] for x in after] == [second_decision_row, first_decision_row], \
-        "심기가 먹지 않았다 — 스캔 순서가 그대로면 이 테스트는 정렬 유무를 구별하지 못한다"
+        ("스캔 순서를 어긋나게 하지 못했다 — 순서가 `created_at` 그대로면 이 테스트는 정렬 유무를 "
+         f"구별하지 못한다. 힙 진단(ADR 0015 §2-4): {heap}")
     assert sorted(after) == sorted(before), (before, after)   # 값은 하나도 바뀌지 않았다
 
     # ── 취소2.

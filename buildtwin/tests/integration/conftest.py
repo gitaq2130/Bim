@@ -47,6 +47,10 @@ def load_fixture_json(name: str) -> dict:
 def db_axis_contract():
     """ADR 0014 §2-5 강제 셋. **postgres 모드에서만** 값을 쓰고 단언한다(계약 3 = sqlite 모드 무동작).
 
+    **이 파이널라이저가 `check_contract` 를 실제로 부르는지**는 `test_99_db_axis_contract.py::
+    test_the_finalizer_actually_calls_the_axis_contract` 가 하위 프로세스 pytest 로 붙든다 — 호출만
+    지우면 통합 전량이 두 축 다 초록이다(리뷰어 실측, 계획 0009 §M-5 28).
+
     autouse 세션 픽스처라 `tests/integration` 의 어떤 부분집합을 돌려도 teardown 에서 반드시 실행된다 —
     별도 테스트 파일에 두면 "그 파일을 빼고 돌린다"로 우회되고, 그 우회가 바로 이 계약이 겨냥한 모양이다.
     실패는 teardown ERROR 로 보고된다(계획 0009 §2-b 가 소유자 판단으로 남긴 선택지 중 이쪽을 골랐다).
@@ -69,11 +73,12 @@ def pytest_terminal_summary(terminalreporter) -> None:
     pytest 가 캡처해 **초록 실행에서 통째로 버린다**(이 트리에서 확인 — postgres 전량 `pytest -q` 로그에
     그 줄이 나오지 않았다). `pytest_terminal_summary` 는 성공·실패·teardown ERROR 어느 쪽이든 찍힌다.
 
-    *이 훅 자신은 무보호다*: 통째로 지우면 두 축 모두 초록이다(실측, 통합 207건 트리: sqlite 207 passed /
-    postgres 207 passed, 로그에서 `[db-axis]` 줄만 사라진다). 줄의 **내용**은
-    `test_report_line_carries_every_field_the_ci_log_needs` 가 붙들지만 **찍히는지**는 붙들지 못한다 —
-    그것을 붙들려면 하위 프로세스로 pytest 를 돌려 출력을 grep 해야 하고, 이 저장소에 그런 기구가 없다.
-    `check_contract` 호출 삭제 변이와 같은 종류의 공백이다(test_99 머리말 1).
+    *이 훅이 **찍히는지**를 붙드는 자리*: `tests/integration/test_99_db_axis_contract.py::
+    test_the_terminal_summary_hook_actually_prints_the_axis_line`. 줄의 **내용**은 같은 파일의
+    `test_report_line_carries_every_field_the_ci_log_needs` 가 붙든다. 훅이 없으면 두 축 모두
+    **초록인 채 `[db-axis]` 줄만 사라지므로**(리뷰어 실측, 계획 0009 §M-5 28), 붙드는 유일한 길은
+    이 배선을 import 한 세션을 **하위 프로세스**로 돌려 출력을 읽는 것이다 — test_99 가 그 기구를 갖는다.
+    파이널라이저의 `check_contract` 호출도 같은 기구가 붙든다(`test_the_finalizer_actually_calls_...`).
     """
     line = axis.report_line(axis.measured_report(RECORDER, axis.read_floor())) if RECORDER.is_postgres \
         else axis.sqlite_log_line()

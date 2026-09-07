@@ -186,14 +186,21 @@ def current_measured_bytes() -> bytes | None:
 def check_sqlite_noop(*, measured_now: bytes | None, measured_at_import: bytes | None) -> None:
     """ADR 0014 §2-5 **계약 3** — sqlite 모드에서 이 기구는 아무것도 쓰지 않는다.
 
+    **이 함수가 관측하는 것은 "이 실행 전후로 파일이 달라졌다" 하나다**(CLAUDE.md §6-4 2, 계획 0009
+    §후속 22). 옛 문구는 *"sqlite 모드가 … 건드렸다"* 로 **관측하지 않은 경위**를 지목했는데, 계획 0009
+    마감이 실제로 만난 것은 밖에서 파일을 고쳐 둔 트리였다 — 그때 이 문구는 CM 이 아니라 다음 개발자를
+    엉뚱한 곳으로 보낸다.
+
     이 단언이 세션 **끝**에 있어야 하는 이유는 실측이다: 계약 3 을 테스트 안에서만(세션 중간) 비교하면
     "쓰기를 축과 무관하게 옮기는" 변이가 **살아남는다** — 쓰기가 teardown 에 있어 비교 시점보다 뒤라서다
     (계획 0009 작업 6 실측 M9 — **잰 트리는 통합 203건 시점의 작업 트리**, `ac9417d` 직전:
     sqlite 203 passed 인데 measured 파일의 md5 는 바뀌어 있었다).
     """
     assert measured_now == measured_at_import, (
-        f"sqlite 모드가 {MEASURED_PATH.name} 을 건드렸다 (ADR 0014 §2-5 3). 로컬 개발이 postgres 없이 돌 때 "
-        "이 파일은 커밋된 값 그대로여야 한다 — 그렇지 않으면 postgres 측정값이 sqlite 실행으로 조용히 덮인다."
+        f"sqlite 축 실행의 **전후로** {MEASURED_PATH.name} 이 달라졌다 (ADR 0014 §2-5 3). "
+        "**쓴 주체는 관측하지 않았다** — 이 실행일 수도, 밖에서 파일을 고친 사람일 수도 있다"
+        "(계획 0009 §M-2-4 가 후자를 실제로 만났다). 로컬 개발이 postgres 없이 돌 때 이 파일은 커밋된 값 "
+        "그대로여야 한다 — 그렇지 않으면 postgres 측정값이 조용히 덮인다."
     )
 
 
