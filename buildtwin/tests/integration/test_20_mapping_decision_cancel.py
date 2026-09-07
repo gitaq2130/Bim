@@ -16,6 +16,8 @@ ADR 0013 §"이 불변식을 지금 무엇이 붙들어 주는가"가 스스로 
 | 새 요청을 안 연다 | 같은 두 테스트의 open 요청 단언 + 같은 자리에서 readiness blocker `document_mapping_pending` 를 함께 본다(큐가 비었는데 readiness 는 "대기"라고 말하는 것이 이 저장소의 지배적 실패 모드다) |
 | `errors.py` 의 전용 핸들러 둘 삭제 | 409 응답의 `code` 단언(예외가 `Exception` 직속이라 핸들러가 없으면 **500 + code 없음**) |
 | 취소 이력 append → 덮어쓰기 | `test_v9_...`(2회 취소 후 길이 2) |
+| 제목의 방향 낱말을 **반전**(`what` 삼항의 두 갈래 맞바꿈) | `test_v1_...`·`test_v2_...` 의 **부재 단언**(확정 취소 뒤 "반려를"이 없다 / 반려 취소 뒤 "확정을"이 없다). 이 사이클에 추가 — 그 전에는 **804 passed**, 즉 CM 이 다음 행동을 고르는 문구가 무보호였다(CLAUDE.md §6-4). 문장을 통째로 베끼지 않으므로 제목 전면 재작성(방향은 옳게)에서는 죽지 않는다 — 태워서 확인했다 |
+| `cancelled_review_request_id` 를 **첫** 닫힌 행으로(`closed[-1]` → `closed[0]`) | `test_v9_...`(닫힌 행이 둘 쌓인 뒤에야 갈린다 — 하나뿐이면 두 구현이 같은 id 를 낸다). 이 사이클에 추가 |
 | 검사 순서 맞바꿈(사유 검사를 앞으로) | `test_v7_...` 의 **두 요건 동시 위반** 칸(취소할 결정이 없는 CM 에게 "적을 수 없는 사유"를 요구하면 죽는다) |
 | `usecases.py::cancel_document_mapping_review` 의 `record_expert_review(...)` 세 줄 삭제 | `test_cancelling_leaves_a_durable_expert_review_log_row_...`(계획 0006 §후속 5 로 이 사이클에 추가 — 그 전에는 **803 passed**, 즉 감사의 정본이 무보호였다) |
 
@@ -267,6 +269,12 @@ def test_v1_cancelling_a_confirmation_returns_the_pair_to_pending_and_reopens_th
     assert sources["cancelled_review_request_id"] == closed_rows[0]["review_request_id"]
     assert sources["cancel_note"] == note
 
+    # 제목은 CM 이 다음 행동을 고르는 **유일한 입력**이다(CLAUDE.md §6-4). 문장을 통째로 베끼면 거짓
+    # 문구가 계약이 되므로(§6-4 3) 베끼지 않고 **그 상황에서 참일 수 없는 말의 부재**만 단언한다 —
+    # 확정을 취소한 자리에서 "반려를"은 참일 수 없다. 기계 판독값 `previous_decision` 은 바로 위
+    # 이력 단언이 붙들고 있으므로 여기서 닫는 것은 그 값을 **렌더링하는 한 칸**이다.
+    assert "반려를" not in open_rows[0]["title"], open_rows[0]["title"]
+
     # 이력 한 항목. 확정 방향에는 반려 쪽 값이 **없으므로 키 자체가 없다**(모르는 값을 흔한 값으로
     # 떨어뜨리는 폴백을 두지 않는다 — CLAUDE.md §6-4 2).
     history = _history(served)
@@ -333,6 +341,8 @@ def test_v2_cancelling_a_rejection_clears_the_rejection_marks_and_reopens_the_qu
     assert closed_rows[0]["resolved_by"] == user_ids["cm"]
     assert reject_note in (closed_rows[0]["resolution_note"] or "")
     assert open_rows[0]["conflicting_sources"]["cancelled_review_request_id"] == closed_rows[0]["review_request_id"]
+    # V1 의 짝(§6-4 3 — 부재 단언). 반려를 취소한 자리에서 "확정을"은 참일 수 없다.
+    assert "확정을" not in open_rows[0]["title"], open_rows[0]["title"]
 
     # 지운 반려 표시는 사라지지 않고 이력으로 옮겨진다(규칙 3) — 반려 방향에서만 있는 두 값이 실린다.
     history = _history(served)
@@ -423,9 +433,20 @@ def test_v9_cancelling_twice_appends_to_the_history_and_keeps_both_closed_rows(c
     doc_id = _doc_id_for(client, auth, pid, A_REASON)
     assert _mapping(client, auth, pid, doc_id, A_REASON)["reviewed_by"] == user_ids["cm"]   # V5 가 확정해 뒀다
 
+    first_closed = _closed_reviews(client, auth, pid, A_REASON)
+    assert len(first_closed) == 1, first_closed          # V5 의 확정이 닫은 행
+    first_cancelled_id = first_closed[0]["review_request_id"]
+
     first = _cancel(client, auth, pid, A_REASON, doc_id, note="첫째 취소")
     assert first.status_code == 200, first.text
     assert len(_history(_mapping(client, auth, pid, doc_id, A_REASON))) == 1
+
+    # 첫째 취소가 연 행. **재확정이 닫을 행이 바로 이것**이므로 둘째 취소는 이 id 를 실어야 한다 —
+    # 앞에서 붙잡아 두고 뒤에서 비교한다(비교 대상을 사후에 고르면 어느 행이든 맞는다).
+    reopened = _open_reviews(client, auth, pid, A_REASON)
+    assert len(reopened) == 1, reopened
+    reconfirmed_review_id = reopened[0]["review_request_id"]
+    assert reconfirmed_review_id != first_cancelled_id
 
     _confirm(client, auth, pid, A_REASON, doc_id, "재확정")
     second = _cancel(client, auth, pid, A_REASON, doc_id, note="둘째 취소")
@@ -443,6 +464,11 @@ def test_v9_cancelling_twice_appends_to_the_history_and_keeps_both_closed_rows(c
     assert len(closed_rows) == 2, closed_rows       # 취소마다 닫힌 행이 하나씩 쌓인다(ADR 0013 §Deferred 1)
     assert {c["status"] for c in closed_rows} == {"approved"}
     assert all(c["resolved_by"] == user_ids["cm"] and c["resolution_note"] for c in closed_rows)
+
+    # 둘째 취소가 가리키는 것은 **직전 확정을 닫은 행**이다(ADR 0013 규칙 2 — "지금 취소하는 결정을
+    # 기록한 행"). 닫힌 행이 둘 이상 쌓인 뒤에야 이 칸이 갈린다: 하나뿐일 때는 어느 것을 골라도 같은
+    # id 라 결함 있는 구현과 옳은 구현이 구별되지 않는다(CLAUDE.md §6-2 1).
+    assert open_rows[0]["conflicting_sources"]["cancelled_review_request_id"] == reconfirmed_review_id
 
 
 # ═══════════════════════════════════════════════════════════════════════════
