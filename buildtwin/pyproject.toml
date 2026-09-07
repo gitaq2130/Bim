@@ -7,6 +7,9 @@ dependencies = [
   "python-multipart", "python-jose[cryptography]", "passlib[bcrypt]", "pyyaml",
   "celery", "redis", "ortools", "numpy", "scipy", "shapely",
   "ifcopenshell", "ezdxf", "open3d", "laspy", "plyfile", "httpx", "openpyxl",
+  # 운영 경로가 postgres 다(docker-compose.yml 의 DATABASE_URL) — dev extra 가 아니라 본 의존성에 둔다(ADR 0014 §2-1).
+  # 통합 테스트의 postgres 축(BUILDTWIN_CI_POSTGRES_URL)도 이 드라이버로 돈다. asyncpg 는 두지 않는다(비동기 엔진 0건).
+  "psycopg[binary]",
 ]
 
 [project.optional-dependencies]

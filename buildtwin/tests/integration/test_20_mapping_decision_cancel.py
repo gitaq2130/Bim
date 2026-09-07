@@ -810,10 +810,11 @@ def test_cancel_names_the_decision_by_created_at_even_when_the_db_scan_order_is_
     (`확정1.created_at = 확정2.created_at + 10분`) 심으면 **옳은 구현이 확정1 의 행을 지목**하게 되어,
     아래 형제 테스트가 "내면 안 된다"고 붙들어 둔 값을 이 파일이 계약으로 고정한다.
 
-    **심기가 먹혔다는 것을 이 테스트가 스스로 단언한다**(§1-b-3): 심기 전 스캔 `[확정1, 확정2]`,
-    심기 뒤 `[확정2, 확정1]`, 그리고 두 스캔의 `(status, resolved_by, created_at)` 집합이 **같다**.
-    심기가 안 먹으면(플래너·인덱스·DB 가 바뀌면) 위 표의 왼쪽 열로 떨어져 두 구현이 다시 구별되지
-    않는데, 그때 이 테스트는 조용히 장식이 되는 대신 **그 자리에서 죽는다**.
+    **심기가 먹혔다는 것을 이 테스트가 스스로 단언한다**(§1-b-3): 심기 뒤 스캔이 `[확정2, 확정1]` 이고,
+    두 스캔의 `(status, resolved_by, created_at)` 집합이 **같다**. 심기가 안 먹으면(플래너·인덱스·DB 가
+    바뀌면) 위 표의 왼쪽 열로 떨어져 두 구현이 다시 구별되지 않는데, 그때 이 테스트는 조용히 장식이
+    되는 대신 **그 자리에서 죽는다**. *심기 **전** 순서는 단언하지 않는다* — 그것은 SQLite 사실이고
+    PostgreSQL 축에서는 갱신이 튜플을 옮겨 심기 전에 이미 뒤집혀 있을 수 있다(아래 주석의 10회 실측).
 
     **셋을 함께 단언한다**(§6-2 4): ⓐ 실린 id 가 확정2 의 행이다 ⓑ 확정1 의 행이 **아니다**
     ⓒ 취소2 가 **새 요청을 열었다**(= 갱신 갈래가 아니라 `closed[-1]` 을 읽는 갈래로 들었다).
@@ -846,10 +847,15 @@ def test_cancel_names_the_decision_by_created_at_even_when_the_db_scan_order_is_
     closed = _closed_reviews(client, auth, pid, A_PENDING)
     assert {c["review_request_id"] for c in closed} == {first_decision_row, second_decision_row}, closed
 
-    # ── 심기 전: 스캔 순서 = 삽입 순서 = created_at 순서. 이 칸이 "심지 않으면 두 구현이 구별되지
-    #    않는다"의 관측값이다(위 표 왼쪽 열).
+    # ── 심기 전 스캔. **SQLite 에서는** 스캔 순서 = 삽입 순서 = created_at 순서이고, 그것이 "심지 않으면
+    #    두 구현이 구별되지 않는다"의 관측값이다(위 표 왼쪽 열). **PostgreSQL 에서는 그 순서가 보장되지
+    #    않는다** — 확정·취소가 이 행들을 갱신하고, 갱신이 튜플을 다른 페이지로 옮기면 심기 전에 이미
+    #    뒤집혀 있다. 계획 0009 작업 5 실측(로컬 PostgreSQL 16.13, `tests/integration` **10회 중 2회**가
+    #    이 테스트에서 죽었고, 출력을 잡아 둔 1회의 실패 지점이 **이 칸**이었다 — `before` 가 이미
+    #    `[확정2, 확정1]`). 그래서 이 칸은 **순서가 아니라 집합**만 단언한다 —
+    #    이 테스트가 붙드는 것은 심기 **뒤**의 순서이고 그 단언은 바로 아래에 그대로 있다.
     before = _raw_review_scan(pid, A_PENDING, doc_id)
-    assert [x[0] for x in before] == [first_decision_row, second_decision_row], before
+    assert {x[0] for x in before} == {first_decision_row, second_decision_row}, before
 
     _plant_row_at_end_of_scan(first_decision_row)
 
