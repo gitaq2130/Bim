@@ -259,12 +259,24 @@ def save_mappings(session: Session, project_id: str, mappings: list[ActivityObje
 
 def load_mappings(session: Session, project_id: str, activity_id: str | None = None,
                   global_id: str | None = None) -> list[ActivityObjectMappingRow]:
-    """ADR 0005 규칙 2: project_id 는 필수 인자다(단독 global_id/activity_id 조회 금지 — 라운드3 리뷰 반려 사유)."""
+    """ADR 0005 규칙 2: project_id 는 필수 인자다(단독 global_id/activity_id 조회 금지 — 라운드3 리뷰 반려 사유).
+
+    **(`activity_id`, `global_id`) 오름차순으로 돌려준다**(ADR 0016 결정 1·2, 계획 0012 §1-d A3).
+    이 순서를 **위치로** 읽는 소비자가 있다: `activity_ids_for_object` 가 돌려준 목록의 첫 원소를
+    `services/progress/verification.py` 의 `ReviewRequest(activity_id=…)` 와
+    `services/api/usecases.py` 의 `db.load_activity(…, logic["activity_ids"][0])` 가 고른다 — 한 객체가
+    두 Activity 에 매핑돼 있으면 **검토요청이 어느 Activity 를 싣는지가 이 정렬로 결정된다.**
+    키는 **의미의 축이 아니라 결정성의 축**이다(ADR 0016 결정 2): 이 행에는 시간 컬럼이 없고
+    소비자가 묻는 것도 "가장 최근"이 아니라 "매번 같은 것"이다. 그래서 PK 에서 필터로 이미 고정된
+    `project_id` 를 뺀 나머지 두 컬럼을 그대로 쓴다(`ActivityObjectMappingRow` PK =
+    `(project_id, activity_id, global_id)`).
+    """
     stmt = select(ActivityObjectMappingRow).where(ActivityObjectMappingRow.project_id == project_id)
     if activity_id is not None:
         stmt = stmt.where(ActivityObjectMappingRow.activity_id == activity_id)
     if global_id is not None:
         stmt = stmt.where(ActivityObjectMappingRow.global_id == global_id)
+    stmt = stmt.order_by(ActivityObjectMappingRow.activity_id, ActivityObjectMappingRow.global_id)
     return list(session.scalars(stmt))
 
 
