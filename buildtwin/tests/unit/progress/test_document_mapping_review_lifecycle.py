@@ -3,8 +3,11 @@
 8차 리뷰 REJECT 사유: `ReviewRequest(kind="document_mapping")` 를 만드는 코드가 저장소 어디에도 없었다.
 `ReviewKind` 에 값이 있고 blocker 가 CM 에게 "검토 큐에서 확정하라"고 안내했지만, 그 큐는 영원히 비어
 있었고 582개 테스트 중 아무것도 실패하지 않았다. 이 파일은 그 침묵이 재발하지 않도록 실제 대장+공정표
-적재 파이프라인으로 `map_project_documents`/`close_document_mapping_review` 를 직접 구동해 다음 여섯
-항목을 못 박는다:
+적재 파이프라인으로 `map_project_documents`/`close_document_mapping_review` 를 직접 구동해 다음
+항목들을 못 박는다(**개수는 적지 않는다** — 아래 목록 뒤로 이 머리말이 항목을 더 붙여 왔고, 개수를
+적으면 그때마다 이 문장이 거짓이 된다. 실제로 *"다음 **여섯** 항목"* 이 그렇게 낡아 있었다:
+계획 0009 §후속 12. CLAUDE.md §6-1 9회차 — **열거는 길이가 곧 개수다**. 오늘 수를 알고 싶으면
+그 자리에서 세라: `grep -c "^def test_" tests/unit/progress/test_document_mapping_review_lifecycle.py`):
 
 1. 생성 — 매핑 6건 = 열린 document_mapping 검토요청 6건(느슨한 `> 0` 아님).
 2. 중복 방지 — 같은 대장 재실행 시 새 검토요청 없음, id 동일.
