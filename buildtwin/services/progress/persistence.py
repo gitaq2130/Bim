@@ -430,14 +430,23 @@ def find_document_mapping_review(session: Session, project_id: str, activity_id:
     **DB 스캔 순서**에 달리고, 그 행을 되여는 것은 `resolved_by`·`resolved_at`·`resolution_note` 를
     지우는 일이라 **이미 대체된 옛 결정의 감사가 지워진다.**
 
-    실측(SQLite, 이 저장소 통합 테스트 환경). 확정1 → 취소 → 확정2 로 닫힌 행을 둘 만든 뒤 Activity 를
-    바꿔 재오픈을 태웠다. 튜플은 `(요청 id 앞 8자, status, resolution_note)`:
+    **여기에 실측값을 적지 않는다 — 그 자리에서 다시 잰다.** 이 파일은 계속 편집되는 자리라 못박을
+    트리가 없고, 절대값(요청 id·통과 수)을 적으면 다음 커밋이 그것을 거짓으로 만든다
+    (CLAUDE.md §3-13 둘째 갈래). 재현: 아래 `.order_by(ReviewRequestRow.created_at.desc())` 를
+    **지우거나** `.asc()` 로 뒤집고
 
-        [P-after-confirm2] [('a6f66d51','approved','확정2'), ('86e9f3c0','approved','확정1')]
-        [P-after-reopen]   [('a6f66d51','approved','확정2'), ('86e9f3c0','open','')]
+        .venv/bin/pytest tests/integration/test_20_mapping_decision_cancel.py -q
 
-    정렬 없이는 **옛 행**(`86e9f3c0`, 확정1)이 열리고 그 감사가 지워졌다 — 무효화된 것은 확정2 인데
-    되열린 것은 확정1 의 행이다. 내림차순 정렬 뒤에는 `a6f66d51` 이 열린다.
+    그 파일에 확정1 → 취소1 → 확정2 로 닫힌 행을 둘 만든 뒤 다시 취소를 태우는 계약이 있다. `.asc()`
+    는 정의상, 지움은 바로 위 문단의 스캔 순서를 타고(SQLite 에서 관측되는 것은 삽입 순서다) — 둘 다
+    그 쌍의 **옛 행**을 돌려준다. 되열기는 이미 대체된 확정1 의 행을 열어 그
+    `resolved_by`·`resolved_at`·`resolution_note` 를 지우고, 취소는 이미 되돌린 결정의 id 를 CM 에게
+    "취소한 결정"이라는 이름으로 내민다. 빨개지는 함수의 이름은 그 출력이 말한다 — 여기 적으면
+    개명이 그것을 조용히 낡게 만든다.
+
+    **이 정렬이 무엇에 기대어 지켜지는지도 세지 말고 읽어라**: 위 두 변이 어느 쪽에서도 빨개지는 것이
+    **그 파일 밖에는 없다**(루트 `.venv/bin/pytest -q` 로 확인한다). 그러므로 그 파일이 그 계약을
+    잃으면 이 정렬은 무보호가 된다.
 
     **왜 `status == "open"` 우선이 아니라 `created_at` 인가.** 한 쌍에 열린 행은 언제나 하나이고
     (`_sync_pending_document_mapping_reviews`·`cancel_document_mapping_review`·이 함수의 호출부가 모두
