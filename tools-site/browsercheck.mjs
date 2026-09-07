@@ -75,8 +75,11 @@ for (const [slug, label, sets] of CASES) {
   writeFileSync(TMP, readFileSync(src, "utf8").replace("</body>", injection(sets) + "</body>"));
   const dom = execFileSync(CH, ["--no-sandbox", "--disable-gpu", "--virtual-time-budget=3000", "--dump-dom", `file://${TMP}`],
     { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-  const cls = (dom.match(/<div class="(out[^"]*)"[^>]*id="out"/) || [])[1];
-  const seg = dom.match(/<div class="out[^"]*"[^>]*id="out"[^>]*>([\s\S]*?)<div class="basis"/);
+  /* 결과 영역에 id="out" 을 안 붙인 도구도 있다(분기별로 배경색을 바꿀 일이 없는 것들).
+     그런 페이지는 첫 .out 블록을 읽는다. */
+  const m = dom.match(/<div class="(out[^"]*)"[^>]*>([\s\S]*?)<div class="basis"/);
+  const cls = m && m[1];
+  const seg = m && [null, m[2]];
   if (!cls || !seg) { console.error(`  실패  ${slug} / ${label} — 결과 영역을 읽지 못했습니다`); process.exitCode = 1; continue; }
   const text = seg[1].replace(/<[^>]+>/g, "|").split("|").map((x) => x.trim()).filter(Boolean);
   if (text.some((t) => t === "—")) { console.error(`  실패  ${slug} / ${label} — 결과가 계산되지 않았습니다`); process.exitCode = 1; }
