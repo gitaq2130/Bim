@@ -1,6 +1,8 @@
 # BuildTwin CI — 담당: qa (buildtwin/.claude/agents/qa.md)
 # lint · unit 은 병렬로 돌아 서로의 실패를 가리지 않는다. integration · e2e 는 unit 이 초록일 때만 돈다.
 # 회귀 기준(tests/metrics.json)은 unit 잡의 tests/regression 에서 강제되고, 측정값은 아티팩트로 남긴다.
+# integration 잡은 통합 스위트를 **두 번** 돈다 — sqlite 갈래와 postgres 갈래(ADR 0014 §2-6).
+# postgres 갈래의 바닥값은 buildtwin/tests/postgres.floor.json 이고 측정값은 postgres.measured.json 이다.
 name: buildtwin-ci
 
 on:
@@ -127,8 +129,9 @@ jobs:
           --health-cmd "redis-cli ping"
           --health-interval 5s --health-timeout 5s --health-retries 20
     env:
-      # 통합 테스트 기본은 sqlite + Celery eager(packages/core/settings.py). 서비스 컨테이너는 옵트인 — 테스트가 이 값을 읽어 쓸 수 있다.
-      BUILDTWIN_CI_POSTGRES_URL: postgresql://buildtwin:buildtwin@localhost:5432/buildtwin_test
+      # DB 는 축이다(ADR 0014 §2-2): tests/integration/conftest.py 가 BUILDTWIN_CI_POSTGRES_URL 을 읽어
+      # 있으면 PostgreSQL + 세션 전용 스키마로, 없으면 임시 SQLite 로 간다. 그래서 그 이름은 잡 레벨이
+      # 아니라 **postgres 스텝의 env 에만** 둔다 — 여기 두면 sqlite 스텝도 보게 되어 갈래가 하나로 준다.
       BUILDTWIN_CI_REDIS_URL: redis://localhost:6379/0
       CELERY_ALWAYS_EAGER: "true"
     steps:
@@ -144,8 +147,24 @@ jobs:
         run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
       - name: make fixtures
         run: python scripts/fetch_fixtures.py
-      - name: pytest integration
+      - name: pytest integration (sqlite — 로컬 make test 와 같은 갈래, seed_dev_data 는 꺼진 채로)
         run: pytest tests/integration -q
+      # 두 스텝이 같은 잡이라 앞 스텝의 실패가 뒤를 가린다(ADR 0014 §Deferred 3 이 qa 판단으로 남긴 자리).
+      # !cancelled() 로 그 가림만 없앤다 — 잡을 나누면 setup(deps·fixtures)을 두 번 하게 되고,
+      # 대가는 설치 스텝이 죽은 실행에서도 이 스텝이 한 번 더 죽어 로그가 시끄러워지는 것이다.
+      - name: pytest integration (postgres — 서비스 컨테이너 + 세션 전용 스키마)
+        if: ${{ !cancelled() }}
+        env:
+          BUILDTWIN_CI_POSTGRES_URL: postgresql://buildtwin:buildtwin@localhost:5432/buildtwin_test
+        run: pytest tests/integration -q
+      # tests/postgres.measured.json 은 postgres 스텝이 덮어쓴다 — 커밋된 값과의 드리프트를 아티팩트로 남긴다.
+      - name: Upload measured postgres axis
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-measured
+          path: buildtwin/tests/postgres.measured.json
+          if-no-files-found: warn
 
   e2e:
     name: e2e (핵심 흐름 · Playwright chromium)
