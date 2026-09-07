@@ -20,10 +20,21 @@
 `reject_document_mapping`/`map_project_documents` 를 직접 구동한다(**resolve_review 를 통한 승인·반려
 자체**는 tests/integration/test_15_document_mapping_queue_resolve.py 가 API 레벨로 고정한다 — 이 파일은
 document_mapper 모듈 자체의 계약을 고정하는 자리라 기존 관례(직접 호출)를 그대로 따른다).
+
+계획 0008 §과제 1(S1)에서 항목 8을 더한다: `document_mapping_reviews` 의 **반환 순서 축은 `created_at`
+이고 DB 스캔 순서가 아니다**. 그 정렬(`services/progress/persistence.py::document_mapping_reviews` 의
+`sorted(...)`)이 지키는 값은 취소가 싣는 `cancelled_review_request_id` = CM 이 "어느 결정을 취소했는가"를
+읽는 값인데(ADR 0013 규칙 2), 그 줄을 `return rows` 로 바꿔도 기준선이 그대로였다(계획 0007 §후속 9,
+`136e66f` 실측 **805 passed**). 이유는 테스트가 없어서가 아니라 **배역이 장식이어서**다 — SQLite 의 스캔
+순서가 곧 삽입 순서이고 삽입 순서가 곧 `created_at` 순서라 두 구현이 같은 값을 낸다. 항목 8 은 두 순서를
+어긋나게 **심어** 그 전제를 깬다. 소비자 쪽(취소가 실제로 싣는 id)은
+`tests/integration/test_20_mapping_decision_cancel.py` 가 같은 사이클에서 붙든다.
 """
 from __future__ import annotations
 
 from pathlib import Path
+
+from sqlalchemy import select
 
 from packages.core.models.document import ActivityDocumentMapping
 from packages.core.models.orm import ActivityDocumentMappingRow, FileRow, ReviewRequestRow
@@ -31,6 +42,7 @@ from packages.core.models.progress import Activity, Schedule
 from services.ingest.persistence import persist_document_register_import
 from services.progress import persistence as db
 from services.progress.document_mapper import (
+    cancel_document_mapping_review,
     close_document_mapping_review,
     map_project_documents,
     reject_document_mapping,
@@ -263,3 +275,108 @@ def test_rejection_pinned_to_doc_id_survives_recompute_but_not_a_renamed_title(s
     # 옛 doc_id 쪽 반려 표시는 그대로 남아 있다(감사 이력 보존, 새 doc_id 처리가 옛 행을 건드리지 않는다)
     row_v1_after = session.get(ActivityDocumentMappingRow, (PROJECT_ID, "A-RENAME", "doc-title-v1"))
     assert row_v1_after.evidence["extra"]["mapping_review_decision"] == "rejected"
+
+
+# ── 8(계획 0008 §과제 1, S1). `document_mapping_reviews` 의 반환 순서 축은 `created_at` 이고 ────────
+#    DB 스캔 순서가 아니다 — 두 순서를 **어긋나게 심어** 그 정렬을 관측 가능하게 만든다 ────────────
+def _plant_row_at_end_of_scan(session, review_request_id: str) -> None:
+    """그 요청 행을 **컬럼 값을 하나도 바꾸지 않고** 지웠다 같은 값으로 다시 넣는다.
+
+    SQLite 에서 그 행은 새 rowid 를 받아 `ORDER BY` 없는 SELECT 의 스캔 **맨 뒤**로 간다.
+    `created_at` 을 **고쳐서** 어긋나게 하는 대안은 기각됐다(계획 0008 §1-b-1): 그 배역에서는 옳은
+    구현이 **이미 취소된 옛 결정의 행**을 지목하게 되어, 형제 테스트
+    (`tests/integration/test_20_mapping_decision_cancel.py::test_cancelling_again_while_a_reopened_
+    request_is_open_does_not_name_an_already_cancelled_decision`)가 "내면 안 된다"고 붙들어 둔 값을
+    이 파일이 계약으로 고정하게 된다. **어긋나게 하는 축은 값이 아니라 물리 위치다.**
+    """
+    row = session.get(ReviewRequestRow, review_request_id)
+    assert row is not None, review_request_id
+    snapshot = {c.name: getattr(row, c.name) for c in ReviewRequestRow.__table__.columns}
+    session.delete(row)
+    session.flush()
+    session.expunge_all()
+    session.add(ReviewRequestRow(**snapshot))
+    session.flush()
+    session.commit()
+    session.expire_all()
+
+
+def _raw_scan_ids(session, project_id: str, activity_id: str, doc_id: str) -> list[str]:
+    """`ORDER BY` 없는 SELECT 의 순서 그대로 — `document_mapping_reviews` 의 `sorted(...)` **직전** 상태다."""
+    stmt = select(ReviewRequestRow).where(
+        ReviewRequestRow.project_id == project_id,
+        ReviewRequestRow.kind == "document_mapping",
+        ReviewRequestRow.activity_id == activity_id,
+    )
+    return [r.review_request_id for r in session.scalars(stmt)
+            if (r.conflicting_sources or {}).get("doc_id") == doc_id]
+
+
+def test_document_mapping_reviews_orders_by_created_at_not_by_db_scan_order(session):
+    """확정1 → 취소1 → 확정2 로 닫힌 행 둘을 만든 뒤 **확정1 의 행만 스캔 맨 뒤로** 옮기고,
+    그래도 반환이 오래된 것부터인지 본다.
+
+    **왜 이 배역이어야 하는가(CLAUDE.md §6-2 1).** 심지 않으면 SQLite 의 스캔 순서가 곧 삽입 순서이고
+    삽입 순서가 곧 `created_at` 순서라, `return sorted(rows, key=...)` 와 `return rows` 가 **같은 값**을
+    낸다 — 그 배역으로 세운 단언은 결함 있는 코드도 그대로 만족한다(장식). 실측(계획 0008 §1-b 2×2 표,
+    이 사이클에서 재측정): 심지 않은 대조군은 두 구현 모두 옳은 답을 내고, 심은 배역에서만 갈린다.
+
+    **심기가 먹혔다는 것을 이 테스트가 스스로 단언한다**(§1-b-3). 인덱스·플래너·DB 가 바뀌어 스캔
+    순서가 그대로면 위 대조군으로 떨어져 두 구현이 다시 구별되지 않는데, 그때 테스트는 **조용히
+    장식이 된다** — 이 저장소의 지배적 실패 모드다. 그래서 심기 전후의 raw 스캔 순서를 함께 단언한다.
+    이 트리의 실행값: 심기 전 `['R1','R2']` · 심기 뒤 `['R2','R1']`, 함수 반환은 **양쪽 다** `['R1','R2']`.
+
+    **이 층만으로는 과잉 고정이다** — 정렬을 지우고 소비자에서 `max(key=created_at)` 로 옮긴 구현은
+    여기서만 죽고 계약은 지켜진다. 그것이 의도다(계획 0008 §1-c 역방향 확인): 지금 계약을 지키는 것은
+    그 `sorted(...)` 한 줄뿐이고, 그 줄을 지워도 기준선이 그대로라는 것이 §후속 9 였다. 이 순서를
+    **누가 왜 읽는가**(취소가 싣는 `cancelled_review_request_id`)는 통합 층이 붙든다.
+    """
+    _seed_register_and_schedule(session)
+    result = map_project_documents(session, PROJECT_ID)
+    session.commit()
+    m = result.mappings[0]
+
+    # ── 확정1 → 취소1 → 확정2. 닫힌 행 둘(R1 = 확정1 을 기록한 행, R2 = 확정2 를 기록한 행) + 열린 행 0.
+    first_review = db.open_document_mapping_review(session, PROJECT_ID, m.activity_id, m.doc_id)
+    assert first_review is not None
+    r1 = first_review.review_request_id
+    _confirm(session, PROJECT_ID, m.activity_id, m.doc_id, m)
+
+    cancelled, _ = cancel_document_mapping_review(session, PROJECT_ID, m.activity_id, m.doc_id,
+                                                  CM_USER, note="확정1 을 취소한다")
+    session.commit()
+    reopened = db.open_document_mapping_review(session, PROJECT_ID, m.activity_id, m.doc_id)
+    assert reopened is not None and reopened.review_request_id != r1
+    r2 = reopened.review_request_id
+    _confirm(session, PROJECT_ID, m.activity_id, m.doc_id, cancelled)
+
+    assert db.open_document_mapping_review(session, PROJECT_ID, m.activity_id, m.doc_id) is None
+    assert [r.review_request_id for r in db.document_mapping_reviews(session, PROJECT_ID, m.activity_id,
+                                                                     m.doc_id)] == [r1, r2]
+
+    # ⓐ 심기 **전**: 스캔 순서 = 삽입 순서 = created_at 순서. 이 칸이 곧 "심지 않으면 두 구현이
+    #    구별되지 않는다"의 관측값이다.
+    assert _raw_scan_ids(session, PROJECT_ID, m.activity_id, m.doc_id) == [r1, r2]
+    created_before = {r.review_request_id: r.created_at
+                      for r in db.document_mapping_reviews(session, PROJECT_ID, m.activity_id, m.doc_id)}
+    assert created_before[r1] < created_before[r2]
+
+    _plant_row_at_end_of_scan(session, r1)
+
+    # ⓑ 심기가 **먹혔다**: 스캔 순서만 뒤집혔다. 이 단언이 없으면 심기가 안 먹었을 때 아래 ⓒ 가
+    #    조용히 장식이 된다.
+    assert _raw_scan_ids(session, PROJECT_ID, m.activity_id, m.doc_id) == [r2, r1], \
+        "심기가 먹지 않았다 — 스캔 순서가 그대로면 이 테스트는 정렬 유무를 구별하지 못한다"
+
+    # ⓒ 값은 하나도 바뀌지 않았다(`status`·`resolved_by` 를 건드렸다면 `closed` 필터 자체가 달라져
+    #    무엇이 갈렸는지 모른다).
+    after_rows = {r.review_request_id: r for r in
+                  db.document_mapping_reviews(session, PROJECT_ID, m.activity_id, m.doc_id)}
+    assert {k: v.created_at for k, v in after_rows.items()} == created_before
+    assert {k: (v.status, v.resolved_by) for k, v in after_rows.items()} == \
+        {r1: ("approved", CM_USER), r2: ("approved", CM_USER)}
+
+    # ⓓ 계약: 반환은 **오래된 것부터**다 — 스캔 순서가 아니라 `created_at` 이 축이다.
+    assert [r.review_request_id for r in db.document_mapping_reviews(session, PROJECT_ID, m.activity_id,
+                                                                     m.doc_id)] == [r1, r2], \
+        "반환 순서가 DB 스캔 순서를 따라갔다 — `document_mapping_reviews` 의 정렬이 사라졌다"

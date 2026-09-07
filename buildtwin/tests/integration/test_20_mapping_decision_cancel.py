@@ -1,10 +1,16 @@
-"""ADR 0013 — 매핑 결정(확정·반려)의 취소. 계획 0006 §검증 시나리오 V1~V9.
+"""ADR 0013 — 매핑 결정(확정·반려)의 취소. 계획 0006 §검증 시나리오 V1~V9,
+계획 0008 §과제 1 S2(취소가 지목하는 결정의 **정렬 계약**).
 
 ## 이 파일이 붙들고 있는 것
 
 ADR 0013 §"이 불변식을 지금 무엇이 붙들어 주는가"가 스스로 적었다: 취소 경로는 **넣자마자 무보호**다.
-아래는 이 사이클에서 서버 쪽 변이를 하나씩 개별로 적용해 재현한 무보호 목록과, 이 파일의 어느 단언이
-그것을 잡는지다(각 변이는 원복 전 `git status --porcelain` 전문으로 확인했다).
+아래는 서버 쪽 변이를 하나씩 **개별로** 적용해 재현한 무보호 목록과, 이 파일의 어느 단언이 그것을
+잡는지다(각 변이는 원복 전 저장소 루트에서 `git status --porcelain` 전문으로 확인했다).
+
+**표와 docstring 의 `NNN passed` 는 그 값을 잰 트리에 매인 값이지 오늘의 기준선이 아니다.** 그래서
+형제 파일 `tests/integration/test_19_rejection_reason.py` 머리와 같이 **커밋(또는 그때의 기준선)과
+함께** 적는다(CLAUDE.md §3-13). 커밋을 못 박지 않은 절대값은 이 파일에 테스트가 하나 늘 때마다
+조용히 거짓이 되고, 실제로 세 값이 그렇게 낡아 있었다(계획 0008 §1-e 2행 — 이 사이클이 갱신했다).
 
 | 변이 | 잡는 자리 |
 |---|---|
@@ -16,11 +22,12 @@ ADR 0013 §"이 불변식을 지금 무엇이 붙들어 주는가"가 스스로 
 | 새 요청을 안 연다 | 같은 두 테스트의 open 요청 단언 + 같은 자리에서 readiness blocker `document_mapping_pending` 를 함께 본다(큐가 비었는데 readiness 는 "대기"라고 말하는 것이 이 저장소의 지배적 실패 모드다) |
 | `errors.py` 의 전용 핸들러 둘 삭제 | 409 응답의 `code` 단언(예외가 `Exception` 직속이라 핸들러가 없으면 **500 + code 없음**) |
 | 취소 이력 append → 덮어쓰기 | `test_v9_...`(2회 취소 후 길이 2) |
-| 제목의 방향 낱말을 **반전**(`what` 삼항의 두 갈래 맞바꿈) | `test_v1_...`·`test_v2_...` 의 **부재 단언**(확정 취소 뒤 "반려를"이 없다 / 반려 취소 뒤 "확정을"이 없다). 이 사이클에 추가 — 그 전에는 **804 passed**, 즉 CM 이 다음 행동을 고르는 문구가 무보호였다(CLAUDE.md §6-4). 문장을 통째로 베끼지 않으므로 제목 전면 재작성(방향은 옳게)에서는 죽지 않는다 — 태워서 확인했다 |
-| `cancelled_review_request_id` 를 **첫** 닫힌 행으로(`closed[-1]` → `closed[0]`) | `test_v9_...`(닫힌 행이 둘 쌓인 뒤에야 갈린다 — 하나뿐이면 두 구현이 같은 id 를 낸다). 이 사이클에 추가 |
+| 제목의 방향 낱말을 **반전**(`what` 삼항의 두 갈래 맞바꿈) | `test_v1_...`·`test_v2_...` 의 **부재 단언**(확정 취소 뒤 "반려를"이 없다 / 반려 취소 뒤 "확정을"이 없다). `df37433` 에 추가 — 그 커밋 **직전** 트리에서 **804 passed**, 즉 CM 이 다음 행동을 고르는 문구가 무보호였다(CLAUDE.md §6-4). 문장을 통째로 베끼지 않으므로 제목 전면 재작성(방향은 옳게)에서는 죽지 않는다 — 태워서 확인했다 |
+| `cancelled_review_request_id` 를 **첫** 닫힌 행으로(`closed[-1]` → `closed[0]`) | `test_v9_...`(닫힌 행이 둘 쌓인 뒤에야 갈린다 — 하나뿐이면 두 구현이 같은 id 를 낸다). `df37433` 에 추가 |
 | **갱신 갈래에서도** `cancelled_review_request_id` 를 닫힌 행으로(계획 0006 §후속 7 이전 구현 — `closed[-1]`) | `test_cancelling_again_while_a_reopened_request_is_open_...`(닫힌 옛 행이 **남은 채** 갱신 갈래로 드는 배역이라야 갈린다 — 형제 테스트의 배역에는 닫힌 행이 없어 두 구현이 같은 `None` 을 낸다). 계획 0006 §후속 7 로 추가 |
 | 검사 순서 맞바꿈(사유 검사를 앞으로) | `test_v7_...` 의 **두 요건 동시 위반** 칸(취소할 결정이 없는 CM 에게 "적을 수 없는 사유"를 요구하면 죽는다) |
-| `usecases.py::cancel_document_mapping_review` 의 `record_expert_review(...)` 세 줄 삭제 | `test_cancelling_leaves_a_durable_expert_review_log_row_...`(계획 0006 §후속 5 로 이 사이클에 추가 — 그 전에는 **803 passed**, 즉 감사의 정본이 무보호였다) |
+| `persistence.py::document_mapping_reviews` 의 `sorted(rows, key=lambda r: r.created_at)` → `return rows` | `test_cancel_names_the_decision_by_created_at_...`(계획 0008 §과제 1 로 추가 — 그 전에는 **805 passed** = 기준선 그대로였다. 단위 짝은 `tests/unit/progress/test_document_mapping_review_lifecycle.py::test_document_mapping_reviews_orders_by_created_at_...`). **닫힌 행 둘을 만든 뒤 확정1 의 행만 스캔 맨 뒤로 심어야** 갈린다 — 심지 않으면 SQLite 의 스캔 순서가 곧 `created_at` 순서라 두 구현이 같은 id 를 낸다(실행값은 그 테스트 docstring 의 2×2 표) |
+| `usecases.py::cancel_document_mapping_review` 의 `record_expert_review(...)` 세 줄 삭제 | `test_cancelling_leaves_a_durable_expert_review_log_row_...`(계획 0006 §후속 5 로 `716d67d` 에 추가 — 그 커밋 **직전** 트리에서 **803 passed**, 즉 감사의 정본이 무보호였다) |
 
 **반려 방향을 값(`drawing_approval`·`score`)으로 단언하지 않는다.** 실측상 반려 전후가 0.5/0.625 로
 같아서 결함 코드와 정상 코드가 구별되지 않는다(ADR 0013 §Context 3 (2)). 그 방향에서 갈리는 관측값은
@@ -37,7 +44,7 @@ ADR 0013 §"이 불변식을 지금 무엇이 붙들어 주는가"가 스스로 
 | `A100` | 확정 → 취소(V1·V3·V4) — 값 축이 움직이는 방향. 그리고 파일 맨 뒤에서 **확정2 → 재오픈 → 취소2**(계획 0006 §후속 7) — 닫힌 옛 행이 남은 채 갱신 갈래로 드는 유일한 배역이다 |
 | `A400` | 반려 → 취소(V2) — 값 축이 **안** 움직이는 방향 |
 | `A300` | 사유 요건(V5) → 무제한 취소(V9) |
-| `A200` | 취소할 결정이 없는 대조군(V7) · 인가(V6) · 404 |
+| `A200` | 취소할 결정이 없는 대조군(V7) · 인가(V6) · 404. 그 뒤 **확정1 → 취소1 → 확정2 → 심기 → 취소2**(계획 0008 §과제 1) — 이 쌍에 **처음으로** 결정을 세우므로 앞의 어떤 단언도 낡게 만들지 않는다 |
 | `A110` | 재확인으로 **이미 열린 요청**이 있는 상태의 취소(중복 방지) |
 | `A120` | 취소의 **내구 감사**(`expert_review_logs` 행) — 재계산을 한 번 더 부르므로 뒤쪽에 둔다(맨 뒤는 공정표를 다시 올리는 §후속 7 테스트다) |
 
@@ -55,7 +62,7 @@ import pytest
 from sqlalchemy import select
 
 from packages.core.db import session_scope
-from packages.core.models.orm import ActivityDocumentMappingRow, ExpertReviewLogRow
+from packages.core.models.orm import ActivityDocumentMappingRow, ExpertReviewLogRow, ReviewRequestRow
 from services.progress.config_loader import load_readiness_config
 from services.progress.document_mapper import confirmed_required_documents
 
@@ -202,6 +209,34 @@ def _cancel_logs(activity_id: str, doc_id: str) -> list[_Log]:
             .order_by(ExpertReviewLogRow.reviewed_at)))
         return [_Log(r.log_id, r.entity_type, r.reviewer, dict(r.proposal), dict(r.final))
                 for r in rows if CANCEL_LOG_KEY in r.final]
+
+
+def _raw_review_scan(project_id: str, activity_id: str, doc_id: str) -> list[tuple]:
+    """그 쌍의 요청 행을 **`ORDER BY` 없이** 읽는다 — `document_mapping_reviews` 의 `sorted(...)` 직전
+    상태다. `(id, status, resolved_by, created_at)` 를 함께 실어 **순서**와 **값**을 한 번에 비교한다."""
+    with session_scope() as session:
+        stmt = select(ReviewRequestRow).where(
+            ReviewRequestRow.project_id == project_id,
+            ReviewRequestRow.kind == "document_mapping",
+            ReviewRequestRow.activity_id == activity_id,
+        )
+        return [(r.review_request_id, r.status, r.resolved_by, r.created_at)
+                for r in session.scalars(stmt)
+                if (r.conflicting_sources or {}).get("doc_id") == doc_id]
+
+
+def _plant_row_at_end_of_scan(review_request_id: str) -> None:
+    """그 요청 행을 **컬럼 값을 하나도 바꾸지 않고**(`created_at` 포함) 지웠다 같은 값으로 다시 넣는다.
+    SQLite 에서 그 행은 새 rowid 를 받아 `ORDER BY` 없는 SELECT 의 스캔 **맨 뒤**로 간다."""
+    with session_scope() as session:
+        row = session.get(ReviewRequestRow, review_request_id)
+        assert row is not None, review_request_id
+        snapshot = {c.name: getattr(row, c.name) for c in ReviewRequestRow.__table__.columns}
+        session.delete(row)
+        session.flush()
+        session.expunge_all()
+        session.add(ReviewRequestRow(**snapshot))
+        session.flush()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -646,7 +681,8 @@ def test_cancelling_leaves_a_durable_expert_review_log_row_that_survives_recompu
     `extra.cancelled_mapping_reviews` 는 그 **사본**이다(수명은 그 쌍이 후보로 다시 산출되는 다음
     재계산까지). 그런데 ①을 **아무 테스트도 붙들지 않았다** — 실측(계획 0006 §M-3):
     `usecases.py::cancel_document_mapping_review` 의 `record_expert_review(...)` 세 줄을 지워도
-    `.venv/bin/pytest -q` 가 **803 passed**, `grep -rn "activity_document_mapping" tests/` 히트 **0**.
+    `.venv/bin/pytest -q` 가 **803 passed**(그 값을 잰 것은 이 테스트가 들어온 `716d67d` **직전** 트리다
+    — 오늘의 기준선이 아니다), `grep -rn "activity_document_mapping" tests/` 히트 **0**.
     이 테스트가 그 자리다.
 
     **넷을 함께 단언한다**(CLAUDE.md §6-2 4 — 하나만 보면 통과하는 결함 코드가 각각 있다):
@@ -665,7 +701,9 @@ def test_cancelling_leaves_a_durable_expert_review_log_row_that_survives_recompu
 
     그 대조군을 **실행으로 태웠다**(적어 두는 것은 커버리지가 아니다 — CLAUDE.md §6-1):
     `_confirm_document_mapping_row` 의 `record_expert_review(...)` 를 지우고 `.venv/bin/pytest -q` →
-    **804 passed**(이 테스트를 포함해 하나도 죽지 않는다). 즉 이 단언들은 취소 축만 잡는다. 같은 실측이
+    **하나도 죽지 않는다**. 세 트리에서 같은 값이다 — `716d67d` 직전 **804 passed**, 계획 0008 §2-a 가
+    `136e66f` 에서 **805 passed**, 이 사이클(기준선 807)에서 **807 passed**. 즉 이 단언들은 취소 축만
+    잡는다(계획 0008 §과제 1 이 더한 정렬 회귀 둘도 이 축을 넓히지 않는다). 같은 실측이
     확정 축의 로그도 무보호임을 말하는데, 이 파일은 그 축을 고정하지 않는다 — §후속 5 가 넘긴 것은
     취소의 감사이고, 축을 넓히면 "취소만" 잡는 것이 아니게 된다.
 
@@ -739,6 +777,105 @@ def test_cancelling_leaves_a_durable_expert_review_log_row_that_survives_recompu
     assert logs2[1].entity_type == "activity_document_mapping" and logs2[1].reviewer == user_ids["cm"]
     assert [x.final["evidence"]["note"] for x in logs2] == [first_note, second_note]
     assert [x.proposal["reviewed_by"] for x in logs2] == [user_ids["cm"], user_ids["cm"]]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 계획 0008 §과제 1(S2) — 취소가 지목하는 결정은 **`created_at` 이 가장 늦은 닫힌 행**이고
+# DB 스캔 순서로 고른 행이 아니다. 새 요청을 여는 갈래(열린 행 0)만 `closed[-1]` 을 읽는다.
+# 이 배역은 프로젝트를 재계산하지 않으므로 재업로드 시나리오(아래)보다 앞에 둔다(파일 머리 규칙).
+# ═══════════════════════════════════════════════════════════════════════════
+def test_cancel_names_the_decision_by_created_at_even_when_the_db_scan_order_is_reversed(
+        client, auth, cancel_project, user_ids):
+    """확정1 → 취소1 → 확정2 로 **닫힌 행 둘 · 열린 행 0** 을 만든 뒤 **확정1 의 행만 스캔 맨 뒤로**
+    옮기고 취소2 를 친다. 실린 `cancelled_review_request_id` 는 **확정2 의 행**이어야 한다.
+
+    §6-2 물음 — **결함 있는 코드가 이 기대값을 그대로 만족하는가.** 심지 않으면 **그렇다**:
+    SQLite 의 스캔 순서가 곧 삽입 순서이고 삽입 순서가 곧 `created_at` 순서라
+    `services/progress/persistence.py::document_mapping_reviews` 의 `sorted(...)` 를 지우고
+    `return rows` 로 바꿔도 같은 값이 나온다. 그것이 이 사이클 이전의 상태였다 —
+    그 변이에 **기준선이 그대로**(`136e66f` 실측 805 passed, 계획 0007 §후속 9). 이 사이클에서 다시 쟀다:
+
+    | | 정렬 있음(HEAD) | `return rows`(변이) |
+    |---|---|---|
+    | **심지 않음** | 확정2 의 행(옳다) | 확정2 의 행(옳다) ← 두 구현이 구별되지 않는다 = 장식 |
+    | **심음**(이 테스트) | 확정2 의 행(옳다) | **확정1 의 행(틀렸다)** ← 갈린다 |
+
+    **틀린 값이 무엇인가가 이 테스트의 무게다.** 확정1 의 행은 **취소1 이 이미 되돌린 결정**의 행이다.
+    CM 은 "확정2 를 취소했다"는 화면에서 확정1 의 요청 id 를 받는다 — 이름("어느 결정을 취소한
+    것인가", ADR 0013 규칙 2)과 값이 다르므로 `None`("모른다")보다 나쁘다(CLAUDE.md §6-4 2). 갱신
+    갈래에서 정확히 같은 결함을 계획 0006 §후속 7 이 닫았고(아래 테스트), 새 요청 갈래에는 그 정렬
+    하나만 서 있었다.
+
+    **어긋나게 하는 축은 `created_at` 값이 아니라 물리 위치다**(계획 0008 §1-b-1). 값을 고쳐
+    (`확정1.created_at = 확정2.created_at + 10분`) 심으면 **옳은 구현이 확정1 의 행을 지목**하게 되어,
+    아래 형제 테스트가 "내면 안 된다"고 붙들어 둔 값을 이 파일이 계약으로 고정한다.
+
+    **심기가 먹혔다는 것을 이 테스트가 스스로 단언한다**(§1-b-3): 심기 전 스캔 `[확정1, 확정2]`,
+    심기 뒤 `[확정2, 확정1]`, 그리고 두 스캔의 `(status, resolved_by, created_at)` 집합이 **같다**.
+    심기가 안 먹으면(플래너·인덱스·DB 가 바뀌면) 위 표의 왼쪽 열로 떨어져 두 구현이 다시 구별되지
+    않는데, 그때 이 테스트는 조용히 장식이 되는 대신 **그 자리에서 죽는다**.
+
+    **셋을 함께 단언한다**(§6-2 4): ⓐ 실린 id 가 확정2 의 행이다 ⓑ 확정1 의 행이 **아니다**
+    ⓒ 취소2 가 **새 요청을 열었다**(= 갱신 갈래가 아니라 `closed[-1]` 을 읽는 갈래로 들었다).
+    ⓒ 가 없으면 이 배역이 갱신 갈래로 새어도 초록이다 — 그 갈래는 `closed[-1]` 을 아예 읽지 않아
+    (`document_mapper.py` 의 `if open_review is None:` / `else: cancelled_review_id = None`) 정렬 유무로
+    값이 갈리지 않는다. 갈래 자체를 함께 고정해야 ⓐⓑ 가 정렬을 붙드는 단언으로 남는다.
+    """
+    pid = cancel_project
+    doc_id = _doc_id_for(client, auth, pid, A_PENDING)
+
+    # ── 시작 상태: 이 쌍에는 아직 결정이 없다(V7·V6 은 전부 거절당한 요청이라 아무것도 안 남겼다).
+    assert _closed_reviews(client, auth, pid, A_PENDING) == []
+    open0 = _open_reviews(client, auth, pid, A_PENDING)
+    assert len(open0) == 1, open0
+    first_decision_row = open0[0]["review_request_id"]
+
+    # ── 확정1 → 취소1 → 확정2. 닫힌 행 둘, 열린 행 0.
+    _confirm(client, auth, pid, A_PENDING, doc_id, "확정1")
+    c1 = _cancel(client, auth, pid, A_PENDING, doc_id, note="확정1 을 취소한다")
+    assert c1.status_code == 200, c1.text
+    opened_by_cancel1 = _open_reviews(client, auth, pid, A_PENDING)
+    assert len(opened_by_cancel1) == 1, opened_by_cancel1
+    second_decision_row = opened_by_cancel1[0]["review_request_id"]
+    assert second_decision_row != first_decision_row
+    # 취소1 이 지목한 것은 확정1 의 행이다(닫힌 행이 하나뿐이라 이 칸은 아직 정렬을 구별하지 못한다).
+    assert opened_by_cancel1[0]["conflicting_sources"]["cancelled_review_request_id"] == first_decision_row
+
+    _confirm(client, auth, pid, A_PENDING, doc_id, "확정2")
+    assert _open_reviews(client, auth, pid, A_PENDING) == []
+    closed = _closed_reviews(client, auth, pid, A_PENDING)
+    assert {c["review_request_id"] for c in closed} == {first_decision_row, second_decision_row}, closed
+
+    # ── 심기 전: 스캔 순서 = 삽입 순서 = created_at 순서. 이 칸이 "심지 않으면 두 구현이 구별되지
+    #    않는다"의 관측값이다(위 표 왼쪽 열).
+    before = _raw_review_scan(pid, A_PENDING, doc_id)
+    assert [x[0] for x in before] == [first_decision_row, second_decision_row], before
+
+    _plant_row_at_end_of_scan(first_decision_row)
+
+    after = _raw_review_scan(pid, A_PENDING, doc_id)
+    assert [x[0] for x in after] == [second_decision_row, first_decision_row], \
+        "심기가 먹지 않았다 — 스캔 순서가 그대로면 이 테스트는 정렬 유무를 구별하지 못한다"
+    assert sorted(after) == sorted(before), (before, after)   # 값은 하나도 바뀌지 않았다
+
+    # ── 취소2.
+    c2 = _cancel(client, auth, pid, A_PENDING, doc_id, note="확정2 를 취소한다")
+    assert c2.status_code == 200, c2.text
+
+    open_rows = _open_reviews(client, auth, pid, A_PENDING)
+    assert len(open_rows) == 1, open_rows
+    third_row = open_rows[0]["review_request_id"]
+    # ⓒ 새 요청을 열었다 = `closed[-1]` 을 읽는 갈래로 들었다(갱신 갈래였다면 이 값이 기존 행이다).
+    assert third_row not in (first_decision_row, second_decision_row), open_rows
+    assert len(_reviews(client, auth, pid, A_PENDING)) == 3
+
+    sources = open_rows[0]["conflicting_sources"]
+    assert sources["cancel_note"] == "확정2 를 취소한다"
+    # ⓐ 지목한 것은 확정2 를 기록한 행이고 ⓑ 취소1 이 이미 되돌린 확정1 의 행이 아니다.
+    assert sources["cancelled_review_request_id"] == second_decision_row, sources
+    assert sources["cancelled_review_request_id"] != first_decision_row, sources
+
+    assert _row_fields(pid, A_PENDING, doc_id) == (True, None)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
