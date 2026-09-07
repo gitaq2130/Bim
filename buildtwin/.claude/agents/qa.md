@@ -47,9 +47,9 @@ model: sonnet
 8. cm이 검토요청 승인 → `CONFIRMED` 전이 + ExpertReviewLog 기록
 
 ## 회귀 기준 (`tests/metrics.json`)
-```json
-{ "mapping_column_accuracy": 0.90, "scan_verdict_accuracy": 0.85, "registration_rmse_max": 0.03 }
-```
+- **정본은 그 파일이고 여기에 값을 복창하지 않는다.** 그 자리에서 도는 참조: `cat tests/metrics.json`
+  (CLAUDE.md §3-13 둘째 갈래 — 이 파일은 못박을 트리가 없어 복창이 조용히 낡는다).
+  초판은 그 파일의 키 중 **셋만** 발췌임을 표시하지 않고 코드블록으로 실었다(계획 0012 §후속 55).
 - 테스트는 측정값을 계산해 기준 미달이면 실패. 기준 상향은 PR에서 명시적으로 갱신.
 
 ## 불변식 테스트 (항상 포함)
