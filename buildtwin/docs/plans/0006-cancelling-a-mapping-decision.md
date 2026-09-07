@@ -946,7 +946,18 @@ exit=0
 
 ## Z-2. 후속(계획 §후속 · M-7 에 이어서)
 
-7. **`cancelled_review_request_id` 의 갱신 갈래**(progress-engine). ADR 0013 §Deferred 8 에 실행값과
+7. ~~**`cancelled_review_request_id` 의 갱신 갈래**(progress-engine).~~ → **닫혔다**(progress-engine
+   `662e91a` + qa `3ba9226`). 갱신 갈래는 `None` 을 싣고 닫힌 행 조회는
+   `cancel_document_mapping_review` 의 `if open_review is None` **안**으로 들어갔으며, 아래가 함께
+   좁히라고 적은 문구 둘도 같은 소유가 좁혔다 — `document_mapper.cancel_document_mapping_review` 의
+   주석 ②는 두 갈래를 갈라 적고(갱신 갈래 = `None`), `persistence.document_mapping_reviews` 의
+   docstring 은 "그 갈래는 이 함수를 부르지 않고 `None` 을 싣는다"고 적는다. 붙든 것은
+   `tests/integration/test_20_mapping_decision_cancel.py::
+   test_cancelling_again_while_a_reopened_request_is_open_does_not_name_an_already_cancelled_decision`
+   이고(그 갈래만 옛 구현으로 되돌리면 **1 failed, 804 passed** — 기준선 805), 해소 표시는
+   ADR 0013 §Deferred 8 에 있다. **이 문단의 심볼·커밋은 HEAD `3ba9226` 트리의 것이고**, 아래 원문의
+   `df37433` 좌표는 갱신하지 않는다(CLAUDE.md §3-13 첫째 갈래). 아래는 원문.
+   ADR 0013 §Deferred 8 에 실행값과
    제안 형태가 있다: 갱신 갈래에서 그 값을 `None` 으로 둔다. 함께 좁힐 문구 둘도 같은 소유다 —
    `services/progress/document_mapper.py:727` 의 "`cancelled_review_request_id` 는 **마지막으로 닫힌**
    요청이다 — … 지금 취소하는 결정을 기록한 것이 그 행이다" 와

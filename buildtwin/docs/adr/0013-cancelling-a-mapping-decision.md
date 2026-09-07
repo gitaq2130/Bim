@@ -316,7 +316,8 @@ evidence.extra 에서 반려 표시 4키 제거
 - **새 행**: `ReviewRequest(kind="document_mapping", status="open")` 를 취소와 **같은 트랜잭션**에서
   만든다. `conflicting_sources` 는 기존 계약(`doc_id`)에 두 키를 더한다 —
   `cancelled_review_request_id`(어느 결정을 취소한 것인가 — **개정 2 가 좁힌다: 취소가 이미 열린 요청을
-  갱신하는 갈래에서는 이 값이 그 물음에 답하지 못한다**, §Deferred 8) · `cancel_note`(왜).
+  갱신하는 갈래에서는 이 값이 그 물음에 답하지 못한다**, §Deferred 8 — **그래서 그 갈래에서는 `None` 을
+  싣는다**, 계획 0006 §후속 7) · `cancel_note`(왜).
   근거는 §Context 4 의 `[C3-*]` 실측이다: 재계산을 기다리면 readiness 와 큐가 서로 다른 말을 한다.
 
 *역방향 확인 — "그 자리에서 연다"가 미는 것.* 재계산이 열어 줄 때까지의 공백을 뺀다. **더 들어오는
@@ -870,8 +871,23 @@ unknown` ↔ 없음) 또는 `drawing_approval` blocker 의 **존재**까지 봐�
    응답에 실리지만 그리는 화면이 없다(실행값 `grep -rn "cancel_note\|cancelled_review_request_id"
    apps/web/src services/api | grep -v test` → 출력 없음, 종료코드 1). 규칙 7 의 관측 가능성이 **DB 감사
    수준**에 머무는 이유이고, 여는 순서는 **읽는 라우트 → 화면**이다(보존이 아니라 — §Alternatives 8).
-8. **(개정 2) `cancelled_review_request_id` 가 갱신 갈래에서 *다른* 결정의 행을 가리킨다.**
-   구현은 `closed[-1]`(그 쌍의 마지막으로 닫힌 행 — `services/progress/document_mapper.py:729-730`,
+8. ~~**(개정 2) `cancelled_review_request_id` 가 갱신 갈래에서 *다른* 결정의 행을 가리킨다.**~~ →
+   **계획 0006 §후속 7 이 해소했다**(progress-engine `662e91a` + qa `3ba9226`). 갱신 갈래는 이 값을
+   `None` 으로 싣고, 닫힌 행 조회는 `if open_review is None` **안**으로 들어가 그 갈래가 부르지도 않는다
+   (`document_mapper.cancel_document_mapping_review`, HEAD `3ba9226` — **이 해소 문단의 좌표는 지금
+   트리의 것이고**, 아래 원문의 `df37433` 좌표와 `[P-corner-*]` 실측은 그 시점 트리의 기록이라
+   갱신하지 않는다: CLAUDE.md §3-13 첫째 갈래). 태운 값: 갱신 갈래만 옛 구현(`closed[-1]`)으로
+   되돌리면 `.venv/bin/pytest -q` → **1 failed, 804 passed**(기준선 805 passed)이고, 죽는 것은
+   `tests/integration/test_20_mapping_decision_cancel.py::
+   test_cancelling_again_while_a_reopened_request_is_open_does_not_name_an_already_cancelled_decision`
+   하나다(`assert '059c219b-…' != '059c219b-…'` — 실린 id 가 확정1 의 행).
+   **이 항목이 "세지 않았다"고 남긴 전수**(계획 0006 §Z-3 첫 줄)도 이제 세었다: 결정이 서 있는 쌍에
+   열린 `document_mapping` 요청이 있는 길은 `_reopen_reviews_for_invalidated_confirmations` 하나다 —
+   `grep -rnE '^[^#]*status = "open"' services/ --include=*.py` 히트 **1**(그 재오픈)이고, 요청을 만드는
+   자리 셋 중 `_document_mapping_review` 의 호출자(`_sync_pending_document_mapping_reviews`)는
+   `needs_review` 매핑에만 열며 나머지 하나가 이 함수다. **다만 `None` 이라는 값은 그 전수에 기대지
+   않는다** — 그 갈래가 상수를 싣기 때문이고, 경로가 하나 더 생겨도 값은 같다.
+   (아래는 원문) 구현은 `closed[-1]`(그 쌍의 마지막으로 닫힌 행 — `services/progress/document_mapper.py:729-730`,
    `df37433`)인데, **갱신 갈래**(재확인 요청이 열린 채인 확정의 취소)에서 *지금 취소하는 결정을 기록한
    행은 열려 있는 그 행 자신*이고 그 행의 감사는 재오픈이 이미 지웠다(개정 1 `[P2-*]`). 그 쌍에 닫힌
    옛 행이 남아 있으면 `closed[-1]` 은 **그 앞 결정의 행**이다. 실행값(§0-b `[P-corner-*]` —
