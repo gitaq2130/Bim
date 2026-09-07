@@ -21,49 +21,124 @@
 함께 단언한다. ②가 있어야 실패가 "순서가 틀렸다"인지 "행이 없어졌다/늘었다"인지 갈린다 —
 없으면 이 파일이 다른 이유로 빨개져도 같은 메시지를 낸다.
 
-## 20칸 — **변이 2 × 축 2 × 자리 5** 를 실제로 태운 값
+## 20칸 — **변이 2 × 축 2 × 자리 5**. 초판의 한 칸이 N=1 이었고 요약이 그 위에 서 있었다
 
-잰 트리: `2be9918` + 이 파일(작업 트리). 기준선은 **sqlite 루트 `pytest -q` 838 passed** ·
-**postgres `tests/integration` 222 passed**(`tests_on_postgres=187`, 포트 55441, PostgreSQL 16.13).
+초판(`cac4559`)은 A5 삭제·postgres 를 `1 failed`(**N=1**)로 적고 *"18칸이 죽고 두 칸이 안 죽는다"* 로
+요약했는데, **architect 재현(2/5)과 리뷰어 재현(2/9)이 그 칸을 반증했다.** 아래는 이 파일의
+소유자가 **다시 잰** 값이고 **칸마다 N 이 붙어 있다** — 「N=1 로 잰 칸을 표에 두지 않는 것」이 이
+재측정의 요구다.
+
+**잰 자리.** 포트 **55441** 의 임시 클러스터(`initdb -A trust`, `PostgreSQL 16.13
+(Ubuntu 16.13-0ubuntu0.24.04.1)`, `autovacuum=on`, 측정이 끝나고 반납했다). 코드 트리는
+`f4758f0`↔`1532c69` 사이에서 **`docs/` 만 달랐다**(어떤 테스트도 그 문서를 import 하지 않는다).
+**N 의 단위는 pytest 세션**이고(세션마다 새 스키마/새 임시 DB + 새 커넥션 — ADR 0015 §2-1 이
+*"같은 세-술어 문장이 세션마다 다른 btree 를 고른다"* 를 잰 그 단위), 명령은 **두 축 모두**
+`pytest -q tests/integration` 이다 — **초판 표의 sqlite 칸은 루트 `pytest -q` 였으므로 그 칸의
+`1 failed, 837 passed` 와 아래 값은 같은 명령이 아니다.** 기준선은 두 축 모두 **222 passed**
+(postgres 는 `tests_on_postgres=187 floor=187 engines=1`).
 *역방향 변이* = 그 `order_by` 의 컬럼마다 `.desc()`. *삭제 변이* = 그 `order_by(...)` 를 지운다.
-변이는 **한 건씩** 적용 → `git diff --stat` 으로 적용 확인 → 측정 → 원복 → 루트
-`git status --porcelain` 전문 확인(저장소 밖 스크립트).
+변이는 **한 자리씩** 적용 → `git diff` 로 적용 확인(무력 변이 방지) → 측정 → 원복 → 루트
+`git status --porcelain` 확인. 도구는 전부 저장소 밖이다.
 
-| 자리 | 역방향 · sqlite | 역방향 · postgres | 삭제 · sqlite | 삭제 · postgres |
+| 자리 | 역방향 · sqlite | 역방향 · pg | 삭제 · sqlite | 삭제 · pg |
 |---|---|---|---|---|
-| A1 `project_drawings` | `1 failed, 837 passed` (`test_a1_…`) | `1 failed, 221 passed` | `1 failed, 837 passed` | `1 failed, 221 passed` |
-| A2 `entity_mappings_for_object` | `1 failed, 837 passed` (`test_a2_…`) | `1 failed, 221 passed` | `1 failed, 837 passed` | `1 failed, 221 passed` |
-| A3 `progress…load_mappings` | `2 failed, 836 passed` (`test_a3_…` 둘) | `2 failed, 220 passed` | `2 failed, 836 passed` | **죽은 세션 5/10 — 닫히지 않았다** |
-| A4 `model_objects` | `1 failed, 837 passed` (`test_a4_…`) | `1 failed, 221 passed` | `1 failed, 837 passed` | `1 failed, 221 passed` |
-| A5 `sync…load_mappings` | `1 failed, 837 passed` (`test_a5_…`) | `1 failed, 221 passed` | **죽은 세션 0/10 — 닫히지 않았다** | `1 failed, 221 passed` |
+| A1 `project_drawings` | **4/4** | **4/4** | **4/4** | **4/4** |
+| A2 `entity_mappings_for_object` | **4/4** | **4/4** | **4/4** | **4/4** |
+| A3 `progress…load_mappings` | **4/4**(`2 failed`) | **4/4**(`2 failed`) | **10/10**(`2 failed`) | **세션 의존 — 6/10** |
+| A4 `model_objects` | **4/4** | **4/4** | **4/4** | **4/4** |
+| A5 `sync…load_mappings` | **4/4** | **4/4** | **0/10 — 안 죽는다** | **세션 의존 — 2/20** |
 
-**18칸이 죽고 두 칸이 안 죽는다. 그 두 칸은 픽스처의 결함이 아니라 구조다** — 그리고 그 사실을
-여기 적는 이유는, 다음 사람이 "행을 더 넣으면 되겠지"로 같은 자리를 다시 파지 않게 하기 위해서다.
+**역방향 10칸은 전부 죽는다**(칸마다 N=4). **삭제 10칸은 셋으로 갈린다** — 결정적으로 죽는 것
+**일곱**(A1·A2·A4 의 두 축 여섯 **+ A3·sqlite**), **세션 의존 둘**(A3·pg 6/10 · A5·pg 2/20),
+안정적으로 안 죽는 것 **하나**(A5·sqlite 0/10).
+**초판의 "18 + 2" 가 거짓인 이유는 둘이다**: ① A5·pg 를 N=1 값으로 「죽는다」 쪽에 넣었고
+② **「죽는다 / 안 죽는다」는 이분법 자체가 세션 의존 칸을 담지 못한다** — 그 칸은 두 상자 어디에도
+들어가지 않는다.
 
-- **N 의 단위는 pytest 세션이다**(세션마다 새 스키마/새 임시 DB + 새 커넥션 — ADR 0015 §2-1 이
-  *"같은 세-술어 문장이 세션마다 다른 btree 를 고른다"* 를 잰 그 단위). 두 부정 단정 모두 **N=10**,
-  명령은 `pytest -q tests/integration`(축만 갈아 끼운다).
-- **왜 안 죽는가 — 붙인 정렬 키가 「필터를 뺀 PK 나머지」와 같기 때문이다.** ADR 0016 결정 2 가
-  A3·A5 의 키를 **결정성의 축**(PK 또는 PK 접두사)으로 골랐고, 그 선택의 대가가 이 두 칸이다:
-  플래너가 **PK 인덱스를 걷는 계획**을 고르면 `ORDER BY` 가 없어도 결과가 이미 그 순서다.
-  실행값(저장소 밖 탐침, 같은 포트·같은 ORM 스키마, 세션 12회):
-  - A3 무정렬 → `Index Scan using activity_object_mappings_pkey` **12/12**, 첫 행 `ORD-A100`
-    (= 정렬이 있을 때와 **같은 답**). 통합 세션에서는 행 수·통계가 달라 계획이 갈리고, 그래서
-    5/10 만 죽는다.
-  - A5 무정렬 → postgres 는 `Bitmap Heap Scan` **12/12**(삽입 순서 → 죽는다)인데 **SQLite** 는
-    `SEARCH … USING INDEX sqlite_autoindex_entity_object_mappings_1 (drawing_id=?)` 라
-    (`entity_handle`, `global_id`) 순서가 공짜로 나온다 → 첫 행이 `H-aaa/G1` 로 **정답과 같다**.
-  - 즉 **어떤 픽스처도 이 두 칸을 죽일 수 없다.** 그 계획에서는 결함 코드와 옳은 코드가 **같은 행을
-    돌려주기 때문**이고(CLAUDE.md §6-2 1 이 이름 붙인 모양 그대로), 갈리게 하려면 정렬 키를 PK 나머지가
-    **아닌** 것으로 바꾸는 수밖에 없다 — 그것은 이 파일의 소유가 아니다.
-- **그래서 이 두 자리에서 계약을 실제로 붙드는 것은 역방향 변이 쪽 두 칸이다**(A3·A5 모두 두 축에서
-  죽는다). 삭제 변이 두 칸은 §후속으로 남긴다.
+**네 관측자 대조**(같은 코드 트리, 서로 다른 포트·클러스터. 값 뒤가 그 관측자의 N 이다):
+
+| 칸 | qa 초판(55441) | architect(55442) | reviewer(55443) | **qa 재측정(55441)** |
+|---|---|---|---|---|
+| A3 삭제 · pg | 5/10 | 4/10 | 5/9 | **6/10** |
+| A5 삭제 · sqlite | 0/10 | 0/5 | 0/4 | **0/10** |
+| A3 삭제 · sqlite | `2 failed`(**N=1**) | 2/2 | 4/4 | **10/10** |
+| A5 삭제 · pg | `1 failed`(**N=1**) | 2/5 | 2/9 | **2/20** |
+
+**부정 단정 둘(0/10 · 세션 의존)은 네 관측자에서 재현되고**, N=1 이었던 두 칸은 재측정에서 성질이
+갈렸다 — A3·sqlite 는 **결정적으로 죽고**, A5·pg 는 **세션 의존이다.**
+*재지 않은 것*: 네 값의 비율 차이가 유의한지는 검정하지 않았다(클러스터·포트가 다르다).
+이 표가 기대는 것은 비율이 아니라 **「그 칸이 한 값으로 고정되지 않는다」** 하나다.
+
+## 안 죽는 칸에 이름 붙이기 — **그 칸이 관측된 통합 세션 안에서** 쟀다
+
+ADR 0016 §3 2 의 게이트는 *"안 죽는 칸은 `EXPLAIN`(sqlite 는 `EXPLAIN QUERY PLAN`)으로 왜 안 죽는지
+이름 붙여 적는다 — 이름 붙이지 못한 칸은 재지 않은 것"* 이다. **초판이 붙인 이름은 저장소 밖
+2~3행 탐침의 것이었고, 그 탐침은 통합 세션의 실측을 틀리게 예측한다:**
+
+| 자리 | 저장소 밖 탐침(2~3행, 세션 12회) | 그 이름이 예측하는 것 | **통합 세션 실측(이 라운드)** |
+|---|---|---|---|
+| A3 · pg | `Index Scan … _pkey` **12/12** | *"안 죽는다"* | pkey **4/10** · `ix_…_project_id` **6/10** → **6/10 죽음** |
+| A5 · pg | `Bitmap Heap Scan` **12/12** | *"언제나 죽는다"* | pkey **18/20** · `Bitmap Heap Scan` **2/20** → **2/20 죽음** |
+
+**그러므로 「이름」은 그 칸이 관측된 세션 안에서 잡았을 때만 이름이다.** 저장소 밖 탐침이 붙인 이름은
+**그 세션의 계획 분포를 대표하지 않으므로**, 정정 상자 자신이 금지한 「이름으로 면제」와 구별되지
+않는다. 아래가 그 게이트를 만족시키는 형태다.
+
+**세션 안 계획 ↔ 그 세션의 사망 여부.** 계측은 저장소 밖 pytest 플러그인이다 —
+`after_cursor_execute` 에서 **그 세션의 같은 커넥션**에 `EXPLAIN` 과 같은 문장을 한 번 더 쏘고
+(둘 다 읽기 전용), 그 세션의 테스트 결과와 짝짓는다. **커밋하지 않았다**(측정 뒤 원복하고 루트
+`git status --porcelain` 으로 확인했다).
+
+| 자리 · 축 | 세션 안 **무정렬** 계획 | 무정렬 첫 행 | 그 세션 | 세션 수 |
+|---|---|---|---|---|
+| A3 · pg | `Index Scan using activity_object_mappings_pkey` | `ORD-A100` (= 정답) | **산다** | 4 |
+| A3 · pg | `Index Scan using ix_activity_object_mappings_project_id` | `ORD-A900` | **죽는다**(2 failed) | 6 |
+| A5 · pg | `Index Scan using entity_object_mappings_pkey` | `H-aaa/ORD-OBJ-A5` (= 정답) | **산다** | 18 |
+| A5 · pg | `Bitmap Heap Scan on entity_object_mappings` | `H-zzz/ORD-OBJ-A5` | **죽는다**(1 failed) | 2 |
+| A3 · sqlite | `SEARCH … USING INDEX ix_activity_object_mappings_project_id (project_id=?)` | `ORD-A900` | **죽는다**(2 failed) | 4 |
+| A5 · sqlite | `SEARCH … USING INDEX sqlite_autoindex_entity_object_mappings_1 (drawing_id=?)` | `H-aaa/ORD-OBJ-A5` (= 정답) | **산다** | 4 |
+
+**38 세션 38/38 에서 세션 안 계획이 그 세션의 결과를 완전히 예측한다 — 「같은 계획인데 결과가 갈린」
+세션은 0 이다.** 그래서 이 게이트는 **세션 안에서 재는 한** 작동한다. 다만 그것이 요구하는 이름은
+**칸마다 하나가 아니라 계획마다 하나**다 — 「안 죽는 칸」 안에도 죽는 계획이 섞여 있고, 칸을 하나의
+이름으로 부르는 순간 그 섞임이 사라진다.
+- **투영이 계획을 바꾼다**(리뷰어 관측, 이 표가 그것을 피하는 방식). 저장소 밖 탐침을 2컬럼으로 쏘면
+  A3·sqlite 가 `COVERING INDEX …` 라 *"안 죽는다"* 를 예측한다. 위 표는 **ORM 이 실제로 쏘는 문장
+  그대로**를 `EXPLAIN` 에 넘기므로 그 갈래가 없다.
+- **재지 않은 것 — 무엇이 세션마다 계획을 뒤집는가.** 행 수는 세션마다 같다(같은 픽스처). 통계 수집
+  타이밍·autovacuum 을 의심할 뿐 **태우지 않았다.** 관측 하나만 적는다: 두 병렬 스트림에서 **같은
+  회차 번호**의 세션이 함께 죽었다(A3 은 2·3·4회차, A5 는 5회차) — 시간에 걸린 클러스터 단위 요인을
+  시사하지만 이 파일은 그것을 재지 않았다.
+- **재지 않은 것 — 정렬이 있을 때의 계획.** 위 표는 전부 **무정렬**(삭제 변이) 쪽이다.
+
+**그리고 그 이름은 정렬을 지울 근거가 아니라 정렬이 있어야 하는 근거다**(ADR 0016 §2-3 정정 상자):
+「산다」 행의 계획이 다음 세션에도 뽑힌다는 보장이 없다는 것을, 바로 위 표의 「죽는다」 행이 값으로
+보인다.
+
+- **왜 그 계획에서 안 죽는가 — 붙인 정렬 키가 「필터를 뺀 PK 나머지」와 같기 때문이다.**
+  ADR 0016 결정 2 가 A3·A5 의 키를 **결정성의 축**(PK 또는 PK 접두사)으로 골랐다: 플래너가 **PK
+  인덱스를 걷는 계획**을 고르면 `ORDER BY` 가 없어도 결과가 이미 그 순서다(위 표의 「산다」 행 넷).
+- **초판의 전칭 부정은 거짓이다** — *"어떤 픽스처도 이 두 칸을 죽일 수 없다 … 갈리게 하려면 정렬 키를
+  PK 나머지가 아닌 것으로 바꾸는 수밖에 없다"*. 근거 셋:
+  ① **같은 문단이 이미 반박했다.** 초판의 세 줄 위가 *"통합 세션에서는 행 수·통계가 달라 계획이
+  갈린다"* 라고 적는다 — **행 수를 정하는 것이 곧 픽스처다.**
+  ② ADR 0016 §4 는 *"§후속 16 이 행 수를 키울 때 그 값이 올라가야 한다"* 라고 적고, §6 대안 8
+  (*"행을 늘려 플래너가 계획을 바꾸게 만든다"*)을 **불가능이 아니라 다른 근거로** 기각한다
+  (회귀가 플래너의 계획에 고정되는 것 = ADR 0015 결정 1 이 금지한 것의 다른 얼굴).
+  ③ **이 라운드의 실측이 직접 보인다** — 같은 픽스처·같은 행 수에서도 A5·pg 가 **20세션 중 2세션에서
+  죽었다.** 「죽일 수 없다」가 아니라 「이 행 수에서는 대부분의 세션이 그 계획을 고른다」다.
+  **그래서 한정어를 붙인다: 이 픽스처의 행 수·통계에서, 이 두 칸은 대부분의 세션에서 죽지 않는다.**
+  그 칸을 죽게 만드는 길은 정렬 키 교체 **하나가 아니다** — 행 수를 키워 플래너의 선택을 바꾸는 길이
+  있고, **이 파일은 그 길을 재지 않았다**(그 자리는 ADR 0016 §Deferred 8 과 계획 0012 §후속 16 이다).
+- **그래서 이 두 자리에서 계약을 실제로 붙드는 것은 역방향 변이 쪽이다** — A3·A5 모두 두 축에서
+  **4/4** 죽는다. 역방향은 엔진이 어떤 계획을 고르든 **다른 답을 강제**하기 때문이다
+  (ADR 0016 §2-3 정정 상자: *"역방향 변이가 안 죽으면 그 회귀가 장식이다"*).
 
 ## 배역 (한 프로젝트를 다섯 자리가 나눠 쓴다)
 
 | 자리 | 무엇을 태우는가 | 소비자(고르는 한 원소) |
 |---|---|---|
-| A1 `queries.project_drawings` | 도면 셋(`ord-drawing-a` < `-m` < `-x` < `-z`) | `GET /projects/{id}/drawings` 의 `[0]` — `apps/web/src/pages/ViewerPage.tsx` 의 `list[0]` 폴백 |
+| A1 `queries.project_drawings` | 도면 넷(`ord-drawing-a` < `-m` < `-x` < `-z`) | `GET /projects/{id}/drawings` 의 `[0]` — `apps/web/src/pages/ViewerPage.tsx` 의 `list[0]` 폴백 |
 | A2 `queries.entity_mappings_for_object` | 한 객체 × 두 도면 × 두 핸들 | `services/api/usecases.py` 의 `mappings[0].drawing_id` → `ObjectDetail.linked.drawing_id` |
 | A3 `progress.persistence.load_mappings` | 한 객체 × 두 Activity | `services/api/usecases.py` 의 `logic["activity_ids"][0]` → 규칙 평가 응답의 `context.activity_id` |
 | A4 `queries.model_objects` | **bbox 가 완전히 같은** 후보 둘 | `services/sync/matcher.py` 의 `max(scored, key=(conf, iou))` — 동률에서 첫 원소 |
@@ -308,8 +383,14 @@ def test_a4_tied_candidates_are_broken_by_model_objects_order(client, auth, orde
 
 # ---------------------------------------------------------------- A5
 def test_a5_drawing_mappings_first_row_and_the_row_find_picks(client, auth, ordering_project):
-    """A5 — `GET /drawings/{id}/mappings` 의 `[0]`(브로커의 `panTo(handles[0])`·`flyTo(globalIds[0])`)와
-    `find(x => x.global_id === g)`(선택 바 칩의 confidence 배지)가 고르는 행."""
+    """A5 — `GET /drawings/{id}/mappings` 의 `[0]`(브로커의 `panTo(handles[0])`)와
+    `find(x => x.global_id === g)`(선택 바 칩의 confidence 배지)가 고르는 행.
+
+    **초판은 여기에 `flyTo(globalIds[0])` 도 적었다 — 그것은 순서 소비자가 아니다.** 그 줄은
+    `pushTo3d` 의 `single` 가드 안이고 `globalIds.length === 0` 은 그 앞에서 조기 return 하므로
+    **그 줄이 도는 순간 길이가 언제나 1** 이다(ADR 0016 §2-1 역방향 확인 — `apps/web/src/sync/broker.ts`
+    의 `pushTo3d`·`single`). 이 테스트가 실제로 붙드는 것은 `panTo` 와 `find` 둘이다.
+    """
     r = client.get(f"/api/drawings/{D_A5}/mappings", headers=auth("cm"))
     assert r.status_code == 200, r.text
     rows = r.json()
