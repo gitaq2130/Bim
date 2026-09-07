@@ -1,7 +1,9 @@
-"""개발용 데모 사용자·프로젝트 시드. 운영 DB 에는 절대 적용되지 않는다.
+"""개발용 데모 사용자·프로젝트 시드. 기본값에서는 sqlite 개발 DB 에만 적용된다.
 
-`seed_dev_users(session)` 는 main.py 의 startup 에서 **settings.database_url 이 sqlite 이고 users 테이블이 비어 있을 때만**
-호출된다. 계정(모두 비밀번호 `buildtwin`):
+`seed_dev_users(session)` 는 main.py 의 startup 에서 **settings.database_url 이 sqlite 이거나 `SEED_DEV_DATA`
+(`settings.seed_dev_data`, 기본 False)가 켜져 있을 때** 호출되고, **users 테이블이 비어 있을 때만** 계정을 만든다
+(ADR 0014 §2-3 4). 플래그를 켠 DB 에는 운영이라도 아래 계정이
+생기므로 값은 `.env` 로만 준다(CLAUDE.md §3-4). 계정(모두 비밀번호 `buildtwin`):
 
 | email | role |
 |---|---|

@@ -8,7 +8,7 @@
 
 | 파일 | 역할 |
 |---|---|
-| `main.py` | `create_app()` / `app`. CORS, `/api` 프리픽스, startup `init_db()` + (sqlite) 데모 사용자·프로젝트 멤버십 시드 |
+| `main.py` | `create_app()` / `app`. CORS, `/api` 프리픽스, startup `init_db()` + (sqlite 이거나 `SEED_DEV_DATA`) 데모 사용자·프로젝트 멤버십 시드 |
 | `deps.py` | `get_session`, `get_current_user`(JWT Bearer), `require_role(*roles)`(비-프로젝트 라우트), `require_project_role(*roles)`/`project_role(...)`(ADR 0006, 프로젝트 범위 인가) |
 | `auth/` | 로그인·등록(admin, 첫 사용자 부트스트랩), 비밀번호 해시(bcrypt → pbkdf2 폴백), JWT(settings.jwt_secret), 개발 시드(사용자 + 데모 프로젝트 멤버십) |
 | `storage.py` | 업로드 저장 `settings.storage_root/<project_id>/<file_id>_<filename>`, sha256, MinIO 미러(선택) |
@@ -20,11 +20,12 @@
 | `routers/`, `schemas/` | HTTP 계약(프론트 `apps/web/src/api/types.ts` 와 필드명 일치) |
 | `scripts/gen_api_doc.py` | `docs/api.md` 생성 |
 
-## 개발용 데모 사용자 (sqlite 전용)
+## 개발용 데모 사용자 (sqlite 기본, `SEED_DEV_DATA` 로 확장)
 
-startup 시 `settings.database_url` 이 `sqlite` 이고 `users` 테이블이 비어 있으면 `auth/seed.py` 가 아래 계정을 만든다
-(비밀번호 모두 `buildtwin`). PostgreSQL 등 운영 DB 에서는 시드하지 않으며, 첫 사용자는 `POST /api/auth/register`
-(users 가 비어 있으면 누구나 호출 가능, 첫 사용자는 admin) 로 만든다.
+startup 시 `settings.database_url` 이 `sqlite` 이거나 `SEED_DEV_DATA`(`settings.seed_dev_data`, 기본 `False`)가 켜져 있고
+`users` 테이블이 비어 있으면 `auth/seed.py` 가 아래 계정을 만든다(비밀번호 모두 `buildtwin`). PostgreSQL 등 다른 DB 는
+그 플래그를 켜야 시드되고(ADR 0014 §2-3 4 — 값은 `.env` 로만 준다, CLAUDE.md §3-4), 플래그 없이 쓰면 첫 사용자는
+`POST /api/auth/register`(users 가 비어 있으면 누구나 호출 가능, 첫 사용자는 admin) 로 만든다.
 
 | email | role |
 |---|---|

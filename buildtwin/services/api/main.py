@@ -22,10 +22,10 @@ APP_VERSION = "0.1.0"
 
 
 def init_database() -> None:
-    """settings.database_url 로 엔진 초기화(테이블 생성). sqlite 개발 DB 면 데모 사용자 시드."""
+    """settings.database_url 로 엔진 초기화(테이블 생성). sqlite 개발 DB 이거나 settings.seed_dev_data 가 켜져 있으면 데모 사용자 시드(ADR 0014 §2-3 4)."""
     url = settings.database_url
     core_db.init_db(None if core_db.database_url() == url and core_db._engine is not None else url)
-    if url.startswith("sqlite"):
+    if url.startswith("sqlite") or settings.seed_dev_data:   # sqlite 갈래를 넓히기만 한다(ADR 0014 §2-3 4)
         with core_db.session_scope() as s:
             created = seed_dev_users(s)
             if created:
