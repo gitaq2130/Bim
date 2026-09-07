@@ -80,12 +80,25 @@ def save_mappings(session: Session, mappings: list[EntityObjectMapping], replace
 def load_mappings(session: Session, drawing_id: str, needs_review: bool | None = None,
                   project_id: str | None = None) -> list[EntityObjectMapping]:
     """project_id 는 방어적 필터(선택) — drawing_id 가 이미 하나의 프로젝트로 범위를 정하므로 보통 불필요하지만,
-    호출자가 알고 있으면 넘겨 다른 프로젝트로 잘못 조회하는 것을 조기에 막는다."""
+    호출자가 알고 있으면 넘겨 다른 프로젝트로 잘못 조회하는 것을 조기에 막는다.
+
+    **(`entity_handle`, `global_id`) 오름차순으로 돌려준다**(ADR 0016 결정 1·2, 계획 0012 §1-d A5).
+    PK 가 `(drawing_id, entity_handle, global_id)` 라 **한 엔티티가 여러 객체에, 한 객체가 여러 엔티티에**
+    걸릴 수 있고, 이 목록을 **위치로** 읽는 소비자가 셋이다 — 모두 `GET /drawings/{id}/mappings`
+    (`services/api/routers/drawings.py`) 를 지나 화면으로 간다:
+    `apps/web/src/pages/ViewerPage.tsx` 의 `mappings.data?.find((x) => x.global_id === g)`(선택 바 칩의
+    confidence 배지), 그리고 `apps/web/src/sync/broker.ts` 의 `setMappings` 가 이 순서대로 쌓은 배열을
+    읽는 `viewer2d.panTo(handles[0])`·`viewer3d.flyTo(globalIds[0])`(어느 엔티티/객체로 이동하는가).
+    키는 **의미의 축이 아니라 결정성의 축**이다(ADR 0016 결정 2): 이 행에는 시간 컬럼이 없고 소비자가
+    묻는 것도 "가장 최근"이 아니라 "매번 같은 것"이라, 필터로 이미 고정된 `drawing_id` 를 뺀 PK 나머지
+    두 컬럼을 그대로 쓴다.
+    """
     stmt = select(EntityObjectMappingRow).where(EntityObjectMappingRow.drawing_id == drawing_id)
     if needs_review is not None:
         stmt = stmt.where(EntityObjectMappingRow.needs_review == needs_review)
     if project_id is not None:
         stmt = stmt.where(EntityObjectMappingRow.project_id == project_id)
+    stmt = stmt.order_by(EntityObjectMappingRow.entity_handle, EntityObjectMappingRow.global_id)
     return [row_to_mapping(r) for r in session.scalars(stmt).all()]
 
 
