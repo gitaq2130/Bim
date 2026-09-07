@@ -9,6 +9,10 @@
 | `check_contract` 의 바닥값 단언 | `test_contract_fails_when_tests_on_postgres_is_below_the_floor` |
 | `check_sqlite_noop` 의 단언 | `test_sqlite_noop_check_fails_when_the_measured_file_changed` |
 | conftest 의 measured 쓰기를 축과 무관하게 만드는 것 | conftest 파이널라이저의 `check_sqlite_noop` 호출(세션 끝) |
+| `should_write_measured` 를 항상 `False` 로(= 늘 쓴다) | `test_the_finalizer_does_not_write_below_the_floor_but_still_dies_with_the_count` · `test_the_below_floor_child_left_the_measured_file_alone` |
+| `should_write_measured` 를 항상 `True` 로(= 아무 때도 안 쓴다) | `test_the_finalizer_writes_when_the_run_met_the_floor` |
+| 게이트를 `check_contract` 호출까지 함께 덮는 것(= 부분집합이 **초록**이 된다) | `test_a_below_floor_postgres_session_stays_red_and_says_the_real_count` |
+| `should_write_measured` 가 호출 형태(`-k`·`--deselect`·`argv`)를 읽게 만드는 것 | `test_the_write_gate_is_decided_by_values_not_by_the_call_shape` |
 | `report_line` 에서 필드를 빼는 것 | `test_report_line_carries_every_field_the_ci_log_needs` |
 | `sqlite_log_line` 에서 축 표시를 빼는 것 | `test_sqlite_log_line_says_the_axis_is_off_and_names_nothing_written` |
 | `resolve_axis` 의 빈 문자열 처리(`is not None` 으로 짜기) | `test_axis_is_off_when_the_name_is_empty` |
@@ -45,9 +49,17 @@
    **0.89 / 0.90s** = **+≈1.7s**. 리뷰어가 같은 트리에서 기구를 **삭제**해 잰 값은 4.46/4.17s ↔
    2.90/2.92s = **+≈1.3s** 였다 — 절대값이 다른 것은 부하 차이이고, 두 방법 다 **+1~2초** 대다.
    **CI 러너(`postgis/postgis:16-3.4`)에서는 재지 않았다.**
+   이 커밋이 자식을 **하나 더** 만든다(`below_floor_child`). 같은 방법으로 다시 쟀다(sqlite 축,
+   `--deselect` 로 빼고 비교, 각 **N=3**, 잰 트리 = `ac6b30b` + 이 커밋의 변경): 자식 둘 다 포함
+   **3.85 / 3.89 / 3.38s** ↔ 새 자식만 빼면 **2.06 / 2.21 / 2.13s** ↔ 자식을 읽는 다섯을 다 빼면
+   **0.84 / 0.84 / 0.74s**. 즉 **새 자식 +≈1.6s**, 자식 둘 합쳐 **+≈2.9s**. CI 는 통합을 두 번
+   돌므로(sqlite·postgres) 잡이 지는 값은 그 두 배 어림이다 — **CI 러너에서는 여전히 재지 않았다.**
 """
 from __future__ import annotations
 
+import ast
+import contextlib
+import json
 import os
 import subprocess
 import sys
@@ -55,6 +67,7 @@ from pathlib import Path
 
 import pytest
 
+import tests.integration.conftest as parent_conftest
 from packages.core.settings import settings
 from tests.helpers import postgres_axis as axis
 from tests.integration.conftest import RECORDER
@@ -171,6 +184,99 @@ def test_the_contract_fixture_runs_for_every_integration_test(request):
     assert "db_axis_contract" in request.fixturenames
 
 
+# ------------------------------------------------------- 측정 파일 쓰기 게이트 (계획 0011 §후속 29 ⓑ)
+# 예전에는 파이널라이저가 **무조건** 썼고, 그래서 부분집합을 postgres 축으로 돌릴 때마다 저장소의
+# `tests/postgres.measured.json` 이 그 부분집합의 값으로 덮인 채 남았다(잰 트리 `f101001`, 포트 55435,
+# N=3 — `-k` 만 → `dialect: null · 0 · 0`, 경로+`-k` → `1`, **플래그 0개로 경로만** → `14`).
+# 아래 넷이 그 게이트를 붙든다. **센티널이 이 칸들의 핵심이다**: 파일이 이미 실측값이면 "썼다"와
+# "안 썼다"가 **같은 바이트**라 구별되지 않는다(CLAUDE.md §6-2 1 이 금지한 고정된 기대값).
+
+#: 자식·파이널라이저에게 주는 측정 파일의 **센티널**. 실측과 다른 값이라야 쓰기가 값으로 갈린다.
+SENTINEL = '{"_sentinel": "이 바이트가 그대로면 아무도 이 파일을 쓰지 않았다"}\n'.encode()
+AXIS_SRC = Path(axis.__file__)
+
+
+def test_should_write_measured_is_the_floor_comparison_and_nothing_else():
+    """S6 — 순수 함수(계획 0011 §검증 시나리오). DB 없이 D1(항상 쓴다)·D2(안 쓴다)를 죽인다.
+
+    `(200, 181) → True` 칸이 맞바꿈의 한쪽이다: 값이 **오르는** 실행은 그대로 써서 커밋된 값과의
+    diff 를 남긴다 — 게이트가 지우는 것은 **내려가는 쪽의 diff** 뿐이다(그 자리는 `[db-axis]` 줄이 잇는다).
+    """
+    assert axis.should_write_measured(tests_on_postgres=181, floor=181) is True
+    assert axis.should_write_measured(tests_on_postgres=200, floor=181) is True
+    for below in (0, 1, 14, 180):
+        assert axis.should_write_measured(tests_on_postgres=below, floor=181) is False, below
+
+
+def test_the_write_gate_is_decided_by_values_not_by_the_call_shape():
+    """S4 — 호출 형태로는 판정하지 않는다. **경로로만 좁힌 실행에는 `-k` 도 `--deselect` 도 없다.**
+
+    §후속 29 가 처음 적은 `-k`/`--deselect` 축의 구현이 여기서 죽는다. 문자열 grep 대신 **AST** 로
+    본다 — 이 파일과 `postgres_axis.py` 의 산문은 그 두 플래그를 *기각된 축*으로 인용하므로 텍스트
+    grep 은 자기 문서에 걸린다(그 축의 저장소 루트 전수는 계획 0011 §전수 목록 A ③ 에 있다).
+    단언하는 것은 셋이다: 인자가 **키워드 전용 값 둘**뿐이고, `*args`·`**kwargs` 가 없고, 몸통이
+    그 둘 밖의 어떤 이름도 읽지 않는다(전역·`config`·`session`·`sys.argv` 가 들어올 자리가 없다).
+    """
+    tree = ast.parse(AXIS_SRC.read_text(encoding="utf-8"))
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "should_write_measured")
+    assert [a.arg for a in fn.args.kwonlyargs] == ["tests_on_postgres", "floor"]
+    assert not fn.args.args and not fn.args.posonlyargs
+    assert fn.args.vararg is None and fn.args.kwarg is None
+    body = [node for statement in fn.body for node in ast.walk(statement)]   # 시그니처의 타입 이름은 뺀다
+    assert {n.id for n in body if isinstance(n, ast.Name)} <= {"tests_on_postgres", "floor"}
+    assert not [n for n in body if isinstance(n, ast.Attribute)]             # `config.option` 류가 들어올 자리
+
+
+def _drive_the_repo_finalizer(monkeypatch, measured: Path, *, dialect: str | None, tests_on_postgres: int) -> None:
+    """저장소의 **그 파이널라이저**(`conftest.db_axis_contract`)를 tmp 측정 파일 위에서 한 번 돌린다.
+
+    복사본이 아니라 `__wrapped__` = 그 함수 자신이다 — 게이트를 지우거나 뒤집으면 여기서 값이 갈린다.
+    바꾸는 것은 둘뿐이고 `monkeypatch` 가 되돌린다: 측정 파일의 자리(저장소를 더럽히지 않으려고)와
+    conftest 의 모듈 전역 `RECORDER`(이 세션의 진짜 계수를 건드리지 않으려고). 파이널라이저는 그
+    전역을 **호출 시점에** 읽으므로 이 교체가 곧 그 실행의 관측값이 된다.
+    """
+    monkeypatch.setattr(axis, "MEASURED_PATH", measured)
+    monkeypatch.setattr(parent_conftest, "RECORDER", axis.AxisRecorder(
+        postgres_url="postgresql+psycopg://x@127.0.0.1:1/nodb", dialect=dialect,
+        server_version="16.13", engines=1, tests_on_postgres=tests_on_postgres))
+    generator = parent_conftest.db_axis_contract.__wrapped__()
+    next(generator)                                   # yield 까지 = 세션 시작
+    with contextlib.suppress(StopIteration):
+        next(generator)                               # teardown = 게이트와 단언이 도는 자리
+
+
+def test_the_finalizer_writes_when_the_run_met_the_floor(monkeypatch, tmp_path):
+    """S2 — 바닥값을 만족한 실행은 **그대로 쓴다**. D2(아무 때도 안 쓴다)가 여기서 죽는다.
+
+    센티널을 덮어 두고 돌린 뒤 **바이트가 달라졌는가 + 실측값이 들어갔는가**를 본다. 센티널이 없으면
+    두 구현이 같은 바이트를 남겨 이 칸이 장식이 된다(§6-2 1).
+    """
+    floor = axis.read_floor()
+    measured = tmp_path / "measured.json"
+    measured.write_bytes(SENTINEL)
+    _drive_the_repo_finalizer(monkeypatch, measured, dialect="postgresql", tests_on_postgres=floor)
+    assert measured.read_bytes() != SENTINEL
+    written = json.loads(measured.read_text(encoding="utf-8"))
+    assert written["tests_on_postgres"] == floor and written["dialect"] == "postgresql"
+
+
+def test_the_finalizer_does_not_write_below_the_floor_but_still_dies_with_the_count(monkeypatch, tmp_path):
+    """S1 + S3 ⓐⓑ — 바닥값 미달에서 **쓰지 않고**, 그래도 **죽고**, 메시지가 **실제 수**를 싣는다.
+
+    셋을 함께 단언하는 것이 §6-2 2·4 다: "파일이 안 바뀐다"만 보면 쓰기와 단언을 **함께** 덮은 구현
+    (D3)이 그대로 통과하고, 그러면 부분집합이 조용히 초록이 된다 — 이 계약이 겨냥한 결함 자신이다.
+    문구를 통째로 베끼지 않고 **수 둘**만 본다(§6-4 3).
+    """
+    floor = axis.read_floor()
+    measured = tmp_path / "measured.json"
+    measured.write_bytes(SENTINEL)
+    with pytest.raises(AssertionError) as caught:
+        _drive_the_repo_finalizer(monkeypatch, measured, dialect="postgresql", tests_on_postgres=3)
+    assert measured.read_bytes() == SENTINEL
+    message = str(caught.value)
+    assert "3" in message and str(floor) in message, message
+
+
 # ------------------------------------------------------------------ 두 축의 실제 모드
 def test_axis_mode_matches_the_environment(client):
     """양성(postgres 축)과 음성(sqlite 축)을 같은 테스트 id 로 세운다 — skip 을 만들지 않기 위해서다."""
@@ -200,6 +306,10 @@ def test_axis_mode_matches_the_environment(client):
 # 세션을 자식 프로세스로 돌리고, 부모가 자식의 종료코드와 출력을 단언한다. DB 에는 붙지 않는다.
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHILD_MEASURED_ENV = "BUILDTWIN_CHILD_MEASURED"
+#: 자식의 `RECORDER` 필드를 부모가 정해 주는 자리(JSON). 자식은 DB 에 붙지 않으므로 "엔진을 관측한
+#: 부분집합"(dialect 는 postgresql 인데 수가 바닥값 아래)은 이렇게만 세울 수 있다 — 그 배역이 없으면
+#: 계약 ②(바닥값)가 **실제 세션에서** 발화하는 것을 아무도 붙들지 못한다.
+CHILD_RECORDER_ENV = "BUILDTWIN_CHILD_RECORDER"
 #: 자식이 축을 **켜진 것으로** 읽게 하는 값. 연결은 일어나지 않는다(자식에 `client` 를 쓰는 테스트가 없다).
 CHILD_PG_URL = "postgresql://buildtwin@127.0.0.1:1/no_such_database"
 
@@ -222,6 +332,15 @@ axis.MEASURED_PATH = pathlib.Path(os.environ["BUILDTWIN_CHILD_MEASURED"])
 import tests.integration.conftest as parent  # noqa: E402
 from tests.integration.conftest import RECORDER, db_axis_contract  # noqa: E402,F401
 
+# 부모가 배역을 정해 주면 그대로 신는다. 자식은 DB 에 붙지 않아 `dialect` 를 스스로 관측할 수 없다 —
+# 이것이 없으면 계약 ①(방언)에서만 죽어 계약 ②(바닥값)의 발화를 실제 세션에서 볼 수 없다.
+_forced = os.environ.get("BUILDTWIN_CHILD_RECORDER")
+if _forced:
+    import json as _json
+
+    for _key, _value in _json.loads(_forced).items():
+        setattr(RECORDER, _key, _value)
+
 # 훅은 **있으면** 다시 내건다. `from … import pytest_terminal_summary` 로 적으면 훅을 지운 트리에서
 # 자식이 **수집 오류**로 죽어, 부모의 세 단언이 전부 같은 이유로 빨개진다 — 그러면 배선 ②의 실제
 # 모양(*"두 축 다 초록인 채 `[db-axis]` 줄만 사라진다"*, 계획 0009 §M-5 28)이 재현되지 않는다.
@@ -236,9 +355,35 @@ CHILD_TEST = '''def test_child_session_does_nothing_but_end():
 '''
 
 
+def _child_workdir(tmp_path_factory, name: str) -> Path:
+    """자식이 돌 자리. 측정 파일에는 **센티널**을 미리 넣어 둔다 — 그래야 "안 썼다"가 값으로 보인다."""
+    work = tmp_path_factory.mktemp(name)
+    (work / "conftest.py").write_text(CHILD_CONFTEST, encoding="utf-8")
+    (work / "test_child_session.py").write_text(CHILD_TEST, encoding="utf-8")
+    (work / "measured.json").write_bytes(SENTINEL)
+    return work
+
+
+def _run_axis_child(work: Path, forced: dict | None = None) -> subprocess.CompletedProcess:
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(REPO_ROOT)
+    env[axis.ENV_NAME] = CHILD_PG_URL
+    env[CHILD_MEASURED_ENV] = str(work / "measured.json")
+    if forced is not None:
+        env[CHILD_RECORDER_ENV] = json.dumps(forced)
+    return subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--tb=short", str(work)],
+        cwd=str(REPO_ROOT), env=env, capture_output=True, text=True, timeout=300, check=False)
+
+
 @pytest.fixture(scope="module")
-def wiring_child(tmp_path_factory) -> subprocess.CompletedProcess:
-    """배선 둘을 import 한 자식 pytest 를 **한 번** 돌리고 결과를 아래 셋이 나눠 읽는다.
+def wiring_child_workdir(tmp_path_factory) -> Path:
+    return _child_workdir(tmp_path_factory, "axis-wiring")
+
+
+@pytest.fixture(scope="module")
+def wiring_child(wiring_child_workdir) -> subprocess.CompletedProcess:
+    """배선 둘을 import 한 자식 pytest 를 **한 번** 돌리고 결과를 아래 넷이 나눠 읽는다.
 
     자식의 축은 켜져 있고(`CHILD_PG_URL`) 엔진은 하나도 관측되지 않으므로 `RECORDER.dialect is None`
     이다 — 그래서 배선 ①(`check_contract` 호출)이 살아 있으면 파이널라이저가 계약 ①에서 죽고 세션이
@@ -253,16 +398,7 @@ def wiring_child(tmp_path_factory) -> subprocess.CompletedProcess:
     인터프리터·같은 트리를 쓰므로 **CI 러너에서 얼마를 더하는지는 재지 않았다**(계획 0010
     §확인하지 않은 것 24).
     """
-    work = tmp_path_factory.mktemp("axis-wiring")
-    (work / "conftest.py").write_text(CHILD_CONFTEST, encoding="utf-8")
-    (work / "test_child_session.py").write_text(CHILD_TEST, encoding="utf-8")
-    env = dict(os.environ)
-    env["PYTHONPATH"] = str(REPO_ROOT)
-    env[axis.ENV_NAME] = CHILD_PG_URL
-    env[CHILD_MEASURED_ENV] = str(work / "measured.json")
-    return subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--tb=short", str(work)],
-        cwd=str(REPO_ROOT), env=env, capture_output=True, text=True, timeout=300, check=False)
+    return _run_axis_child(wiring_child_workdir)
 
 
 def test_the_child_session_ran_at_all(wiring_child):
@@ -301,3 +437,54 @@ def test_the_terminal_summary_hook_actually_prints_the_axis_line(wiring_child):
     # 이 싣는 **필드가 다 있는가**를 본다(형제 함수가 그 목록의 정본이다).
     for field in ("dialect=", "server_version=", "tests_on_postgres=", "engines=", "floor=", "measured_file="):
         assert field in printed[0], (field, printed[0])
+
+
+def test_the_below_floor_child_left_the_measured_file_alone(wiring_child, wiring_child_workdir):
+    """S1(실제 세션) — 이 자식은 엔진을 하나도 관측하지 않아 `tests_on_postgres=0` 이다(= 바닥값 미달).
+
+    예전 배선은 그 상태로 **먼저 쓰고** 계약 ①에서 죽었다 — 저장소에서 그것이 남긴 것이
+    `dialect: null · engines: 0` 이고, 커밋되면 *"이 축은 postgres 에서 돈 적이 없다"* 가 된다.
+    센티널이 그대로라는 것이 "아무도 쓰지 않았다"의 값이다(파일이 실측값이면 두 구현이 같은 바이트다).
+    """
+    assert wiring_child.returncode != 0, wiring_child.stdout + wiring_child.stderr
+    assert (wiring_child_workdir / "measured.json").read_bytes() == SENTINEL
+
+
+@pytest.fixture(scope="module")
+def below_floor_child(tmp_path_factory) -> tuple[subprocess.CompletedProcess, Path]:
+    """엔진을 **관측한** 부분집합의 배역 — `dialect=postgresql` 인데 수가 바닥값 아래(3 < 181).
+
+    위 `wiring_child` 는 `dialect is None` 이라 계약 ①에서 죽어 계약 ②(바닥값)가 **실제 세션에서**
+    발화하는 것을 보여 주지 못한다. 이 자식이 그 자리다: 저장소의 파이널라이저·훅을 그대로 import 한
+    세션이 게이트를 지나 계약 ②에서 죽는다.
+    """
+    work = _child_workdir(tmp_path_factory, "axis-below-floor")
+    forced = {"dialect": "postgresql", "server_version": "16.13", "engines": 1, "tests_on_postgres": 3}
+    return _run_axis_child(work, forced), work
+
+
+def test_a_below_floor_postgres_session_stays_red_and_says_the_real_count(below_floor_child):
+    """S3 — 바닥값 미달 실행에서 **셋이 함께** 성립한다(§6-2 2·4).
+
+    ⓐ teardown 이 빨갛다 ⓑ 실패 메시지가 **실제 수**를 싣는다 ⓒ `[db-axis]` 줄이 찍히고 그 줄이
+    **안 썼다**고 말한다. 그리고 파일은 센티널 그대로다.
+
+    **셋을 한 함수에 둔 것이 이 칸의 요점이다.** "파일이 안 바뀐다"만 보면 쓰기와 단언을 함께 덮은
+    구현(D3)이 초록으로 통과하고, 그러면 부분집합이 조용히 초록이 되어 이 계약이 겨냥한 결함 자신이
+    된다. 잃은 것(축소가 `git diff` 로 보이던 것)을 잇는 자리가 정확히 ⓑ·ⓒ 라서, 그 둘이 빠지면
+    맞바꿈이 성립하지 않는다.
+    """
+    proc, work = below_floor_child
+    out = proc.stdout + proc.stderr
+    floor = axis.read_floor()
+    # ⓐ
+    assert proc.returncode != 0, out
+    assert "error" in out.strip().splitlines()[-1], out
+    # ⓑ — 문장을 통째로 베끼지 않고 **수 둘**만 본다(§6-4 3)
+    assert "3건" in out and str(floor) in out, out
+    # ⓒ
+    printed = [ln for ln in out.splitlines() if ln.startswith(axis.LOG_PREFIX)]
+    assert len(printed) == 1, out
+    assert "tests_on_postgres=3" in printed[0] and "안 썼다" in printed[0], printed[0]
+    # 그리고 아무것도 쓰지 않았다
+    assert (work / "measured.json").read_bytes() == SENTINEL

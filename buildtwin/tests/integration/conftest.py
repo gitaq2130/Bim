@@ -62,7 +62,13 @@ def db_axis_contract():
         axis.check_sqlite_noop(measured_now=axis.current_measured_bytes(), measured_at_import=axis.MEASURED_AT_IMPORT)
         return
     floor = axis.read_floor()
-    axis.write_measured(RECORDER, floor)   # 단언 전에 쓴다 — 실패해도 드리프트가 diff 로 보이도록
+    # **바닥값을 만족한 실행만 쓴다**(계획 0011 §후속 29 ⓑ). 예전에는 무조건 썼고, 그래서 부분집합을
+    # postgres 축으로 돌릴 때마다 저장소 파일이 그 부분집합의 값으로 덮인 채 남았다. 판정 축이 호출
+    # 형태(`-k`·`--deselect`)가 아닌 이유는 실측이다 — 플래그 0개로 경로만 좁힌 실행이 파일을 14 로
+    # 덮었다(잰 트리 `f101001`, 포트 55435). **단언 둘은 게이트 밖이다**: 게이트하는 것은 쓰기뿐이고,
+    # 바닥값 미달 실행은 그대로 teardown 에서 빨개진다.
+    if axis.should_write_measured(tests_on_postgres=RECORDER.tests_on_postgres, floor=floor):
+        axis.write_measured(RECORDER, floor)
     axis.check_contract(dialect=RECORDER.dialect, tests_on_postgres=RECORDER.tests_on_postgres, floor=floor)
 
 
