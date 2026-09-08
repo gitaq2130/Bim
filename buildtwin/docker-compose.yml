@@ -54,6 +54,18 @@ services:
     image: node:22-alpine
     working_dir: /app/apps/web
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    # 이 컨테이너 안에서 localhost:8000 은 api 가 아니라 **자기 자신**이다 — vite 의 /api 프록시가
+    # 갈 곳을 여기서 준다(계획 0015 문 4). 읽는 자리는 apps/web/vite.proxy-target.ts 이고 이름의
+    # 정본은 그 파일의 API_PROXY_TARGET_ENV 다(찾는 명령:
+    # `grep -n "API_PROXY_TARGET_ENV = " apps/web/vite.proxy-target.ts` — 그 파일 안 히트 하나).
+    # **한쪽에서만 철자가 갈리면 나는 것은 예외가 아니라 침묵이다** — 실측(architect, 각 N=1):
+    # 읽는 이름을 API_PROXY_TARGET 으로 바꾼 변이에서 `npx vitest run vite.proxy-target.test.ts` 가
+    # `1 failed, 5 passed` 이고, 그 상태에서 아래 이름으로 값을 줘도 resolveApiProxyTarget 은
+    # 예외 없이 http://localhost:8000 을 돌려준다(= web 이 다시 자기 자신을 가리킨다).
+    # **값을 비우지 않는다** — 선언됐는데 비면 vite 가 던진다(그 파일의 resolveApiProxyTarget).
+    # env_file 은 주지 않는다 — 이 컨테이너가 알아야 할 값은 이 하나뿐이고, .env 에는 JWT_SECRET 이 있다.
+    environment:
+      BUILDTWIN_API_PROXY_TARGET: "http://api:8000"
     volumes: [".:/app"]
     ports: ["127.0.0.1:5173:5173"]
     depends_on: [api]

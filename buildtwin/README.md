@@ -15,22 +15,41 @@
 | API | `services/api` | FastAPI + JWT(contractor/cm/client/admin), 업로드→Celery job→폴링, 객체 상세 단일 호출, 검토요청 처리 |
 | 웹 | `apps/web` | React+Vite, three.js 3D 뷰어(단면·포인트클라우드), SVG 2D 뷰어(영역 선택·단면 오버레이), 6개 화면 |
 
-## 빠른 시작 (로컬, SQLite + Celery eager)
+## 빠른 시작
+
+갈래가 둘이고 **DB·프록시·시드가 서로 다르다.** 섞으면 조용히 죽는다 — 호스트의 `make seed` 는 compose 의 DB(`db:5432`)에 닿지 못한다(호스트가 그 이름을 풀지 못한다).
+
+### ① 호스트 — SQLite + Celery eager
 
 ```bash
 cd buildtwin
 make setup          # .venv + npm install
 make fixtures       # 합성 샘플 IFC/DXF/PLY/공정표 생성 (결정적)
 make api            # http://localhost:8000/api  (문서: /docs)
-make web            # http://localhost:5173  (API 프록시 /api)
+make web            # http://localhost:5173  (/api → http://localhost:8000 프록시)
+make seed           # 데모 계정 — 이 셸의 DATABASE_URL 이 가리키는 DB(기본 ./buildtwin.db)
 ```
 
-개발용 시드 계정은 **기동이 만들지 않는다 — `make seed` 로 만든다**(ADR 0018 §2-1·§2-2, `python -m services.api.seed`).
+### ② 전체 스택(PostGIS·Redis·MinIO·워커) — docker compose, 걸음 다섯
+
+```bash
+cd buildtwin
+make env            # 1. .env 가 없으면 만든다(JWT_SECRET 난수). 있으면 한 바이트도 바꾸지 않는다
+make dev            # 2. docker compose up --build
+make seed-compose   # 3. **다른 셸에서.** api 컨테이너 안에서 돌아 compose 의 DB 에 만든다
+```
+
+4. 브라우저로 <http://127.0.0.1:5173> — web 컨테이너의 vite 가 `/api` 를 `http://api:8000` 으로 프록시한다. 그 값은 `docker-compose.yml` 의 `web.environment` 가 `BUILDTWIN_API_PROXY_TARGET` 으로 준다(읽는 자리는 `apps/web/vite.proxy-target.ts`). **컨테이너 안에서 `localhost:8000` 은 api 가 아니라 자기 자신이다.**
+5. 로그인. `.env` 의 `JWT_SECRET` 이 비어 있으면 **여기서** 죽는다 — 스택이 다 뜬 뒤다(`packages/core/settings.py` 의 `resolve_jwt_secret`).
+
+걸음을 건너뛰면: **1** 이 없으면 compose 가 컨테이너가 뜨기 전 **파일 해석 단계에서** 죽고(`env file …/.env not found`), **3** 을 호스트의 `make seed` 로 대신하면 그 시드는 **다른 DB**(기본 로컬 sqlite)에 들어가 스택은 계정이 없는 채로 선다. `.env.example` 을 그대로 복사하는 것은 **1 의 대용이 아니다** — 그 파일의 머리말이 그 이유를 실측으로 적는다.
+
+### 시드 계정
+
+개발용 시드 계정은 **기동이 만들지 않는다 — 명령으로 만든다**(ADR 0018 §2-1·§2-2, `python -m services.api.seed`): 호스트 갈래는 `make seed`, compose 갈래는 `make seed-compose`.
 만들어지는 것: `cm@buildtwin.local`, `contractor@buildtwin.local`, `client@buildtwin.local`, `admin@buildtwin.local` / 비밀번호 `buildtwin` (`services/api/README.md`).
 멱등이고, 만들지 못했으면 **종료 코드 1** 과 무엇이 없는지를 낸다. 시드는 `DATABASE_URL` 이 가리키는 DB 에 만든다 — 어떤 DB 인지 가리지 않는다(ADR 0018 §2-4 ㉠).
 시드하지 않은 빈 DB 로 API 를 띄우면 계정이 하나도 없고, 그때 `POST /api/auth/register` 는 인증 없이도 첫 계정을 만든다(그 계정은 admin 이 된다 — `services/api/auth/router.py`).
-
-전체 스택(PostGIS·Redis·MinIO·워커)은 `make dev` (docker compose).
 
 ## 검증
 
