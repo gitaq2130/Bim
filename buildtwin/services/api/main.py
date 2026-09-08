@@ -1,7 +1,6 @@
 """FastAPI 앱 팩토리. `uvicorn services.api.main:app`. 모든 라우터는 `/api` 아래(프론트가 /api 를 프록시)."""
 from __future__ import annotations
 
-import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -12,27 +11,26 @@ from packages.core import db as core_db
 from packages.core.settings import settings
 
 from .auth import router as auth_router
-from .auth.seed import seed_dev_project, seed_dev_users
 from .errors import install_handlers
 from .routers import ALL_ROUTERS
 
-log = logging.getLogger(__name__)
 API_PREFIX = "/api"
 APP_VERSION = "0.1.0"
 
 
 def init_database() -> None:
-    """settings.database_url 로 엔진 초기화(테이블 생성). sqlite 개발 DB 이거나 settings.seed_dev_data 가 켜져 있으면 데모 사용자 시드(ADR 0014 §2-3 4)."""
+    """settings.database_url 로 엔진 초기화(테이블 생성)**만** 한다.
+
+    데모 계정·데모 프로젝트는 기동의 부수 효과가 아니라 **명시적 명령**이 만든다
+    (ADR 0018 §2-1·§2-2 — `python -m services.api.seed`, `make seed`). 같은 프로세스 안에서 부르는
+    소비자는 `services.api.seed.seed_all(session)` 을 쓴다(`tests/integration`·`tests/e2e` 의 픽스처).
+
+    그래서 **빈 DB 로 이 앱을 띄우면 계정이 하나도 없다** — 그 상태에서 첫 계정을 만드는 것은
+    `POST /api/auth/register` 의 부트스트랩(`auth/router.py` 의 `users_count(session) == 0` 갈래)이고,
+    그 자리의 처분을 여는 항목이 계획 0014 §후속 67 이다(이 커밋은 그것을 닫지 않는다).
+    """
     url = settings.database_url
     core_db.init_db(None if core_db.database_url() == url and core_db._engine is not None else url)
-    if url.startswith("sqlite") or settings.seed_dev_data:   # sqlite 갈래를 넓히기만 한다(ADR 0014 §2-3 4)
-        with core_db.session_scope() as s:
-            created = seed_dev_users(s)
-            if created:
-                log.info("seeded %d dev users (%s)", len(created), ", ".join(u.email for u in created))
-                project = seed_dev_project(s, created)   # ADR 0006: 데모 프로젝트 멤버십(admin 제외)
-                if project is not None:
-                    log.info("seeded dev project %s with member roles for contractor/cm/client", project.project_id)
 
 
 @asynccontextmanager
