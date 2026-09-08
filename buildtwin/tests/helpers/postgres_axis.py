@@ -254,15 +254,43 @@ def check_sqlite_noop(*, measured_now: bytes | None, measured_at_import: bytes |
     )
 
 
-def check_contract(*, dialect: str | None, tests_on_postgres: int, floor: int) -> None:
-    """ADR 0014 §2-5 의 계약 둘. postgres 모드에서만 부른다(3번째 계약 = sqlite 모드 무동작은 호출부에 있다).
+def check_sqlite_axis_is_inert(*, dialect: str | None, engines: int, tests_on_postgres: int) -> None:
+    """sqlite 축에서 이 기구의 **누적 관측이 하나도 늘지 않았다**(ADR 0014 §2-5 3 의 다른 반쪽).
+
+    `check_sqlite_noop` 이 보는 것은 **측정 파일의 바이트**이고, 이 함수가 보는 것은 **기록기의 수**다.
+    둘은 다른 것을 잡는다: 리스너를 sqlite 갈래에도 달아 버리면 파일은 그대로인 채 수만 늘고, 그러면
+    "축이 넓어졌다"가 아무 데서도 안 보인다.
+
+    자리가 **세션 끝**인 이유는 결정 1 자신이다 — 이 값들은 세션 동안 증가하므로 테스트 함수 안에서
+    읽으면 그 단언이 **자기 앞에 무엇이 돌았는지**를 재게 된다(§후속 37 이 이름 붙인 모양).
+    """
+    assert dialect is None and engines == 0 and tests_on_postgres == 0, (
+        f"{ENV_NAME} 가 없는 세션인데 축 기록기가 무엇인가를 관측했다"
+        f"(dialect={dialect!r} engines={engines} tests_on_postgres={tests_on_postgres}). "
+        "sqlite 축에서 이 기구는 아무 일도 하지 않아야 한다 (ADR 0014 §2-5 3 · ADR 0017 결정 1)."
+    )
+
+
+def check_contract(*, dialect: str | None, engines: int, tests_on_postgres: int, floor: int) -> None:
+    """ADR 0014 §2-5 의 계약 둘 + 세션의 엔진 수. postgres 모드에서만 부른다(3번째 계약 = sqlite 모드 무동작은 호출부에 있다).
 
     ① 방언이 postgresql 이 아니면 실패 — **조용히 sqlite 로 떨어지는 것**이 §후속 10 의 결함 자신이다.
-    ② 바닥값 미달이면 실패 — 한 개만 붙이고 초록을 부르는 것, 그리고 나중에 대부분을 sqlite 로 되돌리는 것.
+    ② 엔진 수가 하나가 아니면 실패 — 축이 정한 엔진 말고 **다른 엔진이 하나 더 섰다**는 뜻이다.
+    ③ 바닥값 미달이면 실패 — 한 개만 붙이고 초록을 부르는 것, 그리고 나중에 대부분을 sqlite 로 되돌리는 것.
+
+    **②는 새 계약이 아니라 옮겨온 자리다**(ADR 0017 결정 1). 예전에는 `test_99` 의
+    `test_axis_mode_matches_the_environment` 가 `RECORDER.engines` 를 **테스트 함수 안에서** 읽었는데,
+    그 값은 세션 동안 증가하므로 그 단언은 축의 옳음이 아니라 **자기 앞에 무엇이 돌았는지**를 쟀다
+    (§후속 37 — `test_99` 단독 실행이 빨갛던 이유). 관측을 지우지 않고 **자리를 세션 끝으로 옮긴다.**
     """
     assert dialect == "postgresql", (
         f"{ENV_NAME} 가 설정됐는데 통합 세션이 postgresql 위에서 돌지 않았다(dialect={dialect!r}). "
         "축을 못 읽고 조용히 sqlite 로 떨어진 것이 이 단언이 잡는 실패다 (ADR 0014 §2-5 1)."
+    )
+    assert engines == 1, (
+        f"postgres 축 세션이 관측한 엔진이 {engines}개다(하나여야 한다). 축이 정한 URL 말고 다른 엔진이 "
+        "함께 섰거나(격리 밖 쓰기) 아무 엔진도 서지 않았다 — 어느 쪽이든 이 세션의 측정값은 축의 값이 "
+        "아니다 (ADR 0017 결정 1: 이 관측의 자리는 세션 파이널라이저다)."
     )
     assert tests_on_postgres >= floor, (
         f"postgres 위에서 SQL 을 실행한 테스트가 {tests_on_postgres}건으로 바닥값 {floor} 미만이다 "

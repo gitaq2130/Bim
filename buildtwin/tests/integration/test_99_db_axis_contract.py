@@ -19,6 +19,8 @@
 | `with_psycopg_driver` 의 드라이버 정규화 | `test_axis_normalizes_the_bare_postgresql_driver` |
 | `schema_url` 의 `search_path` | `test_schema_url_carries_the_session_schema` |
 | `db_axis_contract` 픽스처의 `autouse=True` | `test_the_contract_fixture_runs_for_every_integration_test` |
+| `check_contract` 의 엔진 수 단언(ADR 0017 결정 1 이 여기로 옮긴 것) | `test_the_contract_also_names_the_engine_count` · `test_the_finalizer_dies_when_a_postgres_session_observed_more_than_one_engine` |
+| `check_sqlite_axis_is_inert` 의 단언 / 파이널라이저의 그 **호출** | `test_the_sqlite_inert_check_dies_on_any_observation` / `test_the_finalizer_dies_when_a_sqlite_session_observed_anything` |
 
 **두 축 모두에서 돈다.** `test_axis_mode_matches_the_environment` 하나가 sqlite 축과 postgres 축에
 서로 다른 단언을 세운다 — sqlite 축의 단언이 이 사이클의 음성 대조군이다(강제 셋이 로컬에서
@@ -114,23 +116,23 @@ def test_schema_names_do_not_collide_between_sessions():
 # ------------------------------------------------------------------ 강제 셋 자신 (양성·음성 둘 다)
 def test_contract_passes_on_postgres_at_the_floor():
     """음성 대조군 — 옳은 값에서는 아무 일도 없어야 한다(그렇지 않으면 위 두 양성이 무의미하다)."""
-    axis.check_contract(dialect="postgresql", tests_on_postgres=191, floor=191)
+    axis.check_contract(dialect="postgresql", engines=1, tests_on_postgres=191, floor=191)
 
 
 def test_contract_fails_when_the_dialect_is_not_postgresql():
     """축을 못 읽고 **조용히 sqlite 로 떨어지는 것**이 §후속 10 의 결함 자신이다(ADR 0014 §2-5 1)."""
     with pytest.raises(AssertionError, match="postgresql"):
-        axis.check_contract(dialect="sqlite", tests_on_postgres=10_000, floor=191)
+        axis.check_contract(dialect="sqlite", engines=1, tests_on_postgres=10_000, floor=191)
     with pytest.raises(AssertionError, match="postgresql"):
-        axis.check_contract(dialect=None, tests_on_postgres=10_000, floor=191)
+        axis.check_contract(dialect=None, engines=1, tests_on_postgres=10_000, floor=191)
 
 
 def test_contract_fails_when_tests_on_postgres_is_below_the_floor():
     """**한 개만 붙이고 초록**을 부르는 것을 막는다(ADR 0014 §2-5 2). 초록은 증거가 아니다."""
     with pytest.raises(AssertionError, match="바닥값"):
-        axis.check_contract(dialect="postgresql", tests_on_postgres=1, floor=191)
+        axis.check_contract(dialect="postgresql", engines=1, tests_on_postgres=1, floor=191)
     with pytest.raises(AssertionError, match="바닥값"):
-        axis.check_contract(dialect="postgresql", tests_on_postgres=190, floor=191)
+        axis.check_contract(dialect="postgresql", engines=1, tests_on_postgres=190, floor=191)
 
 
 def test_sqlite_noop_check_passes_when_the_measured_file_is_untouched():
@@ -239,7 +241,8 @@ def test_the_write_gate_is_decided_by_values_not_by_the_call_shape():
     assert not [n for n in body if isinstance(n, ast.Attribute)]             # `config.option` 류가 들어올 자리
 
 
-def _drive_the_repo_finalizer(monkeypatch, measured: Path, *, dialect: str | None, tests_on_postgres: int) -> None:
+def _drive_the_repo_finalizer(monkeypatch, measured: Path, *, dialect: str | None, tests_on_postgres: int,
+                              engines: int = 1, postgres_url: str | None = "postgresql+psycopg://x@127.0.0.1:1/nodb") -> None:
     """저장소의 **그 파이널라이저**(`conftest.db_axis_contract`)를 tmp 측정 파일 위에서 한 번 돌린다.
 
     복사본이 아니라 `__wrapped__` = 그 함수 자신이다 — 게이트를 지우거나 뒤집으면 여기서 값이 갈린다.
@@ -248,9 +251,14 @@ def _drive_the_repo_finalizer(monkeypatch, measured: Path, *, dialect: str | Non
     전역을 **호출 시점에** 읽으므로 이 교체가 곧 그 실행의 관측값이 된다.
     """
     monkeypatch.setattr(axis, "MEASURED_PATH", measured)
+    # sqlite 갈래를 돌릴 때는 "이 실행 전"의 스냅샷도 tmp 파일의 것이라야 한다 — 안 그러면 계약 3
+    # (`check_sqlite_noop`)이 저장소 파일과 tmp 파일을 비교해 **언제나** 죽고, 그러면 음성 대조군이
+    # 성립하지 않는다(§6-2 1).
+    if postgres_url is None:
+        monkeypatch.setattr(axis, "MEASURED_AT_IMPORT", measured.read_bytes())
     monkeypatch.setattr(parent_conftest, "RECORDER", axis.AxisRecorder(
-        postgres_url="postgresql+psycopg://x@127.0.0.1:1/nodb", dialect=dialect,
-        server_version="16.13", engines=1, tests_on_postgres=tests_on_postgres))
+        postgres_url=postgres_url, dialect=dialect,
+        server_version="16.13", engines=engines, tests_on_postgres=tests_on_postgres))
     generator = parent_conftest.db_axis_contract.__wrapped__()
     next(generator)                                   # yield 까지 = 세션 시작
     with contextlib.suppress(StopIteration):
@@ -289,18 +297,82 @@ def test_the_finalizer_does_not_write_below_the_floor_but_still_dies_with_the_co
     assert "3" in message and str(floor) in message, message
 
 
+# ------------------------------------------------- 옮겨온 누적 관측 (ADR 0017 결정 1 — 지운 것이 아니다)
+# `test_axis_mode_matches_the_environment` 가 테스트 함수 안에서 읽던 `engines`·`tests_on_postgres` 는
+# 세션 파이널라이저로 갔다. **「단언을 지웠다」와 「단언을 옮겼다」는 그 자리를 안 보면 같은 출력을 낸다**
+# (CLAUDE.md §6-2 1) — 아래 넷이 그 둘을 가른다: 앞 둘은 순수 함수, 뒤 둘은 **저장소의 그 파이널라이저**를
+# 직접 돌린다(호출을 지우면 뒤 둘이 죽는다).
+def test_the_contract_also_names_the_engine_count():
+    """postgres 축의 옮겨온 칸 — 엔진이 하나가 아니면 계약이 죽고, 메시지가 **실제 수**를 싣는다."""
+    floor = axis.read_floor()
+    axis.check_contract(dialect="postgresql", engines=1, tests_on_postgres=floor, floor=floor)   # 양성
+    for engines in (0, 2):
+        with pytest.raises(AssertionError) as caught:
+            axis.check_contract(dialect="postgresql", engines=engines, tests_on_postgres=floor, floor=floor)
+        assert str(engines) in str(caught.value), (engines, str(caught.value))
+
+
+def test_the_sqlite_inert_check_dies_on_any_observation():
+    """sqlite 축의 옮겨온 칸 — 셋 중 **하나만** 움직여도 죽는다(축이 조용히 넓어지는 모양)."""
+    axis.check_sqlite_axis_is_inert(dialect=None, engines=0, tests_on_postgres=0)                # 양성
+    for kwargs in ({"dialect": "sqlite"}, {"engines": 1}, {"tests_on_postgres": 1}):
+        base = {"dialect": None, "engines": 0, "tests_on_postgres": 0} | kwargs
+        with pytest.raises(AssertionError):
+            axis.check_sqlite_axis_is_inert(**base)
+
+
+def test_the_finalizer_dies_when_a_postgres_session_observed_more_than_one_engine(monkeypatch, tmp_path):
+    """배선 — 저장소의 파이널라이저가 그 엔진 수를 **실제로 읽는다**. 인자를 빼면 여기서 죽는다.
+
+    바닥값은 만족시켜 놓는다 — 그래야 죽는 이유가 엔진 수 하나로 갈린다(§6-2 1: 결함이 있으면 값이
+    달라지는 배역). 파일은 센티널 그대로여야 한다(쓰기는 게이트 뒤가 아니라 단언 앞이므로 이 칸은
+    "썼는데 죽었다"가 아니라 "썼고 죽었다"를 구별하지 않는다 — 그 구별은 형제 둘이 한다).
+    """
+    floor = axis.read_floor()
+    measured = tmp_path / "measured.json"
+    measured.write_bytes(SENTINEL)
+    with pytest.raises(AssertionError) as caught:
+        _drive_the_repo_finalizer(monkeypatch, measured, dialect="postgresql", tests_on_postgres=floor, engines=3)
+    assert "3" in str(caught.value), str(caught.value)
+
+
+def test_the_finalizer_dies_when_a_sqlite_session_observed_anything(monkeypatch, tmp_path):
+    """배선 — sqlite 갈래의 무동작 단언도 파이널라이저가 **실제로 부른다**.
+
+    음성 대조군이 같은 함수에 있다: 아무것도 관측하지 않은 sqlite 세션은 조용히 지나가고 파일도 그대로다.
+    그 칸이 없으면 이 테스트는 "언제나 죽는 배선"과 구별되지 않는다.
+    """
+    measured = tmp_path / "measured.json"
+    measured.write_bytes(SENTINEL)
+    _drive_the_repo_finalizer(monkeypatch, measured, dialect=None, tests_on_postgres=0,
+                              engines=0, postgres_url=None)                      # 음성 대조군
+    assert measured.read_bytes() == SENTINEL
+    with pytest.raises(AssertionError) as caught:
+        _drive_the_repo_finalizer(monkeypatch, measured, dialect=None, tests_on_postgres=2,
+                                  engines=1, postgres_url=None)
+    assert "engines=1" in str(caught.value) and "tests_on_postgres=2" in str(caught.value), str(caught.value)
+    assert measured.read_bytes() == SENTINEL
+
+
 # ------------------------------------------------------------------ 두 축의 실제 모드
 def test_axis_mode_matches_the_environment(client):
-    """양성(postgres 축)과 음성(sqlite 축)을 같은 테스트 id 로 세운다 — skip 을 만들지 않기 위해서다."""
+    """양성(postgres 축)과 음성(sqlite 축)을 같은 테스트 id 로 세운다 — skip 을 만들지 않기 위해서다.
+
+    **여기서 읽는 값은 「그 시점에 이미 확정된 것」뿐이다**(ADR 0017 결정 1). `engines` 와
+    `tests_on_postgres` 는 세션 동안 **증가하는** 값이라 이 함수 안에서 읽으면 축의 옳음이 아니라
+    **자기 앞에 무엇이 돌았는지**를 재게 된다 — 그것이 §후속 37 이다(이 파일을 단독으로 postgres 축에서
+    돌리면 축은 옳게 섰는데 `tests_on_postgres` 가 0 이라 빨갰다). 그 둘의 자리는 세션 파이널라이저
+    하나이고(`conftest.db_axis_contract` → `check_contract` · `check_sqlite_axis_is_inert`), **관측을
+    지운 것이 아니라 옮긴 것**임을 아래 두 함수가 그 배선을 직접 돌려 붙든다:
+    `test_the_finalizer_dies_when_a_postgres_session_observed_more_than_one_engine` ·
+    `test_the_finalizer_dies_when_a_sqlite_session_observed_anything`.
+    """
     if RECORDER.is_postgres:
         assert RECORDER.dialect == "postgresql", RECORDER
-        assert RECORDER.engines == 1, RECORDER
         assert settings.database_url.startswith("postgresql+psycopg://")
         assert settings.seed_dev_data is True      # 시드가 `or` 의 **우변**으로 켜졌다(ADR 0014 §2-3 4)
-        assert RECORDER.tests_on_postgres > 0, RECORDER
     else:
-        assert RECORDER.dialect is None and RECORDER.engines == 0, RECORDER
-        assert RECORDER.tests_on_postgres == 0, RECORDER
+        assert RECORDER.dialect is None, RECORDER
         assert settings.database_url.startswith("sqlite:")
         assert settings.seed_dev_data is False     # 시드는 `or` 의 **좌변**으로 켜진다 — 축이 넓혀지지 않았다
         now = axis.MEASURED_PATH.read_bytes() if axis.MEASURED_PATH.exists() else None

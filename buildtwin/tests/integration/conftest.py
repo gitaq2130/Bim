@@ -59,6 +59,10 @@ def db_axis_contract():
     if not RECORDER.is_postgres:
         # 계약 3 은 "아무 일도 안 일어났다"라 **세션 끝에서** 확인해야 한다 — 테스트 안에서만 비교하면
         # teardown 에 있는 쓰기가 비교보다 뒤라 그 변이가 살아남는다(작업 6 실측 M9).
+        # 누적 관측(engines·tests_on_postgres)의 무동작도 같은 이유로 여기다(ADR 0017 결정 1) — 예전에는
+        # `test_99` 가 그 둘을 테스트 함수 안에서 읽었고, 그래서 그 파일 단독 실행이 빨갰다(§후속 37).
+        axis.check_sqlite_axis_is_inert(dialect=RECORDER.dialect, engines=RECORDER.engines,
+                                        tests_on_postgres=RECORDER.tests_on_postgres)
         axis.check_sqlite_noop(measured_now=axis.current_measured_bytes(), measured_at_import=axis.MEASURED_AT_IMPORT)
         return
     floor = axis.read_floor()
@@ -69,7 +73,8 @@ def db_axis_contract():
     # 바닥값 미달 실행은 그대로 teardown 에서 빨개진다.
     if axis.should_write_measured(tests_on_postgres=RECORDER.tests_on_postgres, floor=floor):
         axis.write_measured(RECORDER, floor)
-    axis.check_contract(dialect=RECORDER.dialect, tests_on_postgres=RECORDER.tests_on_postgres, floor=floor)
+    axis.check_contract(dialect=RECORDER.dialect, engines=RECORDER.engines,
+                        tests_on_postgres=RECORDER.tests_on_postgres, floor=floor)
 
 
 def pytest_terminal_summary(terminalreporter) -> None:
