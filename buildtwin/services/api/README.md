@@ -8,7 +8,7 @@
 
 | 파일 | 역할 |
 |---|---|
-| `main.py` | `create_app()` / `app`. CORS, `/api` 프리픽스, startup `init_db()` + (sqlite 이거나 `SEED_DEV_DATA`) 데모 사용자·프로젝트 멤버십 시드 |
+| `main.py` | `create_app()` / `app`. CORS, `/api` 프리픽스, startup `init_db()` — **테이블 생성만** 한다(데모 시드는 기동이 하지 않는다, ADR 0018 §2-1) |
 | `deps.py` | `get_session`, `get_current_user`(JWT Bearer), `require_role(*roles)`(비-프로젝트 라우트), `require_project_role(*roles)`/`project_role(...)`(ADR 0006, 프로젝트 범위 인가) |
 | `auth/` | 로그인·등록(admin, 첫 사용자 부트스트랩), 비밀번호 해시(bcrypt → pbkdf2 폴백), JWT(settings.jwt_secret), 개발 시드(사용자 + 데모 프로젝트 멤버십) |
 | `storage.py` | 업로드 저장 `settings.storage_root/<project_id>/<file_id>_<filename>`, sha256, MinIO 미러(선택) |
@@ -20,12 +20,25 @@
 | `routers/`, `schemas/` | HTTP 계약(프론트 `apps/web/src/api/types.ts` 와 필드명 일치) |
 | `scripts/gen_api_doc.py` | `docs/api.md` 생성 |
 
-## 개발용 데모 사용자 (sqlite 기본, `SEED_DEV_DATA` 로 확장)
+## 개발용 데모 사용자 (명시적 명령 `make seed`)
 
-startup 시 `settings.database_url` 이 `sqlite` 이거나 `SEED_DEV_DATA`(`settings.seed_dev_data`, 기본 `False`)가 켜져 있고
-`users` 테이블이 비어 있으면 `auth/seed.py` 가 아래 계정을 만든다(비밀번호 모두 `buildtwin`). PostgreSQL 등 다른 DB 는
-그 플래그를 켜야 시드되고(ADR 0014 §2-3 4 — 값은 `.env` 로만 준다, CLAUDE.md §3-4), 플래그 없이 쓰면 첫 사용자는
-`POST /api/auth/register`(users 가 비어 있으면 누구나 호출 가능, 첫 사용자는 admin) 로 만든다.
+데모 계정·데모 프로젝트는 **기동의 부수 효과가 아니라 명시적 명령**이 만든다(ADR 0018 §2-1·§2-2):
+`make seed` = `python -m services.api.seed`. 같은 프로세스 안에서 부르는 소비자(통합·e2e 픽스처)는
+`services.api.seed.seed_all(session)` 을 쓴다. 명령은 **어떤 DB 인지 가리지 않는다** — 운영 URL 을 주고
+부르면 운영에 아래 계정이 생긴다(ADR 0018 §2-4 ㉠). 비밀번호는 모두 `buildtwin` 이고, 시크릿이 아니라
+개발 시드 전용 문서값이다(`auth/seed.py` 의 `DEV_SEED_PASSWORD`).
+
+**계약은 종료 코드로 갈라서 말한다**(ADR 0018 §9-2 — 「명령이 ①②를 만든다」가 아니다).
+`rc=0` 이면 **그 DB 에서** ① 아래 네 계정이 이메일과 role 이 **함께** 존재하고 ② 데모 프로젝트
+`p-dev-demo` 와 contractor·cm·client **셋**의 멤버십이 존재한다. `rc=1` 이면 ①② 중 무엇이 성립하지
+않는지를 stderr 에 이름으로 적는다 — `auth/seed.py` 는 `users` 가 비어 있을 때만 계정을 만들므로
+**데모와 무관한 계정 하나만 있어도** 이 명령은 아무것도 만들지 않는다. `rc=2` 는 호출이 틀렸다
+(인자를 받지 않는다). 하위 프로세스로 부르는 쪽은 stdout 이 아니라 이 값을 봐야 한다.
+
+시드하지 않은 빈 DB 에는 계정이 하나도 없다. 그 DB 의 첫 사용자는
+`POST /api/auth/register`(`users` 가 비어 있으면 누구나 호출 가능, 첫 사용자는 admin — `auth/router.py`
+의 `users_count(session) == 0` 갈래)로 만든다. 이 갈래는 sqlite·postgres 를 가리지 않으며, 그 처분은
+계획 0014 §후속 67 이 연다(이 사이클은 닫지 않았다).
 
 | email | role |
 |---|---|
@@ -36,8 +49,8 @@ startup 시 `settings.database_url` 이 `sqlite` 이거나 `SEED_DEV_DATA`(`sett
 
 시드는 이 4계정에 더해 데모 프로젝트(`p-dev-demo`, "개발용 데모 현장")를 만들고 contractor/cm/client 에게
 같은 이름의 프로젝트 역할로 멤버십을 준다(ADR 0006 — `auth/seed.py`의 `seed_dev_project`). `admin` 은
-멤버십을 받지 않는다(아래 "프로젝트 멤버십과 인가" 참고). 기존 개발 플로우(로그인만 하면 바로 현장이
-보이는 것)가 이 멤버십 덕에 그대로 동작한다.
+멤버십을 받지 않는다(아래 "프로젝트 멤버십과 인가" 참고). **시드한 DB 에서** 로그인만 하면 바로 현장이
+보이는 것이 이 멤버십 덕이다.
 
 ## 프로젝트 멤버십과 인가 (ADR 0006)
 

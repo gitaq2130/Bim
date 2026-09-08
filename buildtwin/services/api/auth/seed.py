@@ -1,9 +1,12 @@
-"""개발용 데모 사용자·프로젝트 시드. 기본값에서는 sqlite 개발 DB 에만 적용된다.
+"""개발용 데모 사용자·프로젝트 시드. **어느 DB 에 적용되는지는 부르는 쪽이 정한다.**
 
-`seed_dev_users(session)` 는 main.py 의 startup 에서 **settings.database_url 이 sqlite 이거나 `SEED_DEV_DATA`
-(`settings.seed_dev_data`, 기본 False)가 켜져 있을 때** 호출되고, **users 테이블이 비어 있을 때만** 계정을 만든다
-(ADR 0014 §2-3 4). 플래그를 켠 DB 에는 운영이라도 아래 계정이
-생기므로 값은 `.env` 로만 준다(CLAUDE.md §3-4). 계정(모두 비밀번호 `buildtwin`):
+`seed_dev_users(session)` 를 **기동은 부르지 않는다** — 부르는 것은 명시적 명령
+`python -m services.api.seed`(`make seed`)와 그것이 감싸는 `services.api.seed.seed_all(session)` 뿐이다
+(ADR 0018 §2-1·§2-2). 이 함수는 **users 테이블이 비어 있을 때만** 계정을 만들고, 그 DB 가 개발용인지
+운영인지 가리지 않는다 — 운영 DB 를 가리키고 명령을 치면 운영에 아래 계정이 생긴다(ADR 0018 §2-4 ㉠).
+계정 넷과 멤버십이 **그 DB 에서 성립하는지**는 이 함수가 아니라 명령의 종료 코드가 말한다:
+`rc=0` 이면 성립하고, `rc=1` 이면 무엇이 없는지를 stderr 에 이름으로 적는다
+(`services/api/seed.py` 의 `unmet_contract`, ADR 0018 §9-2). 계정(모두 비밀번호 `buildtwin`):
 
 | email | role |
 |---|---|
@@ -15,8 +18,8 @@
 ADR 0006(프로젝트 멤버십)부터는 `project_id`가 인가의 단위다 — 멤버십이 없으면 `contractor`/`cm`/`client`
 데모 계정도 어떤 프로젝트도 볼 수 없다. `seed_dev_project(session, users)`가 데모 프로젝트
 (`DEV_SEED_PROJECT_ID`)를 만들고 세 계정에 이름과 같은 프로젝트 역할(contractor→contractor, cm→cm,
-client→client)로 멤버십을 준다 — 기존 개발 플로우(로그인만 하면 바로 현장이 보이는 것)가 그대로 동작하게
-하기 위함이다. `admin` 은 멤버십을 받지 않는다(ADR 0006 §4: admin 은 이미 조회 가능하고 행위 역할이 없다).
+client→client)로 멤버십을 준다 — **시드한 DB 에서** 로그인만 하면 바로 현장이 보이게 하기 위함이다.
+`admin` 은 멤버십을 받지 않는다(ADR 0006 §4: admin 은 이미 조회 가능하고 행위 역할이 없다).
 """
 from __future__ import annotations
 
