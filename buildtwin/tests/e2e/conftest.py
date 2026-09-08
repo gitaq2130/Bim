@@ -61,6 +61,30 @@ E2 는 그 값이 **실제로 프록시를 정하는지**를 따로 태운다(E1
 그리고 compose 의 `web.environment` **키** 철자는 이 파일이 보지 않는다(그쪽은
 `tests/invariants/test_demo_stack_can_stand.py` ⑥).
 
+## preview 갈래도 `/api` 의 에러 핸들러를 지난다 (ⓧ — 계획 0016 작업 2 조건 5, ADR 0020 §8 4행)
+
+`6ac7a19` 이 `apps/web/vite.config.ts` 의 `server.proxy["/api"]` 에 `configure` 를 두어 **대상이 답하지
+않을 때 본문 있는 502** 를 만들었는데, 아래 `PREVIEW_CONFIG` 가 `preview.proxy["/api"]` 에
+`target`·`changeOrigin` 두 키를 **다시 선언**해 그 핸들러가 이 갈래에 오지 않았다. 그래서 그 머리
+주석의 *"vite.config.ts 를 그대로 쓰되"* 가 거짓이었고, **고친 것은 주석이 아니라 코드다** — 옵션
+객체를 펼쳐 물려받는다(주석은 그 참을 정확히 적도록 다시 썼다).
+
+방법(각 **N=1**, 한 세션 안 · 서로 몇 분 간격): 대상은 **닫힌 포트**(bind 뒤 닫아 얻은 번호),
+`BUILDTWIN_API_PROXY_TARGET=<그 대상> npx vite [preview --config <그 설정>] --port <빈 포트>
+--strictPort --host 127.0.0.1` 로 띄우고 `/api/health` 의 status 와 본문 바이트를 읽는다.
+
+| 트리 | 갈래 | status | 본문 바이트 |
+|---|---|---|---|
+| `6ac7a19` | dev | **502** | **404** |
+| `6ac7a19` | preview(옛 `PREVIEW_CONFIG`) | **500** | **0** |
+| 이 커밋 | preview(아래 `PREVIEW_CONFIG`) | **502** | **404** |
+
+**dev 와 preview 가 같은 값을 낸다**는 것이 이 변경의 값이다. 그 본문의 문자열은 `frontend` 소유이고
+(`apps/web/vite.config.ts` 의 `apiProxyFailureBody`) 이 파일은 그것을 **베끼지 않는다** — 베끼면 같은
+문자열이 두 자리에 살고 한쪽이 바뀌면 다른 쪽이 조용히 낡는다. 그 본문이 preview 갈래에서도
+*"vite dev 서버가 만들었다"* 라고 적는 것은 그대로 관측된다 — ADR 0020 §2-4 가 preview 갈래를 계약
+밖에 두므로 이 파일은 그것을 고치지 않고 값으로만 적어 둔다.
+
 ## `vite preview` 고아 — 1회당 1개였다 (작업 7)
 
 세는 법: `ps -eo args --no-headers | grep -c "^node .*vite preview"`(자기 셸을 세지 않도록 `node` 로
@@ -348,19 +372,35 @@ def seeded_project(api_server) -> dict:
 API_PROXY_TARGET_ENV = "BUILDTWIN_API_PROXY_TARGET"
 
 PREVIEW_CONFIG = """// 자동 생성(tests/e2e/conftest.py) — E2E 스모크용 vite preview 설정. 커밋하지 않는다(.gitignore).
-// apps/web/vite.config.ts 를 그대로 쓰되 /api 프록시 대상을 **문 4 의 그 자리**에서 읽는다.
+// apps/web/vite.config.ts 의 `/api` 프록시 **옵션 객체를 통째로 물려받고**(그 안의 `configure` =
+// 대상이 답하지 않을 때의 에러 핸들러 포함) **대상만** 문 4 의 그 자리에서 다시 읽는다.
 // apps/web 안에 두는 이유: vite 가 설정 파일 위치 기준으로 'vite' 패키지를 해석한다(tests/ 아래에서는 못 찾는다).
 //
-// **여기에 대상을 상수로 적으면 `make e2e` 는 문 4 를 구조적으로 못 본다.** vite 는 preview.proxy 가
-// 있으면 server.proxy 를 보지 않으므로(frontend 실측), 상수로 적던 트리에서는 resolveApiProxyTarget 이
-// E2E 전체에서 **한 번도 불리지 않았다** — 그 함수가 부러져도 12 passed 였다. 그래서 대상을 그 함수에서
-// 받고, 값은 web_server 픽스처가 환경으로 준다(그 포트는 실행마다 다르다).
-import { mergeConfig } from "vite";
+// **vite 는 preview.proxy 가 있으면 server.proxy 를 보지 않는다**(frontend 실측). 그래서 여기에 키를
+// 다시 적으면 base 에만 있는 키는 이 갈래에 **오지 않고**, 그 손해는 두 번 다 「조용히 다른 것을 잰다」
+// 였다:
+//   ① 대상을 상수로 적던 트리 — `resolveApiProxyTarget` 이 E2E 전체에서 한 번도 불리지 않아 그 함수가
+//      부러져도 12 passed 였다(계획 0015 작업 7).
+//   ② `target`·`changeOrigin` **두 키만** 다시 적던 트리(`6ac7a19`) — vite.config.ts 의 에러 핸들러가
+//      이 갈래에 오지 않아, 대상을 닫힌 포트로 두고 `/api/health` 를 치면 dev 갈래는 **502 · 본문
+//      404바이트**인데 preview 갈래는 **500 · 본문 0바이트**였다(방법·N 은 이 파일 머리 표).
+// 그래서 키를 **다시 세지 않고 객체를 펼친다** — base 에 키가 하나 더 생겨도 이 갈래가 그것을 지난다.
+import { mergeConfig, type ProxyOptions } from "vite";
 import base from "./vite.config";
 import { resolveApiProxyTarget } from "./vite.proxy-target";
 
+// 물려받을 것이 없으면 **기본 동작으로 조용히 떨어지지 않고** 여기서 죽는다 — 그 조용함이 위 ② 다.
+const inherited = base.server?.proxy?.["/api"];
+if (!inherited || typeof inherited === "string") {
+  throw new Error(
+    "vite.config.ts 의 server.proxy['/api'] 가 객체가 아니다 — preview 갈래가 그 설정을 물려받지 못한다. " +
+      "tests/e2e/conftest.py 의 PREVIEW_CONFIG 를 그 모양과 함께 고쳐라.",
+  );
+}
+const apiProxy: ProxyOptions = inherited;
+
 export default mergeConfig(base, {
-  preview: { proxy: { "/api": { target: resolveApiProxyTarget(), changeOrigin: true } } },
+  preview: { proxy: { "/api": { ...apiProxy, target: resolveApiProxyTarget() } } },
 });
 """
 

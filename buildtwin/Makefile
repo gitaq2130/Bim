@@ -29,6 +29,9 @@ env: ## .env 가 없으면 만든다(문 1·2). 있으면 **한 바이트도 바
 
 dev: ## API + Celery worker + web dev server (docker compose)
 	@echo "※ .env 가 없으면 compose 가 **파일 해석 단계에서** 죽는다(env file ... not found) — 먼저 'make env'."
+	@echo "※ docker 데몬에 닿지 못하면(꺼져 있거나 소켓에 권한이 없으면) 이 명령은 그 다음, 첫 이미지에서 죽는다 —"
+	@echo "  그 stderr 의 조각: \"failed to connect to the docker API at unix:///var/run/docker.sock\"."
+	@echo "  그때 칠 것: 'docker info'(같은 조각이 나오면 그 문이다) · 데몬을 띄운다 · 다시 'make dev'."
 	@echo "  이 스택의 DB 는 compose 의 postgres(pgdata 볼륨)다. 로컬 sqlite(buildtwin.db)가 아니므로"
 	@echo "  'make db-reset'(rm -f *.db)은 이 DB 를 지우지 못한다 — 비우려면 'docker compose down -v'."
 	@echo "  packages/core/db.init_db 는 create_all 뿐이라 **기존 테이블에 새 컬럼을 추가하지 않는다** —"
