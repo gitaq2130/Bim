@@ -25,7 +25,10 @@ make api            # http://localhost:8000/api  (문서: /docs)
 make web            # http://localhost:5173  (API 프록시 /api)
 ```
 
-개발용 시드 계정(SQLite일 때 자동 생성): `cm@buildtwin.local`, `contractor@buildtwin.local`, `client@buildtwin.local`, `admin@buildtwin.local` / 비밀번호 `buildtwin` (`services/api/README.md`).
+개발용 시드 계정은 **기동이 만들지 않는다 — `make seed` 로 만든다**(ADR 0018 §2-1·§2-2, `python -m services.api.seed`).
+만들어지는 것: `cm@buildtwin.local`, `contractor@buildtwin.local`, `client@buildtwin.local`, `admin@buildtwin.local` / 비밀번호 `buildtwin` (`services/api/README.md`).
+멱등이고, 만들지 못했으면 **종료 코드 1** 과 무엇이 없는지를 낸다. 시드는 `DATABASE_URL` 이 가리키는 DB 에 만든다 — 어떤 DB 인지 가리지 않는다(ADR 0018 §2-4 ㉠).
+시드하지 않은 빈 DB 로 API 를 띄우면 계정이 하나도 없고, 그때 `POST /api/auth/register` 는 인증 없이도 첫 계정을 만든다(그 계정은 admin 이 된다 — `services/api/auth/router.py`).
 
 전체 스택(PostGIS·Redis·MinIO·워커)은 `make dev` (docker compose).
 

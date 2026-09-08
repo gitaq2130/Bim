@@ -14,10 +14,6 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./buildtwin.db"
     redis_url: str = "redis://localhost:6379/0"
     celery_always_eager: bool = True          # 개발·테스트 기본. 운영은 .env에서 False
-    seed_dev_data: bool = False               # 데모 사용자·프로젝트 시드를 sqlite 가 아닌 DB 에서도 켠다(ADR 0014 §2-3 4).
-                                              # 소비자는 services/api/main.py 하나뿐이고, 그 조건은 sqlite 갈래를 넓히기만 한다
-                                              # (갈아치우면 make dev 와 sqlite 통합 테스트가 죽는다 — ADR 0014 Alternatives 5).
-                                              # 켜면 그 DB 에 데모 계정이 생긴다. 값은 .env 로만 준다(§3-4).
     storage_root: str = str(ROOT / "storage")  # MinIO 미사용 시 로컬 파일 저장소 폴백
     minio_endpoint: str | None = None
     minio_access_key: str | None = None
