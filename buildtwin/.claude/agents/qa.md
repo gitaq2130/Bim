@@ -13,12 +13,21 @@ model: sonnet
 ## 담당 디렉터리
 - `tests/` 전체
   - `tests/unit/<service>/` — 서비스별 pytest
-  - `tests/integration/` — API+Celery(eager)+DB. DB 축은 `BUILDTWIN_CI_POSTGRES_URL`(ADR 0014 §2-2):
-    그 이름이 있으면 PostgreSQL + 세션 전용 스키마, 없으면 임시 SQLite. 두 갈래를 CI 가 둘 다 돈다
+  - `tests/integration/` — API+Celery(eager)+DB
   - `tests/e2e/` — Playwright
   - `tests/fixtures/` — 샘플 파일과 기대값 JSON
   - `tests/metrics.json` — 회귀 기준 수치
   - `tests/conftest.py`
+- **DB 축은 트리 하나의 것이 아니다** — 축을 이 파일의 `tests/integration/` 항목에 매달아 적던 줄을
+  지웠다(계획 0013 이 그 줄을 불완전하게 만들었다: 축이 두 번째 트리를 가졌다). 여기에 그 답을 다시
+  적지 않는다 — 정본은 ADR 0014 §2-2(축 이름) · ADR 0017 결정 2·3(트리별 바닥값 키 · 격리 단위는
+  소유자가 고른다)이고, **오늘의 배선은 그 자리에서 도는 참조로 읽는다**(CLAUDE.md §3-13 둘째 갈래 —
+  이 파일은 못박을 트리가 없어 복창이 조용히 낡는다. 같은 이유로 아래 회귀 기준도 값을 안 싣는다):
+  - 축 하나가 어느 트리들을 도는가 — `sed -n '1,6p' tests/helpers/postgres_axis.py`(**재서술 · 발췌**:
+    축은 세션의 성질이고 각 트리는 자기 기록기·자기 바닥값 키만 본다. 자구는 그 자리에서 읽는다)
+  - 그 트리 목록 자신 — `grep -rln "postgres_axis" tests/ --include='*.py'`
+  - 격리 단위가 트리마다 다르다 — `grep -n "격리 단위" tests/unit/conftest.py` ·
+    `grep -n "세션 전용 스키마" tests/integration/conftest.py`(**각각 그 파일 안 히트 하나**)
 - `.github/workflows/` — CI
 - `Makefile` — `make dev / test / lint / docs / fixtures`
 - `apps/web/src/**/*.test.ts(x)` 와 `apps/web/src/test/`(vitest 하네스 디렉터리 전체) — **소유 정본은
