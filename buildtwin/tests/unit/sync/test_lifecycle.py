@@ -1,4 +1,4 @@
-"""매핑 생명주기(rebuild_mappings)·검토요청 해소(사람만)·행 단위 확정 테스트. packages.core.db 의 in-memory sqlite 사용."""
+"""매핑 생명주기(rebuild_mappings)·검토요청 해소(사람만)·행 단위 확정 테스트. `packages.core.db` 의 엔진을 축이 정한 URL 로 쓴다(`session` 픽스처)."""
 from __future__ import annotations
 
 import pytest

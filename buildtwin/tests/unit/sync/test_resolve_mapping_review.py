@@ -1,5 +1,5 @@
 """resolve_mapping_review: conflicting_sources 파싱은 sync 가 하고, ReviewRequestRow 하나를 처리한다.
-api 는 이 함수만 호출한다(dict 키 이름을 몰라도 됨). packages.core.db 의 in-memory sqlite 사용."""
+api 는 이 함수만 호출한다(dict 키 이름을 몰라도 됨). `packages.core.db` 의 엔진을 축이 정한 URL 로 쓴다."""
 from __future__ import annotations
 
 import pytest

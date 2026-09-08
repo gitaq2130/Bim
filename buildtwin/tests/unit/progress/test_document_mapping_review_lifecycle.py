@@ -28,8 +28,8 @@ document_mapper 모듈 자체의 계약을 고정하는 자리라 기존 관례(
 이고 DB 스캔 순서가 아니다**. 그 정렬(`services/progress/persistence.py::document_mapping_reviews` 의
 `sorted(...)`)이 지키는 값은 취소가 싣는 `cancelled_review_request_id` = CM 이 "어느 결정을 취소했는가"를
 읽는 값인데(ADR 0013 규칙 2), 그 줄을 `return rows` 로 바꿔도 기준선이 그대로였다(계획 0007 §후속 9,
-`136e66f` 실측 **805 passed**). 이유는 테스트가 없어서가 아니라 **배역이 장식이어서**다 — SQLite 의 스캔
-순서가 곧 삽입 순서이고 삽입 순서가 곧 `created_at` 순서라 두 구현이 같은 값을 낸다. 항목 8 은 두 순서를
+`136e66f` 실측 **805 passed**). 이유는 테스트가 없어서가 아니라 **배역이 장식이어서**다 — sqlite 축에서
+스캔 순서가 곧 삽입 순서이고 삽입 순서가 곧 `created_at` 순서라 두 구현이 같은 값을 낸다. 항목 8 은 두 순서를
 어긋나게 **만들어** 그 전제를 깬다(그 어긋냄을 힙 배치로 만들지 않는다 — ADR 0015). 소비자 쪽(취소가 실제로 싣는 id)은
 `tests/integration/test_20_mapping_decision_cancel.py` 가 같은 사이클에서 붙든다.
 """
@@ -285,10 +285,10 @@ def test_rejection_pinned_to_doc_id_survives_recompute_but_not_a_renamed_title(s
 def _heap_probe(session, labelled: dict[str, str]) -> str:
     """힙 배치 진단(ADR 0015 §2-4) — **postgres 축에서만 값을 갖는다.**
 
-    이 트리의 `tests/unit` 은 오늘 sqlite 다(계획 0009 §후속 16 이 그것을 여는 항목이다). 그래서 이
-    함수는 오늘 언제나 빈 문자열을 돌려준다 — **없는 값을 지어내지 않는다**(CLAUDE.md §6-4 2).
-    통합 짝(`tests/integration/test_20_mapping_decision_cancel.py::_heap_probe`)과 같은 모양으로 두는
-    이유는 §후속 16 이 이 트리를 postgres 로 옮기는 순간 같은 진단이 필요하기 때문이다.
+    이 트리는 축을 읽는다(`tests/unit/conftest.py`): 축이 서 있으면 이 함수가 `ctid` 와
+    `pg_stat_all_tables` 의 실제 값을 싣고, 축이 없으면 sqlite 라 **빈 문자열**을 돌려준다 —
+    **없는 값을 지어내지 않는다**(CLAUDE.md §6-4 2). 통합 짝
+    (`tests/integration/test_20_mapping_decision_cancel.py::_heap_probe`)과 같은 모양이다.
     """
     if session.get_bind().dialect.name != "postgresql":
         return ""
@@ -313,7 +313,7 @@ def _make_scan_order_disagree_with_created_at(session, earlier_id: str, later_id
     **PostgreSQL 계약이 아니다** — 되돌아온 line pointer 를 다음 `INSERT` 가 먼저 집으면 그 행이
     **앞으로** 간다(계획 0010 §1-b: 통합 짝에서 강제 `VACUUM` 아래 대상 `ctid` 가 `(0,7)` → `(0,4)`,
     N=5 · 5/5 적색. 잰 트리 `743bcb9`; 이 커밋의 부모 `a9b85d3` 에서 N=1 로 같은 값을 다시 쟀다).
-    오늘 이 트리는 sqlite 라 무해하지만 계획 0009 §후속 16 이 열리는 순간 같은 결함이 여기로 온다.
+    그 결함은 **이제 이 트리에도 온다** — 축이 서면 여기가 PostgreSQL 위에서 돈다.
 
     그래서 만드는 것은 **두 행의 상대 순서**뿐이다: 둘을 함께 지우고 **늦은 행 → 이른 행** 순으로 다시
     넣는다. **이것도 보장은 아니다**(postgres 에서 두 번째 `INSERT` 가 FSM 을 통해 앞 페이지로 갈 수
@@ -364,8 +364,8 @@ def test_document_mapping_reviews_orders_by_created_at_not_by_db_scan_order(sess
     """확정1 → 취소1 → 확정2 로 닫힌 행 둘을 만든 뒤 두 행의 **스캔 순서를 `created_at` 역순으로
     어긋나게** 하고, 그래도 반환이 오래된 것부터인지 본다.
 
-    **왜 이 배역이어야 하는가(CLAUDE.md §6-2 1).** 어긋나게 하지 않으면 SQLite 의 스캔 순서가 곧 삽입
-    순서이고 삽입 순서가 곧 `created_at` 순서라, `return sorted(rows, key=...)` 와 `return rows` 가
+    **왜 이 배역이어야 하는가(CLAUDE.md §6-2 1).** 어긋나게 하지 않으면 **sqlite 축에서** 스캔 순서가
+    곧 삽입 순서이고 삽입 순서가 곧 `created_at` 순서라, `return sorted(rows, key=...)` 와 `return rows` 가
     **같은 값**을 낸다 — 그 배역으로 세운 단언은 결함 있는 코드도 그대로 만족한다(장식).
     실측(계획 0008 §1-b 2×2 표): 어긋나게 하지 않은 대조군은 두 구현 모두 옳은 답을 내고, 어긋난
     배역에서만 갈린다.
@@ -373,7 +373,8 @@ def test_document_mapping_reviews_orders_by_created_at_not_by_db_scan_order(sess
     **어긋났다는 것을 이 테스트가 스스로 단언한다**(§1-b-3). 인덱스·플래너·DB 가 바뀌어 스캔
     순서가 그대로면 위 대조군으로 떨어져 두 구현이 다시 구별되지 않는데, 그때 테스트는 **조용히
     장식이 된다** — 이 저장소의 지배적 실패 모드다. 그래서 재배치 전후의 raw 스캔 순서를 함께 단언하고
-    (ADR 0015 §2-2), 실패 메시지에 힙 진단을 싣는다(§2-4 — 오늘 이 트리는 sqlite 라 비어 있다).
+    (ADR 0015 §2-2), 실패 메시지에 힙 진단을 싣는다(§2-4 — sqlite 축에서는 비어 있고, postgres
+    축에서는 `ctid` 와 autovacuum 계수가 들어온다).
     이 트리의 실행값: 재배치 전 `['R1','R2']` · 재배치 뒤 `['R2','R1']`, 함수 반환은 **양쪽 다** `['R1','R2']`.
 
     **이 층만으로는 과잉 고정이다** — 정렬을 지우고 소비자에서 `max(key=created_at)` 로 옮긴 구현은
