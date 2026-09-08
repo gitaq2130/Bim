@@ -6,7 +6,7 @@
 // 아래 단언은 전부 실행되고, 환경이 바뀌어도 값이 갈리지 않는 순수 함수·설정 객체만 본다.
 import { describe, expect, it, vi } from "vitest";
 import type { ProxyOptions } from "vite";
-import config, { apiProxyFailureBody } from "../../vite.config";
+import config, { apiProxyFailureBody, apiProxyTargetText } from "../../vite.config";
 import { ApiError, request } from "./client";
 
 /**
@@ -39,9 +39,13 @@ import { ApiError, request } from "./client";
  * 변이는 **한 자리씩** 심고 **심기 직전의 작업 트리 사본과 `diff`** 로 적용을 확인한 뒤 재고, 그 사본으로
  * 원복하고 루트 `git status --porcelain` 을 확인했다. 명령은 매번 `npx vitest run`(apps/web).
  *
+ * **아래 W·P 표는 잰 트리 `ddf6bb9` 의 값이다**(그 표를 넣은 커밋 — 이 트리에서 다시 심지 않았다).
+ * 음성 대조군만 이 트리 직전(`f3eeeeb`)에서 재확인했다: **303 passed** (31 files, N=1).
+ * **이 커밋이 더한 단언의 변이 표는 아래 「두 구현을 가른다」 절에 따로 있다.**
+ *
  * | 변이 | 무엇을 심었나 | 실행값 |
  * |---|---|---|
- * | 음성 대조군 | 없음(이 커밋의 트리) | **303 passed** (31 files) |
+ * | 음성 대조군 | 없음(`ddf6bb9` 의 트리) | **303 passed** (31 files) |
  * | W1 | `vite.config.ts` 의 `configure`(에러 핸들러)를 통째로 지운다 = `6ac7a19` 이전의 두 키 | **3 failed, 300 passed** — 배선 둘과, 다른 파일(`previewProxyParity.test.ts`)의 「공허한 참을 막는」 단언 |
  * | W2 | `502` 를 `500` 으로 되돌린다 | **1 failed, 302 passed** — 배선의 status |
  * | W3 | `대상:` 줄을 상수 주소로 바꾼다 | **2 failed, 301 passed** — ⓘ 와 「지어내지 않는다」 |
@@ -53,6 +57,44 @@ import { ApiError, request } from "./client";
  * 가려 주지 않는다**(CLAUDE.md §6-2 3 — 축마다 양성을 따로 세운다).
  * **W1 이 세 칸인 것**은 배선과 preview 대조가 **같은 키 하나**(`configure`)에 걸려 있기 때문이고,
  * 그 셋이 다 죽어야 「에러 핸들러가 없다」가 한 자리에서 보인다.
+ *
+ * ## 두 구현을 가른다 — 모듈 상수 클로저 ↔ `options.target` (심사 0016 R1 처방 ②)
+ *
+ * **위 표의 어느 줄도 그 둘을 가르지 못했다.** 배선 단언이 `configure` 에 **base 를 그대로** 넘겨
+ * `options.target === apiProxyTarget` 이었기 때문이다 — 클로저를 쓰든 옵션을 쓰든 **같은 답**이다.
+ * 값(N=1): `f3eeeeb`(옵션으로 옮긴 커밋)의 클린 트리에서 `npx vitest run` 은 **303 passed**(31 files)로
+ * 그 이전과 갈리지 않았고, **아래 X1** — 이 트리에서 핸들러를 옛 구현으로 되돌린 변이 — 에서 죽는 것은
+ * **이 커밋이 더한 단언 하나뿐**이고 옛 303 은 전부 초록이다. 결함 있는 코드가 기대값을 그대로 만족하는 시나리오가 그것이다
+ * (CLAUDE.md §6-2 1 — 그 자리에서 도는 참조: `grep -n "결함 있는 코드가 그대로" ../../../../CLAUDE.md`).
+ *
+ * **그래서 가르는 자리를 옵션 객체에서 만든다**: `tests/e2e/conftest.py` 의 `PREVIEW_CONFIG` 와 같은
+ * 모양(`{ ...apiProxy, target }`)으로 **대상만 덮은** 옵션을 `configure` 에 넘긴다. 그러면 모듈 상수와
+ * `options.target` 이 **다른 값**이 되고, 본문이 어느 쪽을 싣는지가 값으로 갈린다.
+ *
+ * `apiProxyTargetText` 의 갈래 넷도 함께 태운다 — 그중 **부재**가 이 지적의 핵심이다: 대상이 없을 때
+ * 모듈 상수로 대신하면 **프록시가 가지 않은 곳을 대상이라 적는다**(있는데 없다고 적는 `code` 자리의
+ * 거울상이다).
+ *
+ * ### 변이 실측 (이 커밋의 트리, 각 N=1 — 방법은 위와 같다)
+ *
+ * | 변이 | 무엇을 심었나 | 실행값 |
+ * |---|---|---|
+ * | 음성 대조군 | 없음(이 커밋의 트리) | **310 passed** (31 files) |
+ * | X1 | **옛 구현으로 되돌린다** — 핸들러가 `apiProxyTargetText(options.target)` 대신 모듈 상수 `apiProxyTarget` 을 싣는다 | **1 failed, 309 passed** — 배선의 ⓘ 하나 |
+ * | X2 | 부재 갈래를 모듈 상수로 떨어뜨린다(`apiProxyTargetText` 의 첫 `return`) | **1 failed, 309 passed** — 부재 갈래 |
+ * | X3 | JSON 폴백을 지운다(`[object Object]` 를 그대로 싣는다) | **1 failed, 309 passed** — JSON 폴백 |
+ * | X4 | 문자열로 만들다 던지는 대상에서 **다시 던진다**(`catch` 의 `return` → `throw`) | **2 failed, 308 passed** — 순수 함수와 **배선**(502 본문이 나가지 못한다) |
+ *
+ * **X1 이 이 처방의 값이다** — 위 W 표 전부가 침묵한 그 한 자리에서 값이 갈린다.
+ * **X2·X3·X4 가 서로 다른 칸을 죽이는 것**은 슬롯 하나를 겨눈 단언과 「지어내지 않는다」가 서로를
+ * 가려 주지 않기 때문이다(§6-2 3 — 축마다 양성을 따로 세운다).
+ *
+ * ### 이 파일이 **보지 못하는** 것 (§6-1 ②)
+ *
+ * - **실제 응답의 바이트.** 설정 객체와 순수 함수만 본다 — 서버를 띄우지 않는다. 본문 길이를 계약으로
+ *   굳히지 않는 이유도 그것이다(그 값은 표본 호스트 이름 길이에 딸린다 — `f3eeeeb` 본문의 417 ↔ 445).
+ * - **vite 가 `configure` 에 실제로 무엇을 넘기는가.** 여기서는 우리가 옵션 객체를 만들어 넘긴다.
+ *   그 배선의 값은 `previewProxyParity.test.ts`(설정 객체 대조)와 `make e2e`(실제 preview)가 진다.
  */
 
 /** 배선을 태울 때 쓰는 가짜 응답 — 무엇이 쓰였는지만 기록한다. */
@@ -92,6 +134,23 @@ function apiProxyOptions(): ProxyOptions {
     throw new Error("vite.config.ts 의 server.proxy['/api'] 가 옵션 객체가 아니다.");
   }
   return options;
+}
+
+/**
+ * `tests/e2e/conftest.py` 의 `PREVIEW_CONFIG` 와 **같은 모양** — base 를 펼치고 **대상만 덮는다**.
+ * 이 객체가 `configure` 의 둘째 인자로 간다(vite 가 그 갈래에서 넘기는 것이 이것이다).
+ */
+function optionsWithTarget(target: unknown): ProxyOptions {
+  return { ...apiProxyOptions(), target } as unknown as ProxyOptions;
+}
+
+/** 문자열로 만들려 하면 던지는 대상. `String()` 은 `valueOf` 다음 `toString` 을 부른다. */
+function targetThatRefusesToBecomeText(): unknown {
+  return {
+    toString(): string {
+      throw new Error("이 대상은 문자열이 되지 않는다");
+    },
+  };
 }
 
 /** 본문이 싣는 모든 절대 주소. ⓘ 가 참인지는 「대상이 있다」가 아니라 「다른 것이 없다」로 갈린다. */
@@ -153,10 +212,72 @@ describe("(가) 배선 — dev 서버가 실제로 그 본문을 돌려준다", 
     expect(res.body.length).toBeGreaterThan(0);
   });
 
+  it("ⓘ 본문이 싣는 대상은 **그 프록시가 받은 옵션**의 것이다 — 모듈 상수가 아니다", () => {
+    // `PREVIEW_CONFIG` 처럼 대상만 덮은 옵션. 이 단언이 가르는 것은 「클로저로 닫은 모듈 상수」와
+    // 「그 프록시가 실제로 받은 대상」이고, base 를 그대로 넘기면 둘이 같은 값이라 갈리지 않는다.
+    const moduleTarget = String(apiProxyOptions().target);
+    const overridden = "http://127.0.0.1:1";
+    expect(overridden, "덮은 대상이 모듈 상수와 같으면 이 단언은 두 구현을 가르지 못한다").not.toBe(moduleTarget);
+
+    const res = fakeResponse();
+    proxyErrorHandler(optionsWithTarget(overridden))(CONNECTION_REFUSED, {}, res);
+    expect(res.status).toBe(502);
+    expect(urlsIn(res.body)).toEqual([overridden]);
+    expect(res.body, "덮은 갈래의 본문이 모듈 상수를 싣는다 — 프록시가 가지 않은 곳을 대상이라 적는다").not.toContain(moduleTarget);
+    expect(res.body).toBe(apiProxyFailureBody(overridden, CONNECTION_REFUSED));
+  });
+
+  it("대상이 문자열이 되지 않아도 502 와 본문이 나간다 — 여기서 던지면 사용자가 보는 것이 아무것도 아니다", () => {
+    const res = fakeResponse();
+    const handler = proxyErrorHandler(optionsWithTarget(targetThatRefusesToBecomeText()));
+    expect(() => handler(CONNECTION_REFUSED, {}, res)).not.toThrow();
+    expect(res.status).toBe(502);
+    expect(res.body).toContain(CONNECTION_REFUSED.code);
+    expect(res.body).toContain(CONNECTION_REFUSED.message);
+  });
+
   it("응답을 쓸 수 없는 자리(ws 업그레이드)에서는 소켓을 닫을 뿐 status 를 지어내지 않는다", () => {
     const socket = { destroy: vi.fn() };
     proxyErrorHandler(apiProxyOptions())(CONNECTION_REFUSED, {}, socket);
     expect(socket.destroy).toHaveBeenCalled();
+  });
+});
+
+describe("(가) ⓘ 대상 문자열 — 없는 것을 지어내지 않고, 있는 것을 없다고 적지 않는다", () => {
+  it("대상이 없으면 없다고 적는다 — **모듈 상수로 대신하지 않는다**", () => {
+    const moduleTarget = String(apiProxyOptions().target);
+    for (const absent of [undefined, null]) {
+      const text = apiProxyTargetText(absent);
+      expect(text, "대상이 없는데 문자열이 비었다 — 「대상:」 줄이 아무 말도 하지 않는다").not.toBe("");
+      expect(text, `대상이 없는데 모듈 상수(${moduleTarget})를 적는다 — 프록시가 가지 않은 곳을 대상이라 적는다`).not.toContain(moduleTarget);
+      expect(urlsIn(text), "대상이 없는데 주소를 지어낸다").toEqual([]);
+    }
+  });
+
+  it("문자열 대상은 그대로 적는다 — 다듬지 않는다", () => {
+    expect(apiProxyTargetText("http://api:8000")).toBe("http://api:8000");
+  });
+
+  it("주소를 낼 수 있는 객체 대상은 그 주소를 적는다 — 「없다」로 떨어뜨리지 않는다", () => {
+    const text = apiProxyTargetText(new URL("http://api:8000/health"));
+    expect(urlsIn(text)).toEqual(["http://api:8000/health"]);
+  });
+
+  it("`[object Object]` 밖에 내지 못하는 대상은 자기 값을 싣는다 — 주소인 척 조립하지 않는다", () => {
+    const text = apiProxyTargetText({ host: "api", port: 8000 });
+    expect(text).toContain("api");
+    expect(text).toContain("8000");
+    expect(text, "이 문자열은 대상에 대해 아무것도 말하지 않는다").not.toContain("[object Object]");
+    expect(urlsIn(text), "객체가 주소를 말하지 않는데 주소를 지어낸다").toEqual([]);
+  });
+
+  it("문자열로 만들다 던지는 대상에서 다시 던지지 않는다 — 그 자리를 알지 못한다고 적는다", () => {
+    let text = "";
+    expect(() => {
+      text = apiProxyTargetText(targetThatRefusesToBecomeText());
+    }).not.toThrow();
+    expect(text).not.toBe("");
+    expect(urlsIn(text), "대상을 읽지 못했는데 주소를 지어낸다").toEqual([]);
   });
 });
 
