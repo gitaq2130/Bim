@@ -3,10 +3,40 @@
 **DB 는 축이다**(ADR 0014 §2-2): `BUILDTWIN_CI_POSTGRES_URL` 이 설정돼 있고 비어 있지 않으면 그
 PostgreSQL + 세션 전용 스키마(`search_path`, 끝나면 `DROP SCHEMA … CASCADE`), 아니면 전용 임시 SQLite 다.
 CI 는 두 갈래를 둘 다 돈다(`.github/workflows/buildtwin-ci.yml` 의 `integration` 잡, 스텝 둘).
-postgres 갈래에서는 이 파일이 `JWT_SECRET`(세션 난수)과 `SEED_DEV_DATA` 를 함께 준다 — 앞은
-`settings.resolve_jwt_secret` 의 non-sqlite 갈래가 §3-4 대로 기동을 거부하기 때문이고(ADR 0014 §2-3 3),
-뒤는 `services/api/main.py` 의 시드 조건이 sqlite 가 아니면 사용자를 0명 만들어 로그인이 **조용히 401** 이
-되기 때문이다(ADR 0014 §2-3 4).
+postgres 갈래에서는 이 파일이 `JWT_SECRET`(세션 난수)을 준다 — `settings.resolve_jwt_secret` 의
+non-sqlite 갈래가 §3-4 대로 기동을 거부하기 때문이다(ADR 0014 §2-3 3).
+
+**데모 계정은 이 픽스처가 자기 손으로 만든다**(ADR 0018 §2-1). `client` 가 `init_db` 뒤 `create_app()`
+앞에서 `services.api.seed.seed_all` 을 부르고, **그 호출이 네 계정을 실제로 만들었음**을 그 자리에서
+단언한다 — 그러므로 기동이 무엇을 하든 이 세션의 계정은 그 호출이 만든 것이다. 두 축이 같은 한 줄을
+지난다(예전에는 sqlite 축이 기동의 `url.startswith("sqlite")` 갈래로, postgres 축이 플래그로 갈렸다).
+
+**이 호출을 지웠을 때 값이 갈리는가는 축이 아니라 기전이 정한다**(CLAUDE.md §6-2 1). 같은 DB 를 기동이
+먼저 채우면 지워도 초록이고(**가려진다**), 채우지 않으면 `tokens` 가 세션 전량 error 로 죽는다.
+그래서 양성 대조군을 **곱**으로 세웠다(§6-1: 관계를 세는 목록은 곱으로). 방법: `pytest tests/integration -q`,
+잰 트리 = `6ab9f6a` + 이 커밋의 두 파일, **각 칸 N=1**, 변이는 한 자리씩 + 심기 직전의 작업 트리 사본과
+`diff`(§6-2 규칙 5 — 이 커밋이 처음 넣는 줄을 지우는 변이라 `git diff` 는 침묵한다). 「기동 시드
+무동작」은 이 파일 안에서 `services.api.main.seed_dev_users` 를 한 줄로 치환한 것이다(작업 3 뒤의
+트리를 흉내낸다 — 남의 트리를 편집하지 않는다):
+
+| # | 기동 시드 | 이 픽스처의 `seed_all` | sqlite 축 | postgres 축 |
+|---|---|---|---|---|
+| 1 | 돈다 | 부른다 | **226 passed** | **226 passed** (188/1/187) |
+| 2 | 돈다 | **지움** | **226 passed** ← **가려진다** | 해당 없음(아래 참고) |
+| 3 | 무동작 | 부른다 | **226 passed** | 해당 없음 |
+| 4 | 무동작 | **지움** | **2 failed, 32 passed, 192 errors** | **2 failed, 32 passed, 193 errors** |
+
+**postgres 축에는 2·3행이 없다.** 이 파일이 `SEED_DEV_DATA` 를 주지 않게 된 뒤로 그 축의 기동 조건은
+이미 `False` 라, 그 축에서 `seed_all` 을 지운 실행이 곧 4행이다(실측한 것이 그 칸이다 —
+193 errors 는 sqlite 4행보다 하나 많다 — 두 실행의 ERROR·FAILED 목록을 `comm` 으로 갈라 보니
+차이는 정확히 한 줄, postgres 축에서만 도는
+`test_99_db_axis_contract.py::test_a_below_floor_postgres_session_stays_red_and_says_the_real_count`
+다).
+**그러므로 가려지지 않는 대조군은 흉내가 아니라 postgres 축의 이 트리 자신이다.** sqlite 축의 2행이
+이 사이클에서 「시드 호출만 지우는 변이가 안 죽는다」로 관측되는 자리이고, 3행은 **작업 3 이 들어온
+뒤에도 이 배선이 혼자 선다**는 것을 미리 값으로 보인 것이다.
+4행의 빨간 둘: `test_01_auth.py::test_login_accepts_email_field` ·
+`test_99_db_axis_contract.py::test_axis_mode_matches_the_environment`.
 
 다른 테스트 트리(tests/e2e 등)도 같은 프로세스에서 DATABASE_URL 을 바꾸므로, import 시점이 아니라 `client` 픽스처 안에서
 경로를 정해야 서로의 DB 를 공유하지 않는다(bim_objects PK 는 전역이라 같은 IFC 를 두 프로젝트에 올리면 충돌).
@@ -25,8 +55,10 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import event
 
-from packages.core.db import get_engine, init_db, reset_engine
+from packages.core.db import get_engine, init_db, reset_engine, session_scope
 from packages.core.settings import settings
+from services.api.auth.seed import DEV_SEED_PROJECT_ID
+from services.api.seed import seed_all
 from services.common.celery_app import celery_app
 from tests.helpers import postgres_axis as axis
 
@@ -36,7 +68,7 @@ DEV_PASSWORD = "buildtwin"
 
 #: 축은 수집 시점에 정해진다 — `client` 를 쓰지 않는 세션에서도 강제 셋이 자기 모드를 안다.
 RECORDER = axis.AxisRecorder(postgres_url=axis.resolve_axis(os.environ))
-_ENV_KEYS = ("DATABASE_URL", "STORAGE_ROOT", "CELERY_ALWAYS_EAGER", "JWT_SECRET", "SEED_DEV_DATA")
+_ENV_KEYS = ("DATABASE_URL", "STORAGE_ROOT", "CELERY_ALWAYS_EAGER", "JWT_SECRET")
 
 
 def load_fixture_json(name: str) -> dict:
@@ -109,7 +141,7 @@ def client():
     tmp = Path(tempfile.mkdtemp(prefix="buildtwin-api-"))
     previous = {k: os.environ.get(k) for k in _ENV_KEYS}
     prior_settings = (settings.database_url, settings.storage_root, settings.celery_always_eager,
-                      settings.jwt_secret, settings.seed_dev_data)
+                      settings.jwt_secret)
     schema: str | None = None
     if RECORDER.is_postgres:
         assert RECORDER.postgres_url is not None
@@ -117,8 +149,7 @@ def client():
         axis.create_schema(RECORDER.postgres_url, schema)
         os.environ["DATABASE_URL"] = axis.schema_url(RECORDER.postgres_url, schema)
         os.environ["JWT_SECRET"] = secrets.token_urlsafe(32)   # 세션 난수. 코드 상수 금지(§3-4)
-        os.environ["SEED_DEV_DATA"] = "1"
-        settings.jwt_secret, settings.seed_dev_data = os.environ["JWT_SECRET"], True
+        settings.jwt_secret = os.environ["JWT_SECRET"]
     else:
         os.environ["DATABASE_URL"] = f"sqlite:///{(tmp / 'api-test.db').as_posix()}"
     os.environ["STORAGE_ROOT"] = str(tmp / "storage")
@@ -132,6 +163,18 @@ def client():
         engine = get_engine()
         RECORDER.observe_engine(engine)
         event.listen(engine, "before_cursor_execute", lambda *a, **kw: RECORDER.note_sql())
+    # **명시 시드**(ADR 0018 §2-1·§2-2). 명령(`python -m services.api.seed`)이 아니라 in-process 함수인
+    # 이유는 이 픽스처가 **이미 이 세션의 엔진을 쥐고 있기** 때문이다 — 하위 프로세스로 부르면 postgres
+    # 축의 세션 스키마(`search_path`)와 위 RECORDER 리스너를 그 프로세스에 다시 세워야 하고, 그 배선이
+    # 어긋나도 sqlite 축에서는 초록이라 숨는다. 명령이 필요한 자리는 부모가 `settings` 를 만져도 닿지
+    # 않는 하위 프로세스뿐이다(`tests/e2e` 의 `api_server`).
+    with session_scope() as s:
+        created, demo_project = seed_all(s)
+    # 픽스처가 **자기 전제를 말한다**(ADR 0018 §4 4): 이 세션의 계정은 위 한 줄이 만든 것이다.
+    # 이 단언은 `create_app()` 앞이라, 누군가 순서를 뒤집어 기동이 먼저 채우면 `created` 가 비어 빨개진다.
+    assert sorted(u.role for u in created) == sorted(ROLES), created
+    assert demo_project is not None and demo_project.project_id == DEV_SEED_PROJECT_ID
+
     from services.api.main import create_app
 
     app = create_app()
@@ -146,7 +189,7 @@ def client():
         else:
             os.environ[k] = v
     (settings.database_url, settings.storage_root, settings.celery_always_eager,
-     settings.jwt_secret, settings.seed_dev_data) = prior_settings
+     settings.jwt_secret) = prior_settings
     shutil.rmtree(tmp, ignore_errors=True)
 
 

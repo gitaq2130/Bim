@@ -19,6 +19,7 @@
 | `with_psycopg_driver` 의 드라이버 정규화 | `test_axis_normalizes_the_bare_postgresql_driver` |
 | `schema_url` 의 `search_path` | `test_schema_url_carries_the_session_schema` |
 | `db_axis_contract` 픽스처의 `autouse=True` | `test_the_contract_fixture_runs_for_every_integration_test` |
+| `client` 픽스처의 명시 시드가 **축 엔진 밖**에 앉는 것(ADR 0018 §2-1) | `test_axis_mode_matches_the_environment` 의 `users_count` |
 | `check_contract` 의 엔진 수 단언(ADR 0017 결정 1 이 여기로 옮긴 것) | `test_the_contract_also_names_the_engine_count` · `test_the_finalizer_dies_when_a_postgres_session_observed_more_than_one_engine` |
 | `check_sqlite_axis_is_inert` 의 단언 / 파이널라이저의 그 **호출** | `test_the_sqlite_inert_check_dies_on_any_observation` / `test_the_finalizer_dies_when_a_sqlite_session_observed_anything` |
 
@@ -72,9 +73,13 @@ import sys
 from pathlib import Path
 
 import pytest
+from sqlalchemy import select
 
 import tests.integration.conftest as parent_conftest
+from packages.core.db import new_session
+from packages.core.models.orm import UserRow
 from packages.core.settings import settings
+from services.api.auth.seed import DEV_SEED_DOMAIN, DEV_SEED_ROLES
 from tests.helpers import postgres_axis as axis
 from tests.integration.conftest import RECORDER
 
@@ -370,16 +375,26 @@ def test_axis_mode_matches_the_environment(client):
     if RECORDER.is_postgres:
         assert RECORDER.dialect == "postgresql", RECORDER
         assert settings.database_url.startswith("postgresql+psycopg://")
-        assert settings.seed_dev_data is True      # 시드가 `or` 의 **우변**으로 켜졌다(ADR 0014 §2-3 4)
     else:
         assert RECORDER.dialect is None, RECORDER
         assert settings.database_url.startswith("sqlite:")
-        assert settings.seed_dev_data is False     # 시드는 `or` 의 **좌변**으로 켜진다 — 축이 넓혀지지 않았다
         now = axis.MEASURED_PATH.read_bytes() if axis.MEASURED_PATH.exists() else None
         # 문구는 **관측한 것만** 말한다 — 이 실행 전후로 파일이 달라졌다. 쓴 주체(이 실행인가, 밖에서
         # 고친 사람인가)는 관측하지 않았으므로 지목하지 않는다(CLAUDE.md §6-4 2, 계획 0009 §후속 22).
         assert now == axis.MEASURED_AT_IMPORT, \
             "sqlite 축 실행의 전후로 postgres.measured.json 이 달라졌다 — 쓴 주체는 관측하지 않았다 (ADR 0014 §2-5 3)"
+    # 위 두 갈래는 **축**만 본다. 시드를 켜는 것은 축이 아니라 `client` 픽스처의 명시 호출이므로
+    # (ADR 0018 §2-1·결정 3) 축마다 값이 갈리던 설정 플래그 단언 둘은 이 자리의 물음이 아니게 됐다.
+    # 남는 축의 물음은 하나다: 그 시드가 **이 축의 엔진 위에** 앉았는가(postgres 축에서는 세션 스키마).
+    # 지우면 무엇이 죽는가 — 아래 `users_count` 를 지우면 이 함수는 픽스처의 시드 배선이 통째로
+    # 사라져도 초록이 된다. 그것이 이 두 줄이 있는 이유다.
+    # 수를 세지 않는다 — 이 세션의 다른 테스트가 계정을 더 만든다(`test_01` 의 register, `test_12`·
+    # `test_16` 의 `u-<uuid>@` 계정). 세는 대신 **시드가 만든 넷의 존재**를 본다: 이 단언은 이 함수가
+    # 세션의 어느 자리에서 돌든 같은 값을 갖는다.
+    want = {f"{role}@{DEV_SEED_DOMAIN}" for role in DEV_SEED_ROLES}
+    with new_session() as s:
+        got = set(s.scalars(select(UserRow.email).where(UserRow.email.in_(want))))
+    assert got == want, f"축 엔진에서 시드 계정이 보이지 않는다 (ADR 0018 §2-4 ①): {sorted(want - got)}"
 
 
 # ------------------------------------------------------------------ 강제 셋의 **배선** (하위 프로세스 pytest)
