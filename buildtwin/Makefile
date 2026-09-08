@@ -1,7 +1,7 @@
 # BuildTwin — 담당: qa
-# make env / make dev / make test / make lint / make docs / make fixtures / make e2e / make api / make web / make seed
+# make env / make dev / make test / make lint / make docs / make fixtures / make e2e / make api / make web / make seed / make seed-compose
 
-.PHONY: env dev test lint docs fixtures fixtures-public test-py test-unit test-invariants test-regression test-integration test-web e2e e2e-deps web-build lint-py lint-web api web setup db-reset seed
+.PHONY: env dev test lint docs fixtures fixtures-public test-py test-unit test-invariants test-regression test-integration test-web e2e e2e-deps web-build lint-py lint-web api web setup db-reset seed seed-compose
 
 PY := . .venv/bin/activate &&
 
@@ -28,9 +28,12 @@ env: ## .env 가 없으면 만든다(문 1·2). 있으면 **한 바이트도 바
 	fi
 
 dev: ## API + Celery worker + web dev server (docker compose)
-	@echo "※ 로컬 SQLite(buildtwin.db)를 쓰다가 모델에 컬럼이 추가된 뒤라면 먼저 'make db-reset'."
-	@echo "  packages/core/db.init_db 는 create_all 뿐이라 **기존 파일에 새 컬럼을 추가하지 않는다** —"
-	@echo "  예: ADR 0009 의 documents.title_identity / identity_fingerprint (계획 0003 §8)."
+	@echo "※ .env 가 없으면 compose 가 **파일 해석 단계에서** 죽는다(env file ... not found) — 먼저 'make env'."
+	@echo "  이 스택의 DB 는 compose 의 postgres(pgdata 볼륨)다. 로컬 sqlite(buildtwin.db)가 아니므로"
+	@echo "  'make db-reset'(rm -f *.db)은 이 DB 를 지우지 못한다 — 비우려면 'docker compose down -v'."
+	@echo "  packages/core/db.init_db 는 create_all 뿐이라 **기존 테이블에 새 컬럼을 추가하지 않는다** —"
+	@echo "  모델이 바뀐 뒤라면 그 볼륨 삭제가 그 자리다(예: ADR 0009 의 documents.title_identity)."
+	@echo "  데모 계정은 스택이 뜬 뒤 **다른 셸에서** 'make seed-compose' — 호스트의 'make seed' 는 이 DB 가 아니다."
 	docker compose up --build
 
 seed: ## 데모 계정·데모 프로젝트를 만드는 **명시적 명령**(ADR 0018 §2-2). 멱등 — 이미 시드된 DB 에는 아무것도 만들지 않는다.
@@ -38,11 +41,20 @@ seed: ## 데모 계정·데모 프로젝트를 만드는 **명시적 명령**(AD
 	@echo "  이 셸의 DATABASE_URL 이 비어 있으면 packages/core/db 의 기본값(로컬 sqlite ./buildtwin.db)이다."
 	$(PY) python -m services.api.seed
 
+seed-compose: ## 같은 시드를 **compose 스택의 DB**(db:5432)에 만든다 — 호스트가 아니라 api 컨테이너 안에서 돈다(문 3)
+	@echo "※ 이 명령은 뜬 스택의 api 컨테이너 안에서 돈다 — 그 DATABASE_URL 은 docker-compose.yml 의"
+	@echo "  api.environment 값(postgres, 호스트 이름 db)이고 **호스트는 그 이름을 풀지 못한다**."
+	@echo "  그래서 호스트의 'make seed' 는 이 DB 에 닿지 않는다 — 스택을 먼저 띄운다('make dev', 다른 셸)."
+	docker compose exec -T api python -m services.api.seed
+
 db-reset: ## 로컬 개발용 SQLite 폐기(대장·문서는 대장 재업로드로 재생성된다 — ADR 0007 §1 규칙 1: 대장이 정본)
 	@echo "removing local sqlite dev database(s): $(wildcard *.db)"
 	rm -f *.db
 
 api: ## 로컬 API만 (SQLite, Celery eager) — 모델에 컬럼이 추가된 뒤라면 'make db-reset' 먼저
+	@echo "※ 이 갈래의 DB 는 로컬 sqlite(buildtwin.db)다. packages/core/db.init_db 는 create_all 뿐이라"
+	@echo "  **기존 파일에 새 컬럼을 추가하지 않는다** — 모델에 컬럼이 추가된 뒤라면 먼저 'make db-reset'"
+	@echo "  (예: ADR 0009 의 documents.title_identity / identity_fingerprint, 계획 0003 §8)."
 	$(PY) uvicorn services.api.main:app --reload --port 8000
 
 web:

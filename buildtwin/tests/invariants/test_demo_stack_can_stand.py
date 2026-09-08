@@ -1,4 +1,4 @@
-"""「`make dev` 가 설 수 있는가」를 붙드는 회귀 — 담당: qa (계획 0015 작업 2, 문 1·2).
+"""「`make dev` 가 설 수 있는가」를 붙드는 회귀 — 담당: qa (계획 0015 작업 2·3, 문 1·2·3).
 
 ## 왜 있는가
 
@@ -9,7 +9,7 @@
 연다. 작업 1 이 그 파일을 만드는 명령(`make env`)을 두었고, 이 파일이 **그 명령이 실제로 두 문을
 닫는지**를 값으로 붙든다.
 
-## 무엇을 보는가 — 넷이고, 셋은 docker 없이 돈다
+## 무엇을 보는가 — 다섯이고, 넷은 docker 를 부르지 않는다
 
 1. `make env` 가 **없는** `.env` 를 만들고 그 `JWT_SECRET` 이 비어 있지 않다. 값은 **난수**다
    (서로 다른 두 사본에서 다른 값이 나온다) — 저장소에 상수로 있지 않다는 것이 CLAUDE.md §3-4 다.
@@ -20,6 +20,11 @@
    **`docker` CLI 나 compose 플러그인이 없으면 skip**(아래 「도구 부재」).
 4. compose 파일이 적는 postgres URL 로 `resolve_jwt_secret()` 이 **빈 시크릿에서 RuntimeError**,
    난수 시크릿에서 그 값을 낸다 — 문 2 의 기전 자신. **docker 를 부르지 않는다.**
+5. **문 3**(작업 3): compose 갈래의 시드 명령(`make seed-compose`)이 **compose 의 DB 를 쥔 서비스**
+   안에서 ADR 0018 §2-2 의 명령을 돌리고, 호스트 `make seed` 는 **docker 를 지나지 않는다**.
+   `Makefile` 의 레시피와 `docker-compose.yml` 의 서비스 목록을 **함께** 읽어 갈리는지 본다 —
+   서비스 이름이 바뀌면 그 명령은 오늘 **데몬이 있는 자리에서만** 죽는다(이 환경에는 데몬이 없다).
+   **docker 를 부르지 않는다**(파일 둘을 읽을 뿐이다).
 
 **3 이 rc 만 보지 않는 이유가 이 파일의 요점이다.** 계획 0015 §1-e 첫째 행이 기각한 처방
 (`env_file: [{path: .env, required: false}]`)은 rc 를 **rc=0 으로 만들면서 문 2 를 그대로 남긴다** —
@@ -43,7 +48,10 @@ skip 수는 `pytest -q` 한 줄 요약에 실린다(아래 M5 의 값) — 사�
   실행하는 사람의 환경에 따라 갈린다.
 - **컨테이너가 실제로 뜨는가.** `config` 는 파일 해석까지다. `docker compose up --build` 는 이
   사이클의 누구도 돌리지 않았다(계획 0015 §확인하지 않은 것 43·60 — 데몬 부재).
-- **문 3·4.** 시드가 어느 DB 에 닿는지(작업 3)와 vite 프록시 대상(작업 4)은 이 파일이 보지 않는다.
+- **`docker compose exec` 의 실제 동작.** 5 는 **배선의 이름**(어느 서비스·어느 명령)만 읽는다 —
+  그 컨테이너 안에서 `python -m services.api.seed` 가 실제로 돌아 rc 0 을 내는지는 데몬을 요구하고,
+  이 사이클이 재지 않았다(계획 0015 §확인하지 않은 것 60·62).
+- **문 4.** vite 프록시 대상(작업 4, 소유 `frontend`)은 이 파일이 보지 않는다.
 - **이미지 안의 것.** `Dockerfile` 이 담는 것, 그 안에서 `python -m services.api.seed` 가 도는지
   (계획 0015 §확인하지 않은 것 62).
 - **`make env` 가 만든 파일의 권한.** 레시피는 `umask 077` 로 쓰지만(잰 값 `-rw-------`) 이 파일은
@@ -59,12 +67,19 @@ skip 수는 `pytest -q` 한 줄 요약에 실린다(아래 M5 의 값) — 사�
 
 | 변이 | 무엇을 심었나 | 실행값 |
 |---|---|---|
-| 음성 대조군 | 없음(이 커밋의 트리) | **4 passed** |
-| M1 | `Makefile` 의 `env` 타깃을 **무동작**(`@true`)으로(= 작업 1 을 되돌린다) | **2 failed, 2 passed** — 1 이 *"make env 를 돌렸는데 .env 가 없다 — compose 는 이 파일이 있어야 해석된다(문 1: `env file …/.env not found`)."*, 3 이 *"make env 뒤에도 `docker compose config` 가 rc=1 다: env file …/.env not found …"* |
-| M2 | `env` 타깃이 `.env` 를 만들되 `JWT_SECRET=` **빈 값**으로(= `.env.example` 복사와 같은 모양, `required: false` 처방과 같은 자리) | **2 failed, 2 passed** — 1 이 *"만들어진 .env 의 JWT_SECRET 이 비어 있다 — 문 2 가 열린 채다"*, 3 이 `api` 서비스 환경 단언(*"compose 가 서기는 하는데 api 서비스의 JWT_SECRET 이 비어 있다"*)에서 죽는다. **같은 변이의 사본에서 `docker compose config` 를 손으로 쳐 보면 rc 는 `0` 이다**(N=1) — rc 만 보는 단언이었으면 3 이 초록이었다 |
-| M3 | `env` 타깃에서 `[ -e .env ]` 갈래를 빼 **언제나 덮어쓰게** 한다 | **1 failed, 3 passed** — 2 만 죽는다(해시가 갈린다) |
-| M4 | `packages/core/settings.py` 의 `raise RuntimeError(...)` 를 지운다(문 2 의 기전을 없앤다) | **1 failed, 3 passed** — 4 만 죽는다(`DID NOT RAISE`) |
-| M5 | 이 파일의 `_NO_COMPOSE_CLI` 를 강제로 채운다(= docker 부재를 흉내낸다) | **1 skipped, 3 passed** — 한 줄 요약이 skip 수를 싣는다 |
+| 음성 대조군 | 없음(이 커밋의 트리) | **5 passed** |
+| M1 | `Makefile` 의 `env` 타깃을 **무동작**(`@true`)으로(= 작업 1 을 되돌린다) | **2 failed, 3 passed** — 1 이 *"make env 를 돌렸는데 .env 가 없다 — compose 는 이 파일이 있어야 해석된다(문 1: `env file …/.env not found`)."*, 3 이 *"make env 뒤에도 `docker compose config` 가 rc=1 다: env file …/.env not found …"* |
+| M2 | `env` 타깃이 `.env` 를 만들되 `JWT_SECRET=` **빈 값**으로(= `.env.example` 복사와 같은 모양, `required: false` 처방과 같은 자리) | **2 failed, 3 passed** — 1 이 *"만들어진 .env 의 JWT_SECRET 이 비어 있다 — 문 2 가 열린 채다"*, 3 이 `api` 서비스 환경 단언(*"compose 가 서기는 하는데 api 서비스의 JWT_SECRET 이 비어 있다"*)에서 죽는다. **같은 변이의 사본에서 `docker compose config` 를 손으로 쳐 보면 rc 는 `0` 이다**(N=1) — rc 만 보는 단언이었으면 3 이 초록이었다 |
+| M3 | `env` 타깃에서 `[ -e .env ]` 갈래를 빼 **언제나 덮어쓰게** 한다 | **1 failed, 4 passed** — 2 만 죽는다(해시가 갈린다) |
+| M4 | `packages/core/settings.py` 의 `raise RuntimeError(...)` 를 지운다(문 2 의 기전을 없앤다) | **1 failed, 4 passed** — 4 만 죽는다(`DID NOT RAISE`) |
+| M5 | 이 파일의 `_NO_COMPOSE_CLI` 를 강제로 채운다(= docker 부재를 흉내낸다) | **4 passed, 1 skipped** — 한 줄 요약이 skip 수를 싣는다 |
+| M6 | `seed-compose` 의 서비스 이름을 compose 에 **없는 이름**(`apiserver`)으로 | **1 failed, 4 passed** — 5 가 *"seed-compose 가 `apiserver` 안에서 돌려는데 docker-compose.yml 에 그 서비스가 없다"* |
+| M7 | `seed-compose` 가 ADR 0018 §2-2 의 명령이 아닌 것(`python -c "print(1)"`)을 돌린다 | **1 failed, 4 passed** — 5 만 죽는다 |
+| M8 | **호스트** `seed` 레시피를 `docker compose exec …` 로 바꾼다(두 갈래를 뭉갠다) | **1 failed, 4 passed** — 5 가 *"호스트 `make seed` 가 docker 를 지난다"* |
+
+**M6 은 「이름이 갈리는 것」의 값이다**: compose 의 서비스 이름을 바꾸는 커밋(이 사이클의 작업 5 가
+그 파일을 만진다)은 `make seed-compose` 를 조용히 부러뜨릴 수 있고, 그 손해는 오늘 **데몬이 있는
+자리에서만** 보인다 — 5 가 그것을 파일 둘의 대조로 앞당긴다.
 
 **M1 ↔ M2 가 이 표의 값이다**: 둘 다 「데모가 서지 않는다」인데 **rc 로는 갈리지 않는다**(M1 은
 rc≠0, M2 는 rc=0). 그래서 3 은 rc 와 **그 config 가 싣는 값**을 함께 본다(§6-2 4: 두 사실이 함께여야
@@ -241,3 +256,57 @@ def test_the_compose_postgres_url_refuses_an_empty_secret() -> None:
     value = secrets.token_urlsafe(32)
     resolved = Settings(_env_file=None, database_url=url, jwt_secret=value).resolve_jwt_secret()
     assert resolved == value, "시크릿을 준 뒤에도 compose 의 URL 에서 토큰 시크릿이 서지 않는다"
+
+
+def _recipe(target: str) -> list[str]:
+    """`Makefile` 의 그 타깃 레시피 줄들(탭 제거). 빈 줄은 건너뛰고 다음 타깃 줄에서 끊는다."""
+    lines: list[str] = []
+    collecting = False
+    for line in MAKEFILE.read_text(encoding="utf-8").splitlines():
+        if line.startswith(f"{target}:"):
+            collecting = True
+            continue
+        if not collecting:
+            continue
+        if line.startswith("\t"):
+            lines.append(line.lstrip("\t"))
+        elif line.strip():
+            break
+    return lines
+
+
+def test_the_compose_seed_command_targets_the_compose_database() -> None:
+    """⑤ 문 3 — compose 갈래의 시드 명령이 **compose 의 DB 를 쥔 서비스** 안에서 돈다.
+
+    호스트의 `make seed` 는 `settings.database_url`(기본 로컬 sqlite)에 만든다 — 그 갈래는 이 커밋이
+    바꾸지 않는다. 여기서 붙드는 것은 **두 갈래가 서로의 자리를 침범하지 않는 것**이다.
+    """
+    compose_seed = _recipe("seed-compose")
+    execs = [line for line in compose_seed if "docker compose exec" in line]
+    assert len(execs) == 1, f"seed-compose 가 `docker compose exec` 을 한 줄로 갖지 않는다: {compose_seed}"
+
+    tokens = execs[0].split()
+    after_exec = tokens[tokens.index("exec") + 1:]
+    service = next(token for token in after_exec if not token.startswith("-"))
+    services = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))["services"]
+    assert service in services, (
+        f"seed-compose 가 `{service}` 안에서 돌려는데 docker-compose.yml 에 그 서비스가 없다 — "
+        "서비스 이름이 바뀌면 이 명령은 데몬이 있는 자리에서만 죽는다(여기서 먼저 죽인다)."
+    )
+
+    url = services[service]["environment"]["DATABASE_URL"]
+    assert url == services["api"]["environment"]["DATABASE_URL"], (
+        f"seed-compose 가 시드하는 DB({url})가 api 서비스가 쓰는 DB 와 다르다 — 그러면 데모는 "
+        "계정이 있는 DB 와 앱이 보는 DB 가 갈린다."
+    )
+    assert not url.startswith("sqlite"), f"compose 갈래의 DATABASE_URL 이 sqlite 다: {url}"
+    assert "python -m services.api.seed" in execs[0], (
+        "seed-compose 가 ADR 0018 §2-2 의 명령이 아닌 다른 경로로 시드한다"
+    )
+
+    host_seed = _recipe("seed")
+    assert any("python -m services.api.seed" in line for line in host_seed), host_seed
+    assert not any("docker" in line for line in host_seed), (
+        "호스트 `make seed` 가 docker 를 지난다 — 이 갈래는 settings.database_url 이 가리키는 DB 에 "
+        "만드는 것이고(ADR 0018 §2-4 ㉠) 이 커밋은 그것을 바꾸지 않는다."
+    )
