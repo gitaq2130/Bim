@@ -1,5 +1,7 @@
 # BuildTwin CI — 담당: qa (buildtwin/.claude/agents/qa.md)
 # lint · unit 은 병렬로 돌아 서로의 실패를 가리지 않는다. integration · e2e 는 unit 이 초록일 때만 돈다.
+# image 는 어느 잡에도 매이지 않는다(`needs` 없음) — 그 빨강이 다른 축의 값을 가리지 않고,
+# 다른 축의 빨강도 그 잡을 막지 않는다. 그 잡이 무엇을 짓고 무엇을 안 짓는지는 그 잡의 주석에.
 # 회귀 기준(tests/metrics.json)은 unit 잡의 tests/regression 에서 강제되고, 측정값은 아티팩트로 남긴다.
 # **두 잡이 각자 자기 스위트를 두 번 돈다 — sqlite 갈래와 postgres 갈래**(ADR 0014 §2-6, ADR 0017).
 # unit 잡이 postgres 갈래를 갖는 것이 계획 0013 §후속 16 이다: 그 트리가 축을 읽는데 CI 가 그 축을
@@ -254,3 +256,47 @@ jobs:
         env:
           CELERY_ALWAYS_EAGER: "true"
         run: pytest tests/e2e -q
+
+  image:
+    # **이 저장소에서 이미지를 짓는 첫 자리다.** 계획 0017 §1-c 의 곱 표에서 「이미지를 짓는다」 행은
+    # **사용자만 ✔** 였다 — 짓는 명령을 실제로 부르는 자리가 `buildtwin/Makefile` 의 `dev` 레시피
+    # 하나였고(그 자리에서 도는 참조: `git grep -nIE 'docker[ -]compose (build|up)' <트리> -- .` 의
+    # `docs/` 밖 히트를 읽는다), 이 워크플로에는 그 표기가 없었다. 같은 저장소가 웹 번들은 CI 와 로컬
+    # 게이트 둘 다에서 짓는데(아래 e2e 잡의 `npm run build` · `Makefile` 의 `web-build`) 파이썬
+    # 이미지만 사용자에게 남아 있었다.
+    # **왜 지금인가**: `c82cf47` 이 `Dockerfile` 의 폴백을 지워 그 설치가 실패하면 빌드가 rc≠0 으로
+    # 죽는데, 그 rc 를 **읽는 주체**가 저장소에 없었다. 이 잡이 그 주체다 — 없애는 것이 아니라
+    # 사용자보다 **먼저 받는다**(ADR 0017 §6 대안 5 가 이름 붙인 「아무도 돌리지 않는 축」의 모양).
+    # **삼키는 열쇠를 두지 않는다**: `continue-on-error` 도, 셸 OR 도, 이 잡을 끄는 `if:` 도 없다
+    # (계획 0016 이 `Dockerfile` 에서 지운 것이 정확히 그 모양이다 — ADR 0020 §2-1 항 1).
+    # **`needs` 를 두지 않는다**: 이 잡이 빨개도 다른 넷의 값은 그대로 보이고, 다른 넷이 빨개도
+    # 이 잡은 돈다(하나의 실패가 다른 축을 삼키면 그 축은 관측되지 않는다).
+    # 이 잡의 선언(존재 · 짓는 명령 · 삼키는 열쇠의 부재)은
+    # `buildtwin/tests/invariants/test_ci_builds_the_image.py` 가 붙든다 — 그 파일은 **YAML 을 읽을 뿐
+    # 데몬을 요구하지 않는다**. 이 잡이 **실제로 서는지**는 그 파일이 답하지 못한다(잡 로그가 답한다).
+    name: image (docker compose build — 사용자보다 먼저 짓는다)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      # compose 가 `env_file: [.env]` 를 **읽는** 명령(`config`·`up`)은 그 파일이 없으면 컨테이너가
+      # 뜨기 전 **파일 해석 단계에서** 죽는다 — 그 rc 는
+      # `buildtwin/tests/invariants/test_demo_stack_can_stand.py` 의 ③ 이 붙든다.
+      # **`build` 는 그것을 읽지 않았다**(데몬 없는 자리에서 잰 값, 각 N=3, compose v5.1.1):
+      # `.env` 없이 `docker compose build` 는 `env file … not found` 가 아니라 데몬 오류로 죽고,
+      # 같은 자리 같은 시각의 `docker compose config` 는 `env file … not found` 로 죽는다.
+      # **러너의 compose 판이 같은 답을 내는지는 재지 않았다** — 그래서 이 스텝을 둔다(값이 싸고,
+      # 없을 때의 손해는 「빌드가 아니라 파일 해석에서 죽는 빨강」이다).
+      # `make env` 는 난수 `JWT_SECRET` 을 만들고 **그 값을 출력하지 않는다**(그 레시피의 마지막 echo).
+      # 다만 이 저장소에 `.dockerignore` 가 없어(그 자리에서 도는 참조:
+      # `ls -a buildtwin | grep -c '^\.dockerignore$'`) 그 파일은 빌드 컨텍스트에 들어가고
+      # `Dockerfile` 의 `COPY . .` 가 이미지 레이어에 넣는다. **이 잡은 이미지를 푸시하지 않으므로**
+      # 그 레이어는 러너와 함께 사라진다.
+      - name: make env (compose 갈래의 .env — 커밋하지 않는다, 값은 출력하지 않는다)
+        run: make env
+      # **이 스텝의 rc 가 이 잡의 rc 다.** 짓는 것은 `build:` 를 가진 서비스 둘(`api`·`worker`)이고
+      # 둘은 같은 컨텍스트·같은 `Dockerfile` 이라 뒤의 것은 레이어 캐시를 탄다.
+      # 이 스텝이 빨개지면 그것은 회귀가 아니라 **발견**이다(계획 0017 §리스크 1) — 고칠 자리는
+      # `buildtwin/pyproject.toml` 이지 이 스텝이 아니다.
+      - name: docker compose build (api · worker — 이 rc 가 잡의 rc 다)
+        run: docker compose build
