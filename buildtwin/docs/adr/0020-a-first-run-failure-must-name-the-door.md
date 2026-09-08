@@ -211,9 +211,38 @@ ADR 의 대상이 아니다**(한정어 「경로」의 값은 §5 첫 표가 �
 
 | 치환자 | 슬롯 | 무엇을 넣는가 |
 |---|---|---|
-| `{target}` | **ⓘ** | `resolveApiProxyTarget()` 이 돌려준 값 **그대로**(`apps/web/vite.proxy-target.ts`) |
+| `{target}` | **ⓘ** | 그 프록시가 **실제로 받은 대상** — `configure` 의 둘째 인자 `options.target`(`apps/web/vite.config.ts` 의 `apiProxyTargetText`). **초판은 「`resolveApiProxyTarget()` 이 돌려준 값 그대로(`apps/web/vite.proxy-target.ts`)」라 적었다 — 아래 마감 정정** |
 | `{code}` | **ⓙ** | 하위 오류의 `code` **그대로**(`ECONNREFUSED` 등). **없으면 `코드 없음`** — 흔한 값으로 떨어뜨리지 않는다 |
 | `{message}` | **ⓙ** | 하위 오류의 `message` **그대로**. 다듬거나 번역하지 않는다 |
+
+**마감 정정(작업 6, 2026-09-08 — 심사 0016 R1 이 잡았다).** 위 `{target}` 행의 초판 문안은
+**처방으로서 틀렸다.** 그대로 만들면 핸들러가 **모듈 상수를 닫아 싣게** 되고, `/api` 옵션 객체를
+**펼쳐 대상만 덮는 호출자**(`tests/e2e/conftest.py` 의 `PREVIEW_CONFIG`)에서 **같은 본문의 두 줄이
+서로를 반박한다** — `대상:` 은 상수를, `원인:` 은 프록시가 실제로 닿지 못한 곳을 말한다.
+**정본은 `options.target` 이고 코드가 그것을 싣는다**(코드 인용, 트리 `a70c495`):
+
+```ts
+// apps/web/vite.config.ts — server.proxy["/api"].configure 안
+const body = apiProxyFailureBody(apiProxyTargetText(options.target), err);
+```
+
+**부재로도 확인한다**(N=1): `git grep -nI "resolveApiProxyTarget" a70c495 --
+buildtwin/apps/web/vite.config.ts` 의 히트는 **`:4`(import)와 `:12`(모듈 상수)이고 핸들러 안에는
+없다.** 그리고 `apiProxyTargetText` 는 **부재일 때에만** 「대상 없음」이라 적는다 — 없는 값을
+모듈 상수로 대신하면 그것이 §6-4 2 의 「흔한 값으로 떨어뜨리는 폴백」이다.
+
+*이 정정이 ADR 에는 걸리고 계획에는 걸리지 않는 경계.* 이 표는 **계약(문구 원본)** 이다 — §2-2 머리말이
+*"작업 2 가 **ⓑ 인용 · 전체**로 가져다 쓴다"* 라고 적으므로, 고치지 않으면 **다음 구현자가 같은 거짓을
+그대로 만든다**(CLAUDE.md §6-4 의 표제 그 자체 — 그 자리에서 도는 참조:
+`grep -n "다음 문구가 같은 거짓을 갖고 태어난다" ../../CLAUDE.md`). 반대로 §1-2 ⓑ 의 코드 인용과
+§2-3 의 능력 표는 **그때 읽은 코드**라 갱신하지 않는다(CLAUDE.md §3-13 첫째 갈래). **자리마다 갈린
+판정과 그 값은 계획 0016 §M-12** 에 있다.
+
+*한정 — 오늘 저장소에서 두 정의는 같은 값을 낸다.* dev 갈래의 `options.target` 은 모듈 상수이고
+preview 갈래의 그것은 `PREVIEW_CONFIG` 가 **같은 함수를 다시 불러** 덮은 값이라, 둘 다
+`resolveApiProxyTarget()` 의 값이다. **그러므로 이 정정이 고치는 것은 오늘의 손해가 아니라 처방이다** —
+갈리는 자리는 §2-4 가 계약 밖에 둔 preview 갈래이고, 거기서 두 값이 같은 근거는 **배선이 아니라
+우연**이다(계획 0016 §후속 **79** 가 그 축을 진다).
 
 **왜 `502` 인가.** `500` 은 **api 가 답한 500 과 구별되지 않는다.** 프록시가 상류에 닿지 못한 것과
 상류가 500 을 낸 것은 **다음에 칠 명령이 다른** 두 사건이고, 그 둘을 한 status 로 두면 사용자가 그것을
