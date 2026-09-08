@@ -288,10 +288,12 @@ jobs:
       # **러너의 compose 판이 같은 답을 내는지는 재지 않았다** — 그래서 이 스텝을 둔다(값이 싸고,
       # 없을 때의 손해는 「빌드가 아니라 파일 해석에서 죽는 빨강」이다).
       # `make env` 는 난수 `JWT_SECRET` 을 만들고 **그 값을 출력하지 않는다**(그 레시피의 마지막 echo).
-      # 다만 이 저장소에 `.dockerignore` 가 없어(그 자리에서 도는 참조:
-      # `ls -a buildtwin | grep -c '^\.dockerignore$'`) 그 파일은 빌드 컨텍스트에 들어가고
-      # `Dockerfile` 의 `COPY . .` 가 이미지 레이어에 넣는다. **이 잡은 이미지를 푸시하지 않으므로**
-      # 그 레이어는 러너와 함께 사라진다.
+      # 그 파일은 빌드 컨텍스트에 **들어가지 않는다** — `buildtwin/.dockerignore` 가 `.env` 를 뺀다
+      # (그 자리에서 도는 참조: `grep -n '^\.env$' buildtwin/.dockerignore`). 그 선언을 붙드는 것은
+      # `buildtwin/tests/invariants/test_the_build_context_excludes_the_secret.py` 이고, 그 파일은
+      # compose·`Dockerfile`·`.dockerignore` 를 **읽을 뿐 데몬을 요구하지 않는다**. 레이어 **안에**
+      # 무엇이 들어갔는지를 보는 게이트는 여전히 없다(계획 0017 §후속 94) — 다만 **이 잡은 이미지를
+      # 푸시하지 않으므로** 이 잡이 짓는 레이어는 러너와 함께 사라진다.
       - name: make env (compose 갈래의 .env — 커밋하지 않는다, 값은 출력하지 않는다)
         run: make env
       # **이 스텝의 rc 가 이 잡의 rc 다.** 짓는 것은 `build:` 를 가진 서비스 둘(`api`·`worker`)이고
