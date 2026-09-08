@@ -29,7 +29,11 @@ def test_me_and_missing_token(client, auth):
     assert r.status_code == 200 and r.json()["role"] == "client"
 
 
-def test_register_requires_admin_after_bootstrap(client, auth):
+def test_register_requires_admin_and_the_new_account_can_log_in(client, auth):
+    """`register` 는 **언제나** admin 인증을 요구한다(ADR 0019 §2-1) — 이름에 있던
+    `after_bootstrap` 이 가리키던 「부트스트랩 뒤」라는 상태가 없어졌다(작업 6 `deb92ab`).
+    이 픽스처는 명시적으로 시드하므로 여기서는 그 구별이 보이지 않는다 — 빈 DB 축은
+    `test_00_seed_boundary.py` 가 본다."""
     body = {"email": "newcm@buildtwin.local", "password": "secret123", "role": "cm"}
     assert client.post("/api/auth/register", json=body).status_code == 403
     assert client.post("/api/auth/register", json=body, headers=auth("contractor")).status_code == 403

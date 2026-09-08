@@ -32,13 +32,63 @@ postgres 칸마다 두 데이터베이스를 **버리고 다시 만들었다**(�
 **5·6행이 이 표의 값이다**(§6-2 3: 음성·양성을 한 축에 몰지 않는다). 두 갈래는 서로를 가려 주지
 않는다 — 한쪽을 지우면 그쪽 테스트만 죽는다. 3행은 기동이 시드하지 않는 트리(작업 3 뒤)에서도 이
 배선이 혼자 선다는 것을 미리 값으로 보이고, 2행이 이 사이클에서 「시드 호출만 지우는 변이가 안
-죽는다」로 관측되는 자리다.
+죽는다」로 관측되는 자리다. **그 표는 `b09ae65` 트리의 기록이고 아래 둘은 계획 0015 작업 7 의 값이다.**
+
+## 문 4 는 이제 이 파일을 지난다 (작업 7, §6-2 1)
+
+**`make e2e` 는 문 4 를 구조적으로 못 보고 있었다.** 아래 `PREVIEW_CONFIG` 가 `/api` 프록시 대상을
+**상수로** 적고 있었고(`"http://127.0.0.1:%(api_port)d"` 를 보간으로 조립 — 루트 grep 에도 안 걸린다),
+vite 는 `preview.proxy` 가 있으면 `server.proxy` 를 **보지 않는다**(frontend 실측). 그래서
+`apps/web/vite.proxy-target.ts` 의 `resolveApiProxyTarget` 은 E2E 전체에서 **한 번도 불리지 않았다**.
+지금은 그 함수가 대상을 정하고, 값은 `web_server` 가 환경으로 준다.
+
+변이(한 자리씩 · 심기 직전 사본과 `diff` · 그 사본으로 원복 · 루트 `git status --porcelain`, 각 N=1).
+명령은 매번 `make e2e`.
+
+| # | 변이 | 이 커밋의 트리 | **작업 7 이전 conftest**(대조군) |
+|---|---|---|---|
+| 0 | 없음 | **12 passed** | 12 passed |
+| E1 | `vite.proxy-target.ts` 의 `API_PROXY_TARGET_ENV` → `"API_PROXY_TARGET"` | **9 passed, 3 errors** — `web_server` 가 두 자리의 철자가 갈렸다고 이름으로 죽는다 | **12 passed ← 아무것도 안 죽는다** |
+| E2 | 이 파일이 preview 프로세스에 주는 그 환경 값을 **뺀다** | **9 passed, 3 errors** — `_wait_http` 가 `RuntimeError: server not ready`(프록시가 기본값 `http://localhost:8000` 을 가리킨다) | — |
+
+**E1 의 두 칸이 이 변경의 값이다**: 같은 변이가 옛 배선에서는 **12 passed**, 새 배선에서는 3 errors 다.
+E2 는 그 값이 **실제로 프록시를 정하는지**를 따로 태운다(E1 만으로는 「단언이 죽었다」이지
+「프록시가 갈렸다」가 아니다 — §6-2 2).
+
+*이 표가 보지 못하는 것*: 이 픽스처는 주변 환경의 `BUILDTWIN_API_PROXY_TARGET` 을 **일부러 덮으므로**,
+`BUILDTWIN_API_PROXY_TARGET=<없는 호스트> make e2e` 는 여기서도 **12 passed** 다(frontend 가 HEAD 에서
+잰 그 값과 같다). 그것은 사각이 아니라 **설계**다 — 이 프록시는 이 실행이 띄운 포트를 가리켜야 한다.
+그리고 compose 의 `web.environment` **키** 철자는 이 파일이 보지 않는다(그쪽은
+`tests/invariants/test_demo_stack_can_stand.py` ⑥).
+
+## `vite preview` 고아 — 1회당 1개였다 (작업 7)
+
+세는 법: `ps -eo args --no-headers | grep -c "^node .*vite preview"`(자기 셸을 세지 않도록 `node` 로
+시작하는 줄만 — `pgrep -f "vite preview"` 나 `ps -eo args | grep -c "[v]ite preview"` 는 **재는 명령
+자신**을 세는 수가 있다). `make e2e` 전후로 각각 읽었다.
+
+| 배선 | 실행 전 → 후 | 1회당 |
+|---|---|---|
+| 이 커밋(`start_new_session=True` + 그룹째 종료) | 0 → 0 · 0 → 0 (**N=2**) | **0** |
+| 옛 배선(`proc.terminate()`) | 0 → 1 · 0 → 1 (**N=2**) | **1** |
+
+**기전**: `npx` 는 실제 서버를 자식으로 띄우므로 `terminate()` 는 npx 만 죽이고 그 node 는 부모가 1 번이
+되어 남는다 — 신호의 세기가 아니라 **받는 대상**이 문제다. 이 세션이 인계받은 트리에는 그렇게 쌓인
+고아가 **14개** 있었고(그중 가장 오래된 것 2시간 15분), 각자 포트 하나와 `.e2e-preview.<port>.config.mts`
+하나를 잡고 있었다. 전부 죽였다.
+
+**반증**: 인계 메모의 *"실행 전 12 → 실행 후 15, 즉 1회당 3개(N=1)"* 는 위 값과 갈린다. 갈리는 이유가
+**세는 법**일 수 있다 — `ps -eo args | grep -c "[v]ite preview"` 는 이 환경에서 재는 셸 자신을 함께
+세어 같은 순간에 14 와 15 를 둘 다 냈다(실측). 「1회당 3개」는 재현되지 않았다.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -178,6 +228,40 @@ def add_member(a: Api, project_id: str, user_id: str, role: str) -> None:
 
 
 # ----------------------------------------------------------------------------- real servers (Playwright)
+def _declared_proxy_env_name() -> str:
+    """`apps/web/vite.proxy-target.ts` 가 선언한 `API_PROXY_TARGET_ENV` 값. 없으면 빈 문자열."""
+    hits = re.findall(r'^export const API_PROXY_TARGET_ENV = "([^"]*)";',
+                      (WEB / "vite.proxy-target.ts").read_text(encoding="utf-8"), flags=re.M)
+    return hits[0] if len(hits) == 1 else ""
+
+
+def _stop(proc: subprocess.Popen, group: bool = False) -> None:
+    """서버를 세운다. `group=True` 면 **프로세스 그룹째** 보낸다.
+
+    `npx` 는 실제 서버를 **자식 프로세스**로 띄우므로 `proc.terminate()` 는 npx 만 죽이고 그 node 는
+    부모가 1 번이 되어 살아남는다 — 그것이 이 환경에 쌓여 있던 고아 `vite preview` 들이다.
+    누수율은 **1회당 1개**(실측: `make e2e` 전후 `ps -eo args | grep -c "[v]ite preview"` 가
+    15 → 16, N=1; 그 15 는 이 세션 이전 실행들의 **누적**이지 한 번의 값이 아니다). 그래서
+    `start_new_session=True` 로 그룹을 떼고 여기서 그룹째 보낸다 — 옛 배선에서는 SIGKILL 로 올려도
+    npx 만 죽으므로 신호의 세기가 아니라 **받는 대상**이 문제다.
+    """
+    if group:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    else:
+        proc.terminate()
+    try:
+        proc.wait(10)
+    except subprocess.TimeoutExpired:
+        if group:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        else:
+            proc.kill()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.wait(5)
+
+
 def _wait_http(url: str, timeout: float, proc: subprocess.Popen | None = None) -> None:
     deadline = time.time() + timeout
     last: Exception | None = None
@@ -205,20 +289,23 @@ def api_server() -> Iterator[dict]:
     # stdout 은 로그 파일로 가고 `_wait_http` 는 `/api/health` 만 보므로, 시드가 실패해도 그 자리에서는
     # 아무 값도 갈리지 않는다. 실패 문구는 여기서만 사람에게 닿으므로 stdout·stderr 를 함께 싣는다.
     #
-    # **uvicorn 을 띄우기 「전」에 부른다.** 뒤에 부르면 `_wait_http` 가 돌아온 순간부터 시드가 끝날
-    # 때까지 **부트스트랩이 열린 리스너**가 실제 포트에 살아 있다(계획 0014 §확인하지 않은 것 54 가
-    # 이름 붙인 창 — `users` 가 비어 있으면 `auth/router.py` 가 인증 없는 register 를 admin 으로
-    # 받는다). 순서를 이렇게 두면 그 창은 **길이가 아니라 존재가** 없다: 시드가 rc=0 으로 끝나기
-    # 전에는 이 포트에 리스너 자체가 없다.
+    # **uvicorn 을 띄우기 「전」에 부른다 — 순서는 그대로이고 근거가 이 사이클에서 바뀌었다.**
+    # 이 주석은 여기 있던 창을 실측으로 적고 있었다(계획 0014 §확인하지 않은 것 54 가 이름 붙인
+    # 것: `_wait_http` 반환 → 시드 완료까지 **1.276·1.294·1.307s**, N=3, 그 창에서 인증 없는
+    # `POST /api/auth/register` 가 **201** 이고 응답 `role` 이 **`admin`**). **그 창은 이제
+    # 무해하다** — 작업 6(`deb92ab`, ADR 0019 결정 1)이 그 부트스트랩 갈래를 없앴고, 빈 DB 의 인증
+    # 없는 register 는 **403 `forbidden_role`** 이며 그 뒤에도 `users` 는 **0행**이다
+    # (`tests/integration/test_00_seed_boundary.py` 의 ①이 그 값을 붙든다).
     #
-    # 창을 실제로 쟀다(방법: 이 배선을 그대로 흉내낸 스크래치 탐침, 기동이 시드하지 않는 조건을
-    # 만들려고 DB 만 postgres 로, **N=3**). `_wait_http` 반환 → 시드 완료까지 **1.276·1.294·1.307s**,
-    # 그 창에서 `POST /api/auth/register`(`Authorization` 없음)는 **201** 이고 응답 `role` 이
-    # **`admin`**(요청은 `client` 를 보냈다). 그리고 더 나쁜 것이 뒤에 있다: 그렇게 생긴 계정 하나가
-    # `users_count > 0` 을 만들어 **뒤따르는 시드 명령이 `nothing to seed: users=1` 을 찍고 rc=0 을
-    # 낸다** — 데모 계정은 **0개**인 채다(같은 탐침에서 DB 를 직접 조회한 값).
-    # **그러므로 rc=0 이 「네 계정이 생겼다」와 같은 뜻이 되는 것은 이 DB 가 방금 만든 빈 임시
-    # DB 이기 때문이다.** 비어 있지 않은 DB 에서는 같지 않다.
+    # 그리고 같은 주석의 뒤 문장 — *"그렇게 생긴 계정 하나가 뒤따르는 시드 명령을 `nothing to seed:
+    # users=1` 을 찍고 rc=0 으로 만든다"* — 은 **오늘 트리에서 이미 거짓이었다**(작업 6 이 만든
+    # 거짓이 아니다): `services/api/seed.py` 의 `unmet_contract` 갈래가 그 경우 stdout 을 비우고
+    # **rc=1** 을 낸다(`test_00_seed_boundary.py` 의 rc=1 테스트가 그 값이다). 지운다.
+    #
+    # 순서를 그대로 두는 근거는 남은 둘이다: ⓐ 시드가 실패한 트리에서는 리스너를 띄우지 않아
+    # `_wait_http` 의 타임아웃이 아니라 **아래 단언**이 rc 와 stderr 를 이름으로 낸다, ⓑ rc=0 이
+    # 「네 계정이 생겼다」와 같은 뜻이 되는 것은 이 DB 가 **방금 만든 빈 임시 DB** 이기 때문이고,
+    # 비어 있지 않은 DB 에서는 같지 않다(그 갈래가 rc=1 이다).
     seed = subprocess.run([sys.executable, "-m", "services.api.seed"], cwd=str(ROOT), env=env,
                           capture_output=True, text=True)
     assert seed.returncode == 0, f"시드 명령이 실패했다 (rc={seed.returncode}): {seed.stdout}{seed.stderr}"
@@ -230,11 +317,7 @@ def api_server() -> Iterator[dict]:
         _wait_http(f"{base}/api/health", 60, proc)
         yield {"base": base, "port": port, "tmp": tmp}
     finally:
-        proc.terminate()
-        try:
-            proc.wait(10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        _stop(proc)
         log.close()
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -257,14 +340,27 @@ def seeded_project(api_server) -> dict:
         return {"project_id": pid, "ifc_job": ifc_job, "dxf_job": dxf_job}
 
 
-PREVIEW_CONFIG_TEMPLATE = """// 자동 생성(tests/e2e/conftest.py) — E2E 스모크용 vite preview 설정. 커밋하지 않는다(.gitignore).
-// apps/web/vite.config.ts 를 그대로 쓰되 /api 프록시 대상을 테스트가 띄운 uvicorn 포트로 바꾼다.
+#: `/api` 프록시 대상을 담는 환경 이름. **정본은 `apps/web/vite.proxy-target.ts` 의
+#: `API_PROXY_TARGET_ENV`** 이고, `docker-compose.yml` 의 `web.environment` 가 같은 이름을 쓴다
+#: (그 둘의 철자 일치는 `tests/invariants/test_demo_stack_can_stand.py` 의 ⑥ 이 붙든다).
+#: 여기가 **셋째 자리**라 아래 `web_server` 가 그 파일을 읽어 **맞대 본다** — 갈리면 프록시가 조용히
+#: 기본값(`http://localhost:8000`)으로 떨어지는 대신 이 픽스처가 이름으로 죽는다.
+API_PROXY_TARGET_ENV = "BUILDTWIN_API_PROXY_TARGET"
+
+PREVIEW_CONFIG = """// 자동 생성(tests/e2e/conftest.py) — E2E 스모크용 vite preview 설정. 커밋하지 않는다(.gitignore).
+// apps/web/vite.config.ts 를 그대로 쓰되 /api 프록시 대상을 **문 4 의 그 자리**에서 읽는다.
 // apps/web 안에 두는 이유: vite 가 설정 파일 위치 기준으로 'vite' 패키지를 해석한다(tests/ 아래에서는 못 찾는다).
+//
+// **여기에 대상을 상수로 적으면 `make e2e` 는 문 4 를 구조적으로 못 본다.** vite 는 preview.proxy 가
+// 있으면 server.proxy 를 보지 않으므로(frontend 실측), 상수로 적던 트리에서는 resolveApiProxyTarget 이
+// E2E 전체에서 **한 번도 불리지 않았다** — 그 함수가 부러져도 12 passed 였다. 그래서 대상을 그 함수에서
+// 받고, 값은 web_server 픽스처가 환경으로 준다(그 포트는 실행마다 다르다).
 import { mergeConfig } from "vite";
 import base from "./vite.config";
+import { resolveApiProxyTarget } from "./vite.proxy-target";
 
 export default mergeConfig(base, {
-  preview: { proxy: { "/api": { target: "http://127.0.0.1:%(api_port)d", changeOrigin: true } } },
+  preview: { proxy: { "/api": { target: resolveApiProxyTarget(), changeOrigin: true } } },
 });
 """
 
@@ -274,22 +370,28 @@ def web_server(api_server) -> Iterator[str]:
     """apps/web 를 빌드(dist 없으면)하고 vite preview 로 서빙. /api 는 api_server 로 프록시. base URL 을 준다."""
     if not (WEB / "dist" / "index.html").exists():
         subprocess.run(["npx", "vite", "build"], cwd=str(WEB), check=True)
+    declared = _declared_proxy_env_name()
+    assert declared == API_PROXY_TARGET_ENV, (
+        f"apps/web/vite.proxy-target.ts 의 API_PROXY_TARGET_ENV 는 `{declared}` 인데 이 픽스처는 "
+        f"`{API_PROXY_TARGET_ENV}` 로 준다 — 갈리면 preview 의 /api 는 기본값으로 떨어져 이 E2E 가 띄운 "
+        "uvicorn 이 아니라 http://localhost:8000 을 가리킨다(문 4). 두 자리를 함께 고쳐라."
+    )
     port = _free_port()
     config = WEB / f".e2e-preview.{port}.config.mts"
-    config.write_text(PREVIEW_CONFIG_TEMPLATE % {"api_port": api_server["port"]}, encoding="utf-8")
+    config.write_text(PREVIEW_CONFIG, encoding="utf-8")
     log = (api_server["tmp"] / "vite-preview.log").open("w")
+    # 주변 환경의 값은 **일부러 덮는다** — 이 프록시는 이 실행이 띄운 포트를 가리켜야 한다. 그래서
+    # `BUILDTWIN_API_PROXY_TARGET=<아무 값> make e2e` 는 이 결과를 바꾸지 못한다(설계이지 사각이 아니다).
+    env = {**os.environ, API_PROXY_TARGET_ENV: api_server["base"]}
     proc = subprocess.Popen(["npx", "vite", "preview", "--config", config.name, "--port", str(port), "--strictPort", "--host", "127.0.0.1"],
-                            cwd=str(WEB), env=os.environ.copy(), stdout=log, stderr=subprocess.STDOUT)
+                            cwd=str(WEB), env=env, stdout=log, stderr=subprocess.STDOUT,
+                            start_new_session=True)
     base = f"http://127.0.0.1:{port}"
     try:
         _wait_http(f"{base}/", 60, proc)
         _wait_http(f"{base}/api/health", 30, proc)   # 프록시 확인
         yield base
     finally:
-        proc.terminate()
-        try:
-            proc.wait(10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        _stop(proc, group=True)      # npx 의 자식까지 — 그러지 않으면 vite preview 가 고아로 남는다
         log.close()
         config.unlink(missing_ok=True)

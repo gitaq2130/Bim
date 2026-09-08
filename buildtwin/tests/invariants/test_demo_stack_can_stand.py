@@ -1,4 +1,4 @@
-"""「`make dev` 가 설 수 있는가」를 붙드는 회귀 — 담당: qa (계획 0015 작업 2·3, 문 1·2·3).
+"""「`make dev` 가 설 수 있는가」를 붙드는 회귀 — 담당: qa (계획 0015 작업 2·3·7, 문 1·2·3·4).
 
 ## 왜 있는가
 
@@ -9,7 +9,7 @@
 연다. 작업 1 이 그 파일을 만드는 명령(`make env`)을 두었고, 이 파일이 **그 명령이 실제로 두 문을
 닫는지**를 값으로 붙든다.
 
-## 무엇을 보는가 — 다섯이고, 넷은 docker 를 부르지 않는다
+## 무엇을 보는가 — 여섯이고, 다섯은 docker 를 부르지 않는다
 
 1. `make env` 가 **없는** `.env` 를 만들고 그 `JWT_SECRET` 이 비어 있지 않다. 값은 **난수**다
    (서로 다른 두 사본에서 다른 값이 나온다) — 저장소에 상수로 있지 않다는 것이 CLAUDE.md §3-4 다.
@@ -25,6 +25,10 @@
    `Makefile` 의 레시피와 `docker-compose.yml` 의 서비스 목록을 **함께** 읽어 갈리는지 본다 —
    서비스 이름이 바뀌면 그 명령은 오늘 **데몬이 있는 자리에서만** 죽는다(이 환경에는 데몬이 없다).
    **docker 를 부르지 않는다**(파일 둘을 읽을 뿐이다).
+6. **문 4 의 철자**(작업 7): `docker-compose.yml` 의 `web.environment` **키**와
+   `apps/web/vite.proxy-target.ts` 의 `API_PROXY_TARGET_ENV` **값**이 같은 문자열인지, 그리고 그
+   compose 가 주는 대상이 **자기 자신이 아닌 compose 서비스**를 그 서비스가 듣는 포트로 가리키는지.
+   ⑤ 와 같은 「파일 둘을 함께 읽는」 모양이다. **docker 를 부르지 않는다.**
 
 **3 이 rc 만 보지 않는 이유가 이 파일의 요점이다.** 계획 0015 §1-e 첫째 행이 기각한 처방
 (`env_file: [{path: .env, required: false}]`)은 rc 를 **rc=0 으로 만들면서 문 2 를 그대로 남긴다** —
@@ -51,7 +55,11 @@ skip 수는 `pytest -q` 한 줄 요약에 실린다(아래 M5 의 값) — 사�
 - **`docker compose exec` 의 실제 동작.** 5 는 **배선의 이름**(어느 서비스·어느 명령)만 읽는다 —
   그 컨테이너 안에서 `python -m services.api.seed` 가 실제로 돌아 rc 0 을 내는지는 데몬을 요구하고,
   이 사이클이 재지 않았다(계획 0015 §확인하지 않은 것 60·62).
-- **문 4.** vite 프록시 대상(작업 4, 소유 `frontend`)은 이 파일이 보지 않는다.
+- **문 4 의 나머지 반쪽.** 6 은 **철자와 대상**만 본다 — 그 프록시가 실제로 도는지, 즉
+  `resolveApiProxyTarget()` 이 정말 그 대상을 정하는지는 이 파일 밖이다. 그것은
+  `tests/e2e/conftest.py` 의 preview 설정이 **그 함수를 실제로 부르게** 되면서 `make e2e` 가 본다
+  (같은 커밋). 그리고 **compose 로 뜬 web 컨테이너 안에서** 프록시가 api 에 닿는지는 둘 다 못 본다
+  — 데몬을 요구한다.
 - **이미지 안의 것.** `Dockerfile` 이 담는 것, 그 안에서 `python -m services.api.seed` 가 도는지
   (계획 0015 §확인하지 않은 것 62).
 - **`make env` 가 만든 파일의 권한.** 레시피는 `umask 077` 로 쓰지만(잰 값 `-rw-------`) 이 파일은
@@ -61,29 +69,44 @@ skip 수는 `pytest -q` 한 줄 요약에 실린다(아래 M5 의 값) — 사�
 ## 결함 있는 상태에서 실제로 죽는가 (§6-2 1 — 변이 실측, 각 N=1)
 
 변이는 **한 자리씩** 심고 **심기 직전의 작업 트리 사본과 `diff`** 로 적용을 확인한 뒤 재고,
-사본으로 원복하고 루트 `git status --porcelain` 을 확인했다(§6-2 규칙 5 — 이 파일은 자기 커밋이
-처음 넣는 파일이라 대-HEAD `git diff` 축은 이 파일의 변이에서 침묵한다).
-명령은 매번 `pytest tests/invariants/test_demo_stack_can_stand.py -q`.
+사본으로 원복하고 루트 `git status --porcelain` 을 확인했다(§6-2 규칙 5). 표 전체를 **작업 7 에서
+다시 쟀다** — ⑥ 이 들어와 모든 칸의 통과 수가 하나씩 올라가므로, 옛 값을 그대로 두면 이 표가
+자기 파일에 대해 거짓이 된다. 명령은 매번 `pytest tests/invariants/test_demo_stack_can_stand.py -q`.
 
-| 변이 | 무엇을 심었나 | 실행값 |
+| 변이 | 무엇을 심었나 | 실행값(죽는 단언) |
 |---|---|---|
-| 음성 대조군 | 없음(이 커밋의 트리) | **5 passed** |
-| M1 | `Makefile` 의 `env` 타깃을 **무동작**(`@true`)으로(= 작업 1 을 되돌린다) | **2 failed, 3 passed** — 1 이 *"make env 를 돌렸는데 .env 가 없다 — compose 는 이 파일이 있어야 해석된다(문 1: `env file …/.env not found`)."*, 3 이 *"make env 뒤에도 `docker compose config` 가 rc=1 다: env file …/.env not found …"* |
-| M2 | `env` 타깃이 `.env` 를 만들되 `JWT_SECRET=` **빈 값**으로(= `.env.example` 복사와 같은 모양, `required: false` 처방과 같은 자리) | **2 failed, 3 passed** — 1 이 *"만들어진 .env 의 JWT_SECRET 이 비어 있다 — 문 2 가 열린 채다"*, 3 이 `api` 서비스 환경 단언(*"compose 가 서기는 하는데 api 서비스의 JWT_SECRET 이 비어 있다"*)에서 죽는다. **같은 변이의 사본에서 `docker compose config` 를 손으로 쳐 보면 rc 는 `0` 이다**(N=1) — rc 만 보는 단언이었으면 3 이 초록이었다 |
-| M3 | `env` 타깃에서 `[ -e .env ]` 갈래를 빼 **언제나 덮어쓰게** 한다 | **1 failed, 4 passed** — 2 만 죽는다(해시가 갈린다) |
-| M4 | `packages/core/settings.py` 의 `raise RuntimeError(...)` 를 지운다(문 2 의 기전을 없앤다) | **1 failed, 4 passed** — 4 만 죽는다(`DID NOT RAISE`) |
-| M5 | 이 파일의 `_NO_COMPOSE_CLI` 를 강제로 채운다(= docker 부재를 흉내낸다) | **4 passed, 1 skipped** — 한 줄 요약이 skip 수를 싣는다 |
-| M6 | `seed-compose` 의 서비스 이름을 compose 에 **없는 이름**(`apiserver`)으로 | **1 failed, 4 passed** — 5 가 *"seed-compose 가 `apiserver` 안에서 돌려는데 docker-compose.yml 에 그 서비스가 없다"* |
-| M7 | `seed-compose` 가 ADR 0018 §2-2 의 명령이 아닌 것(`python -c "print(1)"`)을 돌린다 | **1 failed, 4 passed** — 5 만 죽는다 |
-| M8 | **호스트** `seed` 레시피를 `docker compose exec …` 로 바꾼다(두 갈래를 뭉갠다) | **1 failed, 4 passed** — 5 가 *"호스트 `make seed` 가 docker 를 지난다"* |
+| 음성 대조군 | 없음(이 커밋의 트리) | **6 passed** |
+| M1 | `Makefile` 의 `env` 타깃을 **무동작**(`@true`)으로(= 작업 1 을 되돌린다) | **2 failed, 4 passed** — ①이 *"make env 를 돌렸는데 .env 가 없다"*, ③이 *"make env 뒤에도 `docker compose config` 가 rc≠0 다"* |
+| M2 | `env` 타깃이 `.env` 를 만들되 `JWT_SECRET=` **빈 값**으로(= `.env.example` 복사와 같은 모양, `required: false` 처방과 같은 자리) | **2 failed, 4 passed** — ①이 *"JWT_SECRET 이 비어 있다"*, ③이 api 서비스 환경 단언에서 죽는다. **같은 변이의 사본에서 `docker compose config` 를 손으로 쳐 보면 rc 는 `0` 이다**(N=1) — rc 만 보는 단언이었으면 ③이 초록이었다 |
+| M3 | `env` 타깃의 `[ -e .env ]` 갈래를 `if false` 로 바꿔 **언제나 덮어쓰게** 한다 | **1 failed, 5 passed** — ②만 죽는다(해시가 갈린다) |
+| M4 | `packages/core/settings.py` 의 `raise RuntimeError(...)` → `return ""`(문 2 의 기전을 없앤다) | **1 failed, 5 passed** — ④만 죽는다(`DID NOT RAISE`) |
+| M5 | 이 파일의 `_NO_COMPOSE_CLI` 를 강제로 채운다(= docker 부재를 흉내낸다) | **5 passed, 1 skipped** — 한 줄 요약이 skip 수를 싣는다 |
+| M6 | `seed-compose` 의 서비스 이름을 compose 에 **없는 이름**(`apiserver`)으로 | **1 failed, 5 passed** — ⑤ |
+| M7 | `seed-compose` 가 ADR 0018 §2-2 의 명령이 아닌 것(`python -c "print(1)"`)을 돌린다 | **1 failed, 5 passed** — ⑤ |
+| M8 | **호스트** `seed` 레시피를 `docker compose exec …` 로 바꾼다(두 갈래를 뭉갠다) | **1 failed, 5 passed** — ⑤ |
+| M9 | `docker-compose.yml` 의 `web.environment` **키**를 `API_PROXY_TARGET` 으로(= architect 가 문 4 를 다시 연 그 변이) | **1 failed, 5 passed** — ⑥ |
+| M10 | `apps/web/vite.proxy-target.ts` 의 `API_PROXY_TARGET_ENV` 를 `"API_PROXY_TARGET"` 으로(= 반대쪽 철자) | **1 failed, 5 passed** — ⑥ |
+| M11 | compose 가 주는 **값**을 `http://localhost:8000`(= `DEFAULT_API_PROXY_TARGET`)으로 | **1 failed, 5 passed** — ⑥ |
+| M12 | compose 의 `web` 에서 `environment` 블록을 **통째로 지운다**(작업 5 이전 트리의 모양) | **1 failed, 5 passed** — ⑥ 이 *"compose 의 web 이 `BUILDTWIN_API_PROXY_TARGET` 을 주지 않는다(준 이름: [])"* 로 죽는다 |
 
-**M6 은 「이름이 갈리는 것」의 값이다**: compose 의 서비스 이름을 바꾸는 커밋(이 사이클의 작업 5 가
-그 파일을 만진다)은 `make seed-compose` 를 조용히 부러뜨릴 수 있고, 그 손해는 오늘 **데몬이 있는
-자리에서만** 보인다 — 5 가 그것을 파일 둘의 대조로 앞당긴다.
+**M6 은 「이름이 갈리는 것」의 값이다**: compose 의 서비스 이름을 바꾸는 커밋은 `make seed-compose` 를
+조용히 부러뜨릴 수 있고, 그 손해는 오늘 **데몬이 있는 자리에서만** 보인다 — ⑤ 가 그것을 파일 둘의
+대조로 앞당긴다.
 
 **M1 ↔ M2 가 이 표의 값이다**: 둘 다 「데모가 서지 않는다」인데 **rc 로는 갈리지 않는다**(M1 은
-rc≠0, M2 는 rc=0). 그래서 3 은 rc 와 **그 config 가 싣는 값**을 함께 본다(§6-2 4: 두 사실이 함께여야
+rc≠0, M2 는 rc=0). 그래서 ③ 은 rc 와 **그 config 가 싣는 값**을 함께 본다(§6-2 4: 두 사실이 함께여야
 의미가 있으면 함께 단언한다).
+
+**M9~M11 이 ⑥ 이 새로 사는 이유다.** 이 커밋 **이전** 트리에서 architect 가 같은 M9 를 심고 잰 값은
+**invariants 111 · vitest 289 전부 초록**이었다 — 문 4 가 조용히 다시 열려도 어느 게이트도 갈리지
+않았다. M9 와 M10 이 **같은 계약의 양쪽 끝**이라 어느 쪽을 고쳐도 ⑥ 이 죽는 것이 요점이다: 이
+대조는 「어느 파일이 옳은가」를 말하지 않고 **둘이 갈렸다**만 말한다.
+
+**M12 는 탐침 자신에 대한 변이다**(§6-2 5 의 자리). architect 실측: 작업 5 이전 트리의 `web` 에는
+그 키가 `{}` 도 `null` 도 아니라 **아예 없었다**. `svc["environment"]` 나 `svc.get("environment").get(…)`
+로 읽는 탐침은 그 상태에서 `KeyError`/`AttributeError` 로 **터진다** — 그러면 보고되는 것은 「문이
+열렸다」가 아니라 「탐침이 부러졌다」이고 둘은 다른 사실이다. `_service_environment` 가
+`… or {}` 로 읽는 근거가 그것이고, M12 가 그 자리를 값으로 태운다.
 
 ## 이 파일이 postgres 축에 무엇을 하는가 (계획 0015 §후속 69)
 
@@ -98,10 +121,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import secrets
 import shutil
 import subprocess
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 import yaml
@@ -113,6 +138,7 @@ BUILDTWIN = Path(__file__).resolve().parents[2]
 MAKEFILE = BUILDTWIN / "Makefile"
 COMPOSE = BUILDTWIN / "docker-compose.yml"
 ENV_EXAMPLE = BUILDTWIN / ".env.example"
+PROXY_TARGET_TS = BUILDTWIN / "apps" / "web" / "vite.proxy-target.ts"
 
 #: 난수 시크릿의 최소 길이. `secrets.token_urlsafe(32)` 는 43자다 — 이 문턱은 「한 글자짜리
 #: 시크릿도 비어 있지 않다」를 막는 하한이지 그 길이의 계약이 아니다.
@@ -309,4 +335,73 @@ def test_the_compose_seed_command_targets_the_compose_database() -> None:
     assert not any("docker" in line for line in host_seed), (
         "호스트 `make seed` 가 docker 를 지난다 — 이 갈래는 settings.database_url 이 가리키는 DB 에 "
         "만드는 것이고(ADR 0018 §2-4 ㉠) 이 커밋은 그것을 바꾸지 않는다."
+    )
+
+
+def _ts_string_const(name: str) -> str:
+    """`vite.proxy-target.ts` 가 내보내는 문자열 상수 하나. **히트가 하나가 아니면 죽는다.**
+
+    수가 아니라 **부재**에 기대는 확인이다(CLAUDE.md §6-1): 이 파일 안에서 그 이름을 다시 내보내는
+    자리가 없다는 것. 둘이 되면 어느 쪽이 정본인지 이 함수가 고를 수 없으므로 그 자리에서 죽인다.
+    """
+    hits = re.findall(rf'^export const {name} = "([^"]*)";', PROXY_TARGET_TS.read_text(encoding="utf-8"), flags=re.M)
+    assert len(hits) == 1, (
+        f"{PROXY_TARGET_TS.name} 에서 `export const {name} = \"...\";` 를 {len(hits)}개 찾았다 — "
+        "하나여야 한다(정본이 갈리면 이 대조는 어느 쪽과 맞대야 할지 모른다)."
+    )
+    return hits[0]
+
+
+def _service_environment(service: str) -> dict[str, str]:
+    """compose 서비스의 `environment`. **키가 아예 없는 것과 빈 것을 같은 칸에 둔다.**
+
+    `svc["environment"]` 도 `svc.get("environment").get(...)` 도 그 자리에서 터진다 — 이 사이클의
+    작업 5 **이전** 트리에서 `web` 에는 그 키가 `{}` 도 `null` 도 아니라 **아예 없었다**(architect
+    실측). 탐침이 예외로 죽으면 그것은 「문이 열렸다」가 아니라 「탐침이 부러졌다」이고, 둘은 다른
+    사실이다. 목록 형식(`- K=V`)도 받는다 — compose 가 둘 다 허용한다.
+    """
+    raw = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))["services"][service].get("environment") or {}
+    if isinstance(raw, list):
+        pairs = [str(entry).split("=", 1) for entry in raw]
+        return {pair[0]: (pair[1] if len(pair) > 1 else "") for pair in pairs}
+    return {str(k): ("" if v is None else str(v)) for k, v in raw.items()}
+
+
+def test_the_compose_web_service_spells_the_proxy_env_name_the_web_app_reads() -> None:
+    """⑥ **문 4 의 철자** — `docker-compose.yml` 의 `web.environment` 키와 `vite.proxy-target.ts` 의
+    `API_PROXY_TARGET_ENV` 가 같은 문자열인가. 파일 둘을 함께 읽는 것이 ⑤ 와 같은 모양이다.
+
+    **갈리면 나는 것은 예외가 아니라 침묵이다**: `resolveApiProxyTarget` 은 이름이 환경에 **없으면**
+    기본값(`DEFAULT_API_PROXY_TARGET`)을 돌려주므로, 한쪽 철자가 어긋난 트리에서도 vite 는 조용히
+    뜨고 web 컨테이너의 `/api` 는 **자기 자신**을 가리킨다(그 컨테이너 안에서 `localhost:8000` 은
+    api 가 아니다). 그 손해는 데몬이 있는 자리에서만 보인다 — 여기서 먼저 죽인다.
+    """
+    name = _ts_string_const("API_PROXY_TARGET_ENV")
+    default = _ts_string_const("DEFAULT_API_PROXY_TARGET")
+    services = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))["services"]
+    env = _service_environment("web")
+
+    assert name in env, (
+        f"compose 의 web 이 `{name}` 을 주지 않는다(준 이름: {sorted(env)}). 그 이름의 정본은 "
+        f"{PROXY_TARGET_TS.name} 의 API_PROXY_TARGET_ENV 이고, 철자가 갈리면 vite 는 예외 없이 "
+        f"기본값 {default} 로 떨어져 web 컨테이너가 자기 자신을 가리킨다(문 4)."
+    )
+    value = env[name]
+    assert value, (
+        f"compose 의 web 이 `{name}` 을 **비워서** 준다 — 선언됐는데 비면 resolveApiProxyTarget 이 "
+        "던지고 vite 가 뜨지 않는다(그 파일의 「선언됐는데 비었다」 문단)."
+    )
+    assert value != default, (
+        f"compose 의 web 이 주는 값이 기본값({default})과 같다 — 그 값은 **호스트 갈래**의 것이고 "
+        "컨테이너 안에서는 api 가 아니라 자기 자신이다. 이름을 아예 빼는 것과 같은 결과가 된다."
+    )
+
+    host, port = urlsplit(value).hostname, urlsplit(value).port
+    assert host in services, (
+        f"프록시 대상 호스트 `{host}` 가 compose 의 서비스 이름이 아니다(있는 이름: {sorted(services)}) — "
+        "컨테이너 안에서 그 이름은 풀리지 않는다."
+    )
+    assert host != "web", f"프록시 대상이 web 자신이다({value}) — 문 4 가 열린 채다."
+    assert f"--port {port}" in str(services[host]["command"]), (
+        f"프록시 대상 포트({port})가 `{host}` 서비스가 듣는 포트와 다르다: {services[host]['command']}"
     )
