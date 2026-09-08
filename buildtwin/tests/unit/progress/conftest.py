@@ -1,4 +1,8 @@
-"""progress-engine 단위 테스트 공용 픽스처: 인메모리 SQLite + 샘플 객체/공정표(로더는 tests/helpers/progress_fixtures)."""
+"""progress-engine 단위 테스트 공용 픽스처: **축이 정한 엔진** + 샘플 객체/공정표(로더는 tests/helpers/progress_fixtures).
+
+엔진은 `tests/unit/conftest.py` 의 `axis_db_url` 이 정한다 — `BUILDTWIN_CI_POSTGRES_URL` 이 있으면
+테스트 전용 스키마의 PostgreSQL, 없으면 in-memory SQLite(ADR 0017).
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -12,6 +16,7 @@ from services.progress import persistence as db
 from services.progress.activity_mapper import map_activities_to_objects
 from services.progress.importers import import_schedule
 from tests.helpers.progress_fixtures import CATEGORY_TO_IFC, load_sample_objects, load_schedule_expected
+from tests.unit.conftest import observe
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
 PROJECT_ID = "P-TEST"
@@ -61,9 +66,9 @@ def ensure_scan_chain(session, project_id: str, scan_id: str, file_id: str | Non
 
 
 @pytest.fixture
-def session():
+def session(axis_db_url):
     reset_engine()
-    init_db("sqlite:///:memory:")
+    observe(init_db(axis_db_url))
     s = new_session()
     try:
         yield s

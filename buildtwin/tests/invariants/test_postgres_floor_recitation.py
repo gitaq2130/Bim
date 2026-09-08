@@ -53,6 +53,15 @@
   위 「왼쪽에 적은 비교식」과 같은 **거짓 양성**이다(그 문장은 오늘의 바닥값을 복창하는 것이 아니라
   옛 트리의 실측을 적은 것이므로). 즉 **이 훑기의 대상 여부를 가르는 것은 `docs/` 라는 경로가 아니라
   「오늘의 바닥값을 복창하는가」이고, 이 정규식은 그 둘을 구별하지 못한다.**
+- **정본이 트리 하나가 아니게 됐다 — 이 감시는 그 둘 중 하나만 본다**(계획 0013 작업 4). ADR 0017
+  결정 2 가 바닥값을 **트리별 키**로 바꿨다(`min_tests_on_postgres` 는 이제 매핑이다). 이 파일의 ①은
+  `read_floor(INTEGRATION_TREE)` 하나와 비교하므로, `tests/unit` 의 바닥값을 산문에 비교식으로 적으면
+  **거짓 양성으로 죽는다**. 그 방향은 안전하다(값이 갈리는 것이 아니라 적지 못하게 막는다). 실측
+  (각 N=1, 심고 `git diff`/`diff` 로 적용 확인 뒤 원복, 명령은 이 파일 단독):
+  **B-U1** = 목록 **안** 파일(`postgres_axis.py`)에 `252 >= 252` 를 심었다 → **1 failed, 1 passed**(①이
+  187 과 갈린다고 말한다). **B-U2** = 목록 **밖** 파일(`tests/unit/conftest.py`)에 같은 것을 심었다 →
+  **1 failed, 1 passed**(②가 그 파일을 이름으로 집어낸다). 그래서 이 사이클은 단위 바닥값을
+  **어디에도 비교식으로 적지 않았다** — 값이 필요한 자리는 정본 파일에서 읽는다.
 - **이 파일 자신.** 아래 `SCANNED_ROOTS` 훑기에서 **자기를 뺀다** — 이 docstring 이 예시로 적는 비교식이
   전수 단언을 자기가 깨기 때문이다. 뺄 수 있는 근거는 이 파일의 **코드**가 바닥값을 **복창하지
   않는다**는 것이다: 값은 `axis.read_floor()` 로만 온다(부재 단정 — 이 파일의 코드에 바닥값 리터럴이
@@ -151,7 +160,7 @@ def _scan_files() -> list[Path]:
 
 def test_every_recited_floor_equals_the_committed_floor():
     """① 세 파일이 복창하는 수가 `tests/postgres.floor.json` 의 값이다 — 그리고 **공허하지 않다**."""
-    floor = axis.read_floor()
+    floor = axis.read_floor(axis.INTEGRATION_TREE)
     for path in RECITING_FILES:
         assert path.is_file(), f"복창 자리가 없어졌다: {path} — 목록(RECITING_FILES)을 함께 고친다"
         found = _comparisons(path)

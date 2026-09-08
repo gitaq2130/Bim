@@ -15,6 +15,7 @@ import pytest
 
 from packages.core.db import init_db, new_session, reset_engine
 from packages.core.models.orm import BimObjectRow, DrawingRow, FileRow, ModelRow, ProjectRow
+from tests.unit.conftest import observe
 
 DRAWING_ID = "d1"
 PROJECT_ID = "p1"
@@ -76,10 +77,10 @@ def make_bim_object(s, project_id: str, global_id: str, model_id: str = "m1", if
 
 
 @pytest.fixture
-def session():
-    """in-memory sqlite + 기본 Project(p1)/File(f1, dxf)/Drawing(d1) 체인을 미리 만든다."""
+def session(axis_db_url):
+    """**축이 정한 엔진** + 기본 Project(p1)/File(f1, dxf)/Drawing(d1) 체인을 미리 만든다."""
     reset_engine()
-    init_db("sqlite://")
+    observe(init_db(axis_db_url))
     s = new_session()
     make_drawing(s, DRAWING_ID, PROJECT_ID, FILE_ID)
     s.commit()

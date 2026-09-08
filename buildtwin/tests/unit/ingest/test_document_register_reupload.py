@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from packages.core.models.orm import Base, DocumentRow
 from services.ingest.persistence import persist_document_register_import
 from services.progress.importers.document_register import import_document_register
+from tests.unit.conftest import observe
 
 from .conftest import make_file, make_project
 
@@ -24,8 +25,8 @@ PROJECT = "p-doc-reupload"
 
 
 @pytest.fixture
-def session() -> Iterator[Session]:
-    engine = create_engine("sqlite://", future=True)
+def session(axis_db_url) -> Iterator[Session]:
+    engine = observe(create_engine(axis_db_url, future=True))
     Base.metadata.create_all(engine)
     with Session(engine, expire_on_commit=False) as s:
         make_project(s, PROJECT, name="doc reupload test")

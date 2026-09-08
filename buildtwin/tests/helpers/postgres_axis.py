@@ -1,6 +1,8 @@
-"""통합 테스트의 DB 축과 그 축이 실제로 돌았음을 붙드는 강제 셋 — 담당: qa (ADR 0014 §2-2·§2-5).
+"""테스트의 DB 축과 그 축이 실제로 돌았음을 붙드는 강제 셋 — 담당: qa (ADR 0014 §2-2·§2-5, ADR 0017).
 
-축 하나(`BUILDTWIN_CI_POSTGRES_URL`)로 `tests/integration` 이 PostgreSQL 또는 임시 SQLite 위에서 돈다.
+축 하나(`BUILDTWIN_CI_POSTGRES_URL`)로 **두 트리**(`tests/integration` · `tests/unit`)가 PostgreSQL 또는
+임시 SQLite 위에서 돈다. 축은 **세션의 성질**이지 트리의 성질이 아니다(ADR 0017): 각 트리의 conftest 가
+자기 기록기와 자기 바닥값 키만 보고, 어떤 세션도 **자기가 수집하지 않은 트리의 키**를 보지 않는다.
 그 이름은 `.github/workflows/buildtwin-ci.yml` 이 예전부터 export 하던 것이고, ADR 0014 §2-2 가 새 이름을
 만드는 대신 그것을 읽기로 정했다(결함은 "이름이 없다"가 아니라 "있는 이름을 아무도 읽지 않는다"였다).
 
@@ -64,6 +66,12 @@ TESTS = Path(__file__).resolve().parents[1]
 FLOOR_PATH = TESTS / "postgres.floor.json"
 MEASURED_PATH = TESTS / "postgres.measured.json"
 FLOOR_KEY = "min_tests_on_postgres"
+
+#: 축이 도는 트리의 이름. **바닥값의 키가 이것이다**(ADR 0017 결정 2) — 트리 하나가 아니라 "그 세션이
+#: 무엇을 수집했는가"에 매인다. 각 트리의 conftest 가 자기 기록기와 자기 바닥값만 본다: 한 세션이 둘 다
+#: 수집하면 두 계약이 각각 서고, 하나만 수집하면 **수집하지 않은 트리의 키는 그 세션에 들어오지 않는다.**
+INTEGRATION_TREE = "tests/integration"
+UNIT_TREE = "tests/unit"
 
 #: 이 모듈이 import 되는 시점(= 수집 시작)의 measured 파일 내용. sqlite 모드에서 "아무것도 쓰지 않는다"를
 #: 단언으로 붙들기 위한 스냅샷이다(ADR 0014 §2-5 3). 파일이 없으면 None.
@@ -159,9 +167,19 @@ class AxisRecorder:
             self.tests_on_postgres += 1
 
 
-def read_floor() -> int:
+def read_floor_map() -> dict[str, int]:
+    """트리 → 바닥값. 정본은 `tests/postgres.floor.json` 의 `min_tests_on_postgres` **매핑** 하나다."""
     data = json.loads(FLOOR_PATH.read_text(encoding="utf-8"))
-    return int(data[FLOOR_KEY])
+    return {str(tree): int(value) for tree, value in data[FLOOR_KEY].items()}
+
+
+def read_floor(tree: str) -> int:
+    """그 트리의 바닥값. **없는 트리를 조용히 0 으로 떨어뜨리지 않는다** — 키가 없으면 KeyError 다.
+
+    폴백을 두지 않는 것이 이 함수의 계약이다: 새 트리에 축을 붙이고 키를 안 만들면 그 트리의 감시는
+    "언제나 만족"이 되고, 그것이 이 저장소가 감시하려는 실패("조용히 줄어드는 것") 자신이다.
+    """
+    return read_floor_map()[tree]
 
 
 def should_write_measured(*, tests_on_postgres: int, floor: int) -> bool:
@@ -181,6 +199,17 @@ def should_write_measured(*, tests_on_postgres: int, floor: int) -> bool:
 LOG_PREFIX = "[db-axis]"
 
 
+def axis_log_line(*, tree: str, dialect: str | None, server_version: str | None, tests_on_postgres: int,
+                  engines: int, floor: int, measured: str | None) -> str:
+    """`[db-axis]` 줄의 **한 가지 모양**. 트리 이름이 첫 필드인 이유는 이제 한 잡·한 세션이 이 줄을
+    **여럿** 찍기 때문이다(unit 잡과 integration 잡, 그리고 루트 한 세션) — 트리 이름이 없으면 두 줄이
+    어느 트리의 것인지 로그에서 갈리지 않는다.
+    """
+    line = (f"{LOG_PREFIX} tree={tree} dialect={dialect} server_version={server_version} "
+            f"tests_on_postgres={tests_on_postgres} engines={engines} floor={floor}")
+    return line if measured is None else f"{line} measured_file={measured}"
+
+
 def report_line(report: dict) -> str:
     """측정값을 **로그 한 줄**로. 파일은 다운로드해야 보이지만 이 줄은 잡 로그에 그대로 남는다.
 
@@ -193,15 +222,16 @@ def report_line(report: dict) -> str:
     # 게이트가 들어간 뒤로 이 줄은 **썼는지까지** 말해야 한다. 안 그러면 바닥값 미달 실행의 로그가
     # "파일에 이 값이 있다"로 읽힌다(계획 0011 §후속 29 ⓑ — 잃은 diff 를 잇는 자리가 이 줄이다).
     wrote = should_write_measured(tests_on_postgres=report["tests_on_postgres"], floor=floor)
-    return (f"{LOG_PREFIX} dialect={report['dialect']} server_version={report['server_version']} "
-            f"tests_on_postgres={report['tests_on_postgres']} engines={report['engines']} "
-            f"floor={floor} measured_file={MEASURED_PATH.name}"
-            f"{'(썼다)' if wrote else '(안 썼다 — 바닥값 미달이라 이 실행의 값은 감시가 아니다)'}")
+    return axis_log_line(
+        tree=INTEGRATION_TREE, dialect=report["dialect"], server_version=report["server_version"],
+        tests_on_postgres=report["tests_on_postgres"], engines=report["engines"], floor=floor,
+        measured=(MEASURED_PATH.name
+                  + ("(썼다)" if wrote else "(안 썼다 — 바닥값 미달이라 이 실행의 값은 감시가 아니다)")))
 
 
-def sqlite_log_line() -> str:
+def sqlite_log_line(tree: str = INTEGRATION_TREE) -> str:
     """sqlite 축의 같은 자리. 두 스텝 로그가 같은 접두사로 갈린다 — 값을 쓰지는 않는다(계약 3)."""
-    return (f"{LOG_PREFIX} dialect=sqlite tests_on_postgres=0 engines=0 "
+    return (f"{LOG_PREFIX} tree={tree} dialect=sqlite tests_on_postgres=0 engines=0 "
             f"({ENV_NAME} 없음 — {MEASURED_PATH.name} 을 건드리지 않았다)")
 
 
@@ -271,11 +301,17 @@ def check_sqlite_axis_is_inert(*, dialect: str | None, engines: int, tests_on_po
     )
 
 
-def check_contract(*, dialect: str | None, engines: int, tests_on_postgres: int, floor: int) -> None:
+def check_contract(*, dialect: str | None, engines: int, tests_on_postgres: int, floor: int,
+                   engines_expected: int | None = 1) -> None:
     """ADR 0014 §2-5 의 계약 둘 + 세션의 엔진 수. postgres 모드에서만 부른다(3번째 계약 = sqlite 모드 무동작은 호출부에 있다).
 
     ① 방언이 postgresql 이 아니면 실패 — **조용히 sqlite 로 떨어지는 것**이 §후속 10 의 결함 자신이다.
-    ② 엔진 수가 하나가 아니면 실패 — 축이 정한 엔진 말고 **다른 엔진이 하나 더 섰다**는 뜻이다.
+    ② 엔진 수가 기대와 다르면 실패 — 축이 정한 엔진 말고 **다른 엔진이 하나 더 섰다**는 뜻이다.
+       기대값이 트리마다 다른 것은 **격리 단위가 트리마다 다르기 때문**이다(ADR 0017 결정 3 이 그것을
+       소유자에게 맡겼다): 통합은 `client` 가 session-scope 라 세션 내내 엔진 하나이고, 단위는 테스트마다
+       처음부터라 DB 를 만지는 테스트 수만큼 선다. 그래서 `engines_expected=None` 은 *"적어도 하나"* 다 —
+       **그 갈래에서도 0 은 여전히 실패**이고(축이 섰는데 아무 엔진도 안 선 것), 그 트리에서 수를
+       붙드는 것은 바닥값이다.
     ③ 바닥값 미달이면 실패 — 한 개만 붙이고 초록을 부르는 것, 그리고 나중에 대부분을 sqlite 로 되돌리는 것.
 
     **②는 새 계약이 아니라 옮겨온 자리다**(ADR 0017 결정 1). 예전에는 `test_99` 의
@@ -287,10 +323,11 @@ def check_contract(*, dialect: str | None, engines: int, tests_on_postgres: int,
         f"{ENV_NAME} 가 설정됐는데 통합 세션이 postgresql 위에서 돌지 않았다(dialect={dialect!r}). "
         "축을 못 읽고 조용히 sqlite 로 떨어진 것이 이 단언이 잡는 실패다 (ADR 0014 §2-5 1)."
     )
-    assert engines == 1, (
-        f"postgres 축 세션이 관측한 엔진이 {engines}개다(하나여야 한다). 축이 정한 URL 말고 다른 엔진이 "
-        "함께 섰거나(격리 밖 쓰기) 아무 엔진도 서지 않았다 — 어느 쪽이든 이 세션의 측정값은 축의 값이 "
-        "아니다 (ADR 0017 결정 1: 이 관측의 자리는 세션 파이널라이저다)."
+    assert engines >= 1 and (engines_expected is None or engines == engines_expected), (
+        f"postgres 축 세션이 관측한 엔진이 {engines}개다"
+        f"({'하나여야 한다' if engines_expected == 1 else f'기대={engines_expected}'}). 축이 정한 URL 말고 "
+        "다른 엔진이 함께 섰거나(격리 밖 쓰기) 아무 엔진도 서지 않았다 — 어느 쪽이든 이 세션의 측정값은 "
+        "축의 값이 아니다 (ADR 0017 결정 1: 이 관측의 자리는 세션 파이널라이저다)."
     )
     assert tests_on_postgres >= floor, (
         f"postgres 위에서 SQL 을 실행한 테스트가 {tests_on_postgres}건으로 바닥값 {floor} 미만이다 "

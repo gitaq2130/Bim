@@ -65,7 +65,7 @@ def db_axis_contract():
                                         tests_on_postgres=RECORDER.tests_on_postgres)
         axis.check_sqlite_noop(measured_now=axis.current_measured_bytes(), measured_at_import=axis.MEASURED_AT_IMPORT)
         return
-    floor = axis.read_floor()
+    floor = axis.read_floor(axis.INTEGRATION_TREE)
     # **바닥값을 만족한 실행만 쓴다**(계획 0011 §후속 29 ⓑ). 예전에는 무조건 썼고, 그래서 부분집합을
     # postgres 축으로 돌릴 때마다 저장소 파일이 그 부분집합의 값으로 덮인 채 남았다. 판정 축이 호출
     # 형태(`-k`·`--deselect`)가 아닌 이유는 실측이다 — 플래그 0개로 경로만 좁힌 실행이 파일을 14 로
@@ -91,7 +91,7 @@ def pytest_terminal_summary(terminalreporter) -> None:
     이 배선을 import 한 세션을 **하위 프로세스**로 돌려 출력을 읽는 것이다 — test_99 가 그 기구를 갖는다.
     파이널라이저의 `check_contract` 호출도 같은 기구가 붙든다(`test_the_finalizer_actually_calls_...`).
     """
-    line = axis.report_line(axis.measured_report(RECORDER, axis.read_floor())) if RECORDER.is_postgres \
+    line = axis.report_line(axis.measured_report(RECORDER, axis.read_floor(axis.INTEGRATION_TREE))) if RECORDER.is_postgres \
         else axis.sqlite_log_line()
     terminalreporter.write_line(line)
 

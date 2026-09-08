@@ -1,4 +1,4 @@
-"""persist_ingest_result / persist_drawing — ADR 0001 §1 재업로드 규칙, ADR 0005 프로젝트 범위 키(sqlite in-memory)."""
+"""persist_ingest_result / persist_drawing — ADR 0001 §1 재업로드 규칙, ADR 0005 프로젝트 범위 키(엔진은 축이 정한다)."""
 from __future__ import annotations
 
 from collections.abc import Iterator
@@ -16,6 +16,7 @@ from services.ingest import persist_drawing, persist_ingest_result
 from services.ingest.dxf_parser import parse_dxf
 from services.ingest.ifc_parser import parse_ifc
 from services.ingest.persistence import PersistedModel
+from tests.unit.conftest import observe
 
 from .conftest import make_file, make_project
 
@@ -24,8 +25,8 @@ PROJECT = "p-test"
 
 
 @pytest.fixture
-def session() -> Iterator[Session]:
-    engine = create_engine("sqlite://", future=True)
+def session(axis_db_url) -> Iterator[Session]:
+    engine = observe(create_engine(axis_db_url, future=True))
     Base.metadata.create_all(engine)
     with Session(engine, expire_on_commit=False) as s:
         make_project(s, PROJECT, name="test")
@@ -168,15 +169,15 @@ def test_persist_drawing_and_replace_on_reupload(session: Session, dxf_result: I
         persist_drawing(session, "p-other", "f-other", dxf_result, level=None, drawing_id=other)
 
 
-def test_same_ifc_uploaded_to_two_projects_is_the_whole_point_of_adr_0005(ifc_result: IngestResult) -> None:
+def test_same_ifc_uploaded_to_two_projects_is_the_whole_point_of_adr_0005(ifc_result: IngestResult, axis_db_url) -> None:
     """ADR 0005 회귀 테스트: 같은 파싱 결과를 서로 다른 project_id 두 번 적재해도 둘 다 성공하고,
     각 프로젝트가 자기만의 완전한 객체 집합을 가지며, 한쪽 상태 변경이 다른 쪽에 전혀 새지 않는다.
-    `packages.core.db`의 실제 엔진/세션 팩토리(reset_engine + init_db("sqlite://") + new_session)를 그대로 써서
+    `packages.core.db`의 실제 엔진/세션 팩토리(reset_engine + init_db(축이 정한 URL) + new_session)를 그대로 써서
     (project_id, global_id) 복합 키가 실제 배포 경로에서도 프로젝트를 격리함을 검증한다.
     """
     reset_engine()
     try:
-        init_db("sqlite://")
+        observe(init_db(axis_db_url))
         session = new_session()
         try:
             make_project(session, "p-alpha", name="alpha")

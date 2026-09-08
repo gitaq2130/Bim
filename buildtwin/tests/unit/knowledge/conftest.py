@@ -10,11 +10,12 @@ from sqlalchemy.orm import Session, sessionmaker
 from packages.core.models.evidence import Evidence
 from packages.core.models.orm import Base
 from packages.core.models.scan import ScanState, ScanVerdict
+from tests.unit.conftest import observe
 
 
 @pytest.fixture
-def db_session():
-    engine = create_engine("sqlite://", future=True)
+def db_session(axis_db_url):
+    engine = observe(create_engine(axis_db_url, future=True))
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
     s: Session = factory()

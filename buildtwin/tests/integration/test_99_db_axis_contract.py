@@ -181,7 +181,7 @@ def test_sqlite_log_line_says_the_axis_is_off_and_names_nothing_written():
 
 def test_floor_file_declares_a_positive_integer():
     """파일이 읽히고 수라는 것까지만 본다 — **값이 옳은지는 보지 않는다**(위 머리말 2 의 한계)."""
-    floor = axis.read_floor()
+    floor = axis.read_floor(axis.INTEGRATION_TREE)
     assert isinstance(floor, int) and floor > 0
 
 
@@ -271,7 +271,7 @@ def test_the_finalizer_writes_when_the_run_met_the_floor(monkeypatch, tmp_path):
     센티널을 덮어 두고 돌린 뒤 **바이트가 달라졌는가 + 실측값이 들어갔는가**를 본다. 센티널이 없으면
     두 구현이 같은 바이트를 남겨 이 칸이 장식이 된다(§6-2 1).
     """
-    floor = axis.read_floor()
+    floor = axis.read_floor(axis.INTEGRATION_TREE)
     measured = tmp_path / "measured.json"
     measured.write_bytes(SENTINEL)
     _drive_the_repo_finalizer(monkeypatch, measured, dialect="postgresql", tests_on_postgres=floor)
@@ -287,7 +287,7 @@ def test_the_finalizer_does_not_write_below_the_floor_but_still_dies_with_the_co
     (D3)이 그대로 통과하고, 그러면 부분집합이 조용히 초록이 된다 — 이 계약이 겨냥한 결함 자신이다.
     문구를 통째로 베끼지 않고 **수 둘**만 본다(§6-4 3).
     """
-    floor = axis.read_floor()
+    floor = axis.read_floor(axis.INTEGRATION_TREE)
     measured = tmp_path / "measured.json"
     measured.write_bytes(SENTINEL)
     with pytest.raises(AssertionError) as caught:
@@ -304,7 +304,7 @@ def test_the_finalizer_does_not_write_below_the_floor_but_still_dies_with_the_co
 # 직접 돌린다(호출을 지우면 뒤 둘이 죽는다).
 def test_the_contract_also_names_the_engine_count():
     """postgres 축의 옮겨온 칸 — 엔진이 하나가 아니면 계약이 죽고, 메시지가 **실제 수**를 싣는다."""
-    floor = axis.read_floor()
+    floor = axis.read_floor(axis.INTEGRATION_TREE)
     axis.check_contract(dialect="postgresql", engines=1, tests_on_postgres=floor, floor=floor)   # 양성
     for engines in (0, 2):
         with pytest.raises(AssertionError) as caught:
@@ -328,7 +328,7 @@ def test_the_finalizer_dies_when_a_postgres_session_observed_more_than_one_engin
     달라지는 배역). 파일은 센티널 그대로여야 한다(쓰기는 게이트 뒤가 아니라 단언 앞이므로 이 칸은
     "썼는데 죽었다"가 아니라 "썼고 죽었다"를 구별하지 않는다 — 그 구별은 형제 둘이 한다).
     """
-    floor = axis.read_floor()
+    floor = axis.read_floor(axis.INTEGRATION_TREE)
     measured = tmp_path / "measured.json"
     measured.write_bytes(SENTINEL)
     with pytest.raises(AssertionError) as caught:
@@ -560,7 +560,7 @@ def test_a_below_floor_postgres_session_stays_red_and_says_the_real_count(below_
     """
     proc, work = below_floor_child
     out = proc.stdout + proc.stderr
-    floor = axis.read_floor()
+    floor = axis.read_floor(axis.INTEGRATION_TREE)
     # ⓐ
     assert proc.returncode != 0, out
     assert "error" in out.strip().splitlines()[-1], out
