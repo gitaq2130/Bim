@@ -29,7 +29,12 @@ model: sonnet
   - 격리 단위가 트리마다 다르다 — `grep -n "격리 단위" tests/unit/conftest.py` ·
     `grep -n "세션 전용 스키마" tests/integration/conftest.py`(**각각 그 파일 안 히트 하나**)
 - `.github/workflows/` — CI
-- `Makefile` — `make dev / test / lint / docs / fixtures`
+- `Makefile` — 타깃은 **그 파일에서 읽는다**(`grep -nE "^[a-z][a-z0-9-]*:" Makefile`).
+  여기에 열거를 다시 두지 않는다: **열거는 길이가 곧 개수라** 타깃이 늘 때마다 조용히 낡는다
+  (CLAUDE.md §6-1 9회차 — 찾는 명령: `grep -n "열거는 길이가 곧 개수다" CLAUDE.md`).
+  실제로 낡았다 — 옛 열거(`make dev / test / lint / docs / fixtures`)는 사이클 0015 가 더한
+  `env`(`5fedf31`)·`seed-compose`(`9640c79`)를 담지 못한다. 그 파일의 머리 주석도 사람용 요약이라
+  전량이 아니다(`sed -n '2p' Makefile` 과 위 grep 의 출력이 다르다).
 - `apps/web/src/**/*.test.ts(x)` 와 `apps/web/src/test/`(vitest 하네스 디렉터리 전체) — **소유 정본은
   `CLAUDE.md` §2 소유 규칙의 공동 편집 자리 항목 하나**다. 여기서 축을 다시 세우지 않는다: 2026-09-04
   `91e132a`(qa 가 `test/utils.tsx` 를 고쳐 체크 3 FAIL)와 2026-09-05 `92daacb`·`3f606f3` 는 **같은 답이
