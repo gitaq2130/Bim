@@ -1,7 +1,7 @@
 # BuildTwin — 담당: qa
-# make dev / make test / make lint / make docs / make fixtures / make e2e / make api / make web
+# make dev / make test / make lint / make docs / make fixtures / make e2e / make api / make web / make seed
 
-.PHONY: dev test lint docs fixtures fixtures-public test-py test-unit test-invariants test-regression test-integration test-web e2e e2e-deps web-build lint-py lint-web api web setup db-reset
+.PHONY: dev test lint docs fixtures fixtures-public test-py test-unit test-invariants test-regression test-integration test-web e2e e2e-deps web-build lint-py lint-web api web setup db-reset seed
 
 PY := . .venv/bin/activate &&
 
@@ -15,6 +15,11 @@ dev: ## API + Celery worker + web dev server (docker compose)
 	@echo "  packages/core/db.init_db 는 create_all 뿐이라 **기존 파일에 새 컬럼을 추가하지 않는다** —"
 	@echo "  예: ADR 0009 의 documents.title_identity / identity_fingerprint (계획 0003 §8)."
 	docker compose up --build
+
+seed: ## 데모 계정·데모 프로젝트를 만드는 **명시적 명령**(ADR 0018 §2-2). 멱등 — 이미 시드된 DB 에는 아무것도 만들지 않는다.
+	@echo "※ 시드는 DATABASE_URL 이 가리키는 DB 에 만든다 — 이 명령은 어떤 DB 인지 가리지 않는다(ADR 0018 §2-4 ㉠)."
+	@echo "  이 셸의 DATABASE_URL 이 비어 있으면 packages/core/db 의 기본값(로컬 sqlite ./buildtwin.db)이다."
+	$(PY) python -m services.api.seed
 
 db-reset: ## 로컬 개발용 SQLite 폐기(대장·문서는 대장 재업로드로 재생성된다 — ADR 0007 §1 규칙 1: 대장이 정본)
 	@echo "removing local sqlite dev database(s): $(wildcard *.db)"

@@ -189,7 +189,7 @@ jobs:
       # `-rfE` = 실패·에러의 짧은 요약(어느 테스트인지), `--tb=short` = 예외 타입과 자리.
       # 이 둘이 있어야 "컨테이너가 죽었다"(psycopg.OperationalError: connection refused)와
       # "단언이 깨졌다"(AssertionError)가 로그에서 갈린다 — 지금은 둘 다 그냥 빨간 잡이다.
-      - name: pytest integration (sqlite — 로컬 make test 와 같은 갈래, seed_dev_data 는 꺼진 채로)
+      - name: pytest integration (sqlite — 로컬 make test 와 같은 갈래, 시드는 픽스처가 명시적으로 부른다)
         run: pytest tests/integration -q -rfE --tb=short
       # 두 스텝이 같은 잡이라 앞 스텝의 실패가 뒤를 가린다(ADR 0014 §Deferred 3 이 qa 판단으로 남긴 자리).
       # !cancelled() 로 그 가림만 없앤다 — 잡을 나누면 setup(deps·fixtures)을 두 번 하게 되고,

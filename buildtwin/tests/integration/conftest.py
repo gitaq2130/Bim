@@ -26,7 +26,7 @@ non-sqlite 갈래가 §3-4 대로 기동을 거부하기 때문이다(ADR 0014 �
 | 3 | 무동작 | 부른다 | **226 passed** | 해당 없음 |
 | 4 | 무동작 | **지움** | **2 failed, 32 passed, 192 errors** | **2 failed, 32 passed, 193 errors** |
 
-**postgres 축에는 2·3행이 없다.** 이 파일이 `SEED_DEV_DATA` 를 주지 않게 된 뒤로 그 축의 기동 조건은
+**postgres 축에는 2·3행이 없다.** 이 파일이 그 플래그 환경변수를 더 이상 주지 않으므로 그 축의 기동 조건은
 이미 `False` 라, 그 축에서 `seed_all` 을 지운 실행이 곧 4행이다(실측한 것이 그 칸이다 —
 193 errors 는 sqlite 4행보다 하나 많다 — 두 실행의 ERROR·FAILED 목록을 `comm` 으로 갈라 보니
 차이는 정확히 한 줄, postgres 축에서만 도는

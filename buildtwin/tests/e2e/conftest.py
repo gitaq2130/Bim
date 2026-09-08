@@ -6,6 +6,33 @@
 
 settings 는 세션 픽스처 안에서 바꾸고 끝나면 되돌린다(임포트 시점 부작용 없음). 통합 테스트와 같은 프로세스에서
 DB 를 공유하지 않도록 `make e2e` / CI e2e 잡은 tests/e2e 만 따로 실행한다.
+
+**데모 계정은 두 갈래 각각이 명시적으로 만든다**(ADR 0018 §2-1) — 그러나 **모양이 다르다**:
+`api` 는 in-process 라 `seed_all(session)` 함수, `api_server` 는 하위 프로세스라
+`python -m services.api.seed` **명령**이고 그 **종료 코드를 단언한다**.
+
+**이 두 자리를 지웠을 때 값이 갈리는가는 축이 아니라 기전이 정한다**(CLAUDE.md §6-2 1): 기동이 같은
+DB 를 먼저 채우면 지워도 초록이다. 그래서 대조군을 곱으로 세우고, 「기동이 시드하지 않는 트리」를
+**흉내가 아니라 실제 조건**으로 만들었다 — 두 픽스처의 DB 를 postgres 로 돌리면 `services/api/main.py`
+의 시드 조건이 그 자리에서 `False` 라, 명시 시드를 지우면 아무도 계정을 만들지 않는다. 방법
+`pytest tests/e2e -q`, **각 칸 N=1**, 변이는 한 자리씩 + 심기 직전의 작업 트리 사본과 `diff`
+(§6-2 규칙 5 — 이 커밋이 처음 넣는 줄을 지우는 변이라 `git diff` 는 침묵한다), 원복은 그 사본으로,
+postgres 칸마다 두 데이터베이스를 **버리고 다시 만들었다**(안 그러면 앞 칸의 시드가 다음 칸을 가린다).
+잰 트리 = `b09ae65` + 이 커밋:
+
+| # | 픽스처의 DB | `api` 의 함수 | `api_server` 의 명령 | 실행값 |
+|---|---|---|---|---|
+| 1 | sqlite(커밋된 값) | 부른다 | 부른다 | **12 passed** |
+| 2 | sqlite | **지움** | **지움** | **12 passed** ← **가려진다**(기동이 시드한다) |
+| 3 | postgres | 부른다 | 부른다 | **12 passed** |
+| 4 | postgres | **지움** | **지움** | **9 failed, 1 passed, 2 errors** |
+| 5 | postgres | 부른다 | **지움** | **10 passed, 2 errors** — 죽는 것은 `test_web_smoke` 둘뿐 |
+| 6 | postgres | **지움** | 부른다 | **9 failed, 3 passed** — 죽는 것은 `test_core_flow` 뿐 |
+
+**5·6행이 이 표의 값이다**(§6-2 3: 음성·양성을 한 축에 몰지 않는다). 두 갈래는 서로를 가려 주지
+않는다 — 한쪽을 지우면 그쪽 테스트만 죽는다. 3행은 기동이 시드하지 않는 트리(작업 3 뒤)에서도 이
+배선이 혼자 선다는 것을 미리 값으로 보이고, 2행이 이 사이클에서 「시드 호출만 지우는 변이가 안
+죽는다」로 관측되는 자리다.
 """
 from __future__ import annotations
 
@@ -56,8 +83,9 @@ def _free_port() -> int:
 @pytest.fixture(scope="session")
 def api() -> Iterator:
     tmp = Path(tempfile.mkdtemp(prefix="buildtwin-e2e-"))
-    from packages.core.db import init_db, reset_engine
+    from packages.core.db import init_db, reset_engine, session_scope
     from packages.core.settings import settings
+    from services.api.seed import seed_all
     from services.common.celery_app import celery_app
 
     prev = (settings.database_url, settings.storage_root, settings.celery_always_eager, settings.jwt_secret)
@@ -69,6 +97,14 @@ def api() -> Iterator:
     celery_app.conf.task_eager_propagates = True
     reset_engine()
     init_db(settings.database_url)
+    # **명시 시드**(ADR 0018 §2-1). 이 갈래는 in-process 라 픽스처가 이미 엔진을 쥐고 있으므로 함수로
+    # 부른다 — 아래 `api_server` 갈래가 **명령**을 쓰는 이유(부모의 settings 가 닿지 않는 하위 프로세스)와
+    # 대비된다. 호출이 실제로 만들었음을 그 자리에서 단언한다: 순서를 뒤집어 기동이 먼저 채우면
+    # `created` 가 비어 여기서 죽는다.
+    with session_scope() as s:
+        created, demo_project = seed_all(s)
+    assert sorted(u.role for u in created) == sorted(ROLES), created
+    assert demo_project is not None, "데모 프로젝트 멤버십이 만들어지지 않았다 (ADR 0018 §2-4 ②)"
     from fastapi.testclient import TestClient
 
     from services.api.main import create_app
@@ -164,6 +200,28 @@ def api_server() -> Iterator[dict]:
     port = _free_port()
     env = {**os.environ, "DATABASE_URL": f"sqlite:///{(tmp / 'srv.db').as_posix()}", "STORAGE_ROOT": str(tmp / "storage"),
            "CELERY_ALWAYS_EAGER": "1", "JWT_SECRET": E2E_JWT_SECRET, "PYTHONPATH": str(ROOT)}
+    # **명시 시드는 명령이다**(ADR 0018 §2-2): 아래 uvicorn 은 **다른 프로세스**라 이 픽스처가 부모의
+    # `settings` 를 만져도 닿지 않는다. 그리고 **종료 코드를 단언한다**(계획 0014 §리스크 3) — 서버의
+    # stdout 은 로그 파일로 가고 `_wait_http` 는 `/api/health` 만 보므로, 시드가 실패해도 그 자리에서는
+    # 아무 값도 갈리지 않는다. 실패 문구는 여기서만 사람에게 닿으므로 stdout·stderr 를 함께 싣는다.
+    #
+    # **uvicorn 을 띄우기 「전」에 부른다.** 뒤에 부르면 `_wait_http` 가 돌아온 순간부터 시드가 끝날
+    # 때까지 **부트스트랩이 열린 리스너**가 실제 포트에 살아 있다(계획 0014 §확인하지 않은 것 54 가
+    # 이름 붙인 창 — `users` 가 비어 있으면 `auth/router.py` 가 인증 없는 register 를 admin 으로
+    # 받는다). 순서를 이렇게 두면 그 창은 **길이가 아니라 존재가** 없다: 시드가 rc=0 으로 끝나기
+    # 전에는 이 포트에 리스너 자체가 없다.
+    #
+    # 창을 실제로 쟀다(방법: 이 배선을 그대로 흉내낸 스크래치 탐침, 기동이 시드하지 않는 조건을
+    # 만들려고 DB 만 postgres 로, **N=3**). `_wait_http` 반환 → 시드 완료까지 **1.276·1.294·1.307s**,
+    # 그 창에서 `POST /api/auth/register`(`Authorization` 없음)는 **201** 이고 응답 `role` 이
+    # **`admin`**(요청은 `client` 를 보냈다). 그리고 더 나쁜 것이 뒤에 있다: 그렇게 생긴 계정 하나가
+    # `users_count > 0` 을 만들어 **뒤따르는 시드 명령이 `nothing to seed: users=1` 을 찍고 rc=0 을
+    # 낸다** — 데모 계정은 **0개**인 채다(같은 탐침에서 DB 를 직접 조회한 값).
+    # **그러므로 rc=0 이 「네 계정이 생겼다」와 같은 뜻이 되는 것은 이 DB 가 방금 만든 빈 임시
+    # DB 이기 때문이다.** 비어 있지 않은 DB 에서는 같지 않다.
+    seed = subprocess.run([sys.executable, "-m", "services.api.seed"], cwd=str(ROOT), env=env,
+                          capture_output=True, text=True)
+    assert seed.returncode == 0, f"시드 명령이 실패했다 (rc={seed.returncode}): {seed.stdout}{seed.stderr}"
     log = (tmp / "uvicorn.log").open("w")
     proc = subprocess.Popen([sys.executable, "-m", "uvicorn", "services.api.main:app", "--host", "127.0.0.1", "--port", str(port)],
                             cwd=str(ROOT), env=env, stdout=log, stderr=subprocess.STDOUT)
