@@ -49,7 +49,7 @@ make seed-compose   # 3. **다른 셸에서.** api 컨테이너 안에서 돌아
 개발용 시드 계정은 **기동이 만들지 않는다 — 명령으로 만든다**(ADR 0018 §2-1·§2-2, `python -m services.api.seed`): 호스트 갈래는 `make seed`, compose 갈래는 `make seed-compose`.
 만들어지는 것: `cm@buildtwin.local`, `contractor@buildtwin.local`, `client@buildtwin.local`, `admin@buildtwin.local` / 비밀번호 `buildtwin` (`services/api/README.md`).
 멱등이고, 만들지 못했으면 **종료 코드 1** 과 무엇이 없는지를 낸다. 시드는 `DATABASE_URL` 이 가리키는 DB 에 만든다 — 어떤 DB 인지 가리지 않는다(ADR 0018 §2-4 ㉠).
-시드하지 않은 빈 DB 로 API 를 띄우면 계정이 하나도 없고, 그때 `POST /api/auth/register` 는 인증 없이도 첫 계정을 만든다(그 계정은 admin 이 된다 — `services/api/auth/router.py`).
+시드하지 않은 빈 DB 로 API 를 띄우면 계정이 하나도 없고 **아무도 로그인할 수 없다 — 그것이 의도된 상태다**(ADR 0019 §2-1). `POST /api/auth/register` 는 `users` 가 비어 있어도 admin 인증을 요구하므로, 인증 없는 호출은 **403 `forbidden_role`** 이고 그 뒤에도 `users` 는 0행이다(`services/api/auth/router.py`). 빈 DB 에 첫 계정을 만드는 경로는 위 명령(`make seed` / `make seed-compose`)뿐이고, 그 명령은 프로세스·파일시스템 접근을 요구하므로 네트워크에서 부를 수 없다(ADR 0019 §2-2).
 
 ## 검증
 
