@@ -1,4 +1,12 @@
 # BuildTwin 개발 스택. make dev
+# **publish 는 전부 127.0.0.1 에 묶는다.** 짧은 형식("5432:5432")은 host_ip 가 비어 0.0.0.0 에 붙고,
+# 그러면 이 여섯 포트가 호스트의 모든 인터페이스에서 닿는다(실측: docker compose config 가 여섯 전부
+# host_ip 없이 정규화하고, 그 상태에서 비-루프백 주소로 실제로 닿았다). 아래 서비스들은 그 노출을
+# 견디도록 만들어져 있지 않다 — redis 는 인증이 없고, db·minio 의 자격 증명은 이 파일에 평문이며,
+# api 의 POST /api/auth/register 는 users 가 비면 인증 없이 admin 을 만든다(계획 0014 §후속 67).
+# **컨테이너 안의 --host 0.0.0.0(api:command, web:command)은 그대로 두어야 한다** — 그것은 컨테이너
+# 안에서 듣는 주소이고, 루프백으로 바꾸면 publish 도 서비스 간 통신도 둘 다 죽는다. 노출을 정하는
+# 것은 command 가 아니라 이 ports 의 host_ip 다.
 services:
   db:
     image: postgis/postgis:16-3.4
@@ -6,18 +14,18 @@ services:
       POSTGRES_USER: buildtwin
       POSTGRES_PASSWORD: buildtwin
       POSTGRES_DB: buildtwin
-    ports: ["5432:5432"]
+    ports: ["127.0.0.1:5432:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
   redis:
     image: redis:7-alpine
-    ports: ["6379:6379"]
+    ports: ["127.0.0.1:6379:6379"]
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minio
       MINIO_ROOT_PASSWORD: minio12345
-    ports: ["9000:9000", "9001:9001"]
+    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
     volumes: ["miniodata:/data"]
   api:
     build: { context: ., dockerfile: Dockerfile }
@@ -29,7 +37,7 @@ services:
       CELERY_ALWAYS_EAGER: "false"
       STORAGE_ROOT: /data/storage
     volumes: [".:/app", "storage:/data/storage"]
-    ports: ["8000:8000"]
+    ports: ["127.0.0.1:8000:8000"]
     depends_on: [db, redis, minio]
   worker:
     build: { context: ., dockerfile: Dockerfile }
@@ -47,7 +55,7 @@ services:
     working_dir: /app/apps/web
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
     volumes: [".:/app"]
-    ports: ["5173:5173"]
+    ports: ["127.0.0.1:5173:5173"]
     depends_on: [api]
 volumes:
   pgdata: {}
