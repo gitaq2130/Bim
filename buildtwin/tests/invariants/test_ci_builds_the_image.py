@@ -37,9 +37,21 @@
   데몬을 요구하지 않는 이유이자 한계다.**
 - **`docker compose build` 와 `docker compose up --build` 가 같은 것을 짓는가.** 이 파일은 명령의
   **이름**만 읽는다(계획 0017 §확인하지 않은 것 90).
-- **다른 모양의 삼킴.** 잡는 열쇠는 위 셋이다. `set +e`, `;` 로 이은 명령, 실패해도 rc 0 을 내는
-  래퍼 스크립트, 워크플로 자체를 끄는 `paths` 축소는 **전부 이 단언을 지나간다**(변이 C7 이 그
-  블라인드 스팟을 값으로 태운다).
+- **다른 모양의 삼킴 — 문장은 참이고 낡은 것은 그 함의다**(계획 0018 작업 2 가 값으로 갈랐다).
+  잡는 열쇠는 위 ⓚ 의 것이고, **짓는 스텝의 `run:` 안에서 rc 를 0 으로 만드는 편집은 여전히 이
+  단언을 지나간다** — 변이 C7 = **4 passed** 이고, 이 사이클이 같은 변이를 다시 심어도 이 파일은
+  **4 passed** 다(아래 「C7 을 지금은 누가 죽이는가」 표의 **C7 재현** 행).
+  **낡은 것은 「그러므로 저장소가 그 편집을 놓친다」는 함의다**: 그 축은 이제 이웃
+  `test_no_step_swallows_its_own_failure.py` 가 **모든 워크플로의 모든 잡의 모든 스텝**에 대해
+  죽인다(같은 행의 이웃 칸 — **1 failed, 3 passed**).
+  **표기가 아닌 기전은 그 이웃도 닫지 않는다** — 실패해도 rc 0 을 내는 래퍼 스크립트, `except: pass`,
+  워크플로 자체를 끄는 `paths:` 축소가 그것이고, 이 사이클은 **표기 축만** 닫았다(계획 0018 §1-e 의
+  *"닫지 않는다: ⑦(표기 아닌 기전)"*, **인용 · 발췌**; 그 파일 머리의 ⓓ 가 같은 목록을 적는다 —
+  이 주석의 `grep` 은 `tests/invariants/` 에서 돈다:
+  `grep -n "표기 축만" test_no_step_swallows_its_own_failure.py`).
+  **다만 짓는 스텝을 통째로 다른 명령으로 바꾸는 편집은 이 파일이 잡는다** — ⓙ 가 첫 낱말을 보므로
+  변이 C4 에서 **2 failed, 2 passed** 다. 이 사이클은 그 자리에 래퍼 스크립트를 심어 보지 **않았다**
+  (N=0).
 - **잡이 도는가.** `on:`/`paths` 가 이 워크플로를 언제 부르는지는 이 파일 밖이다 — 그 필터는
   워크플로 전체의 것이고 작업 1 이 바꾸지 않았다.
 - **이미지 안의 것.** 무엇이 설치된다고 **적히는지**는 이웃 파일
@@ -62,7 +74,7 @@
 | C4 | 짓는 스텝의 `run` 을 `echo "docker compose build"` 로 바꾼다 | **2 failed, 2 passed** — ⓙ 와 ⓚ(ⓚ 는 짓는 스텝을 못 찾아 죽는다) |
 | C5 | 짓는 스텝의 `run` 에 셸 OR 로 `true` 를 잇는다 | **1 failed, 3 passed** — ⓚ |
 | C6 | 잡에 `if: false` 를 단다 | **1 failed, 3 passed** — ⓚ |
-| C7 | 짓는 스텝의 `run` 을 `set +e` + 빌드 + `exit 0` 로 바꾼다 | **4 passed** — 위 「보지 못하는 것」 셋째의 값(사각지대 실재) |
+| C7 | 짓는 스텝의 `run` 을 `set +e` + 빌드 + `exit 0` 로 바꾼다 | **4 passed** — 위 「보지 못하는 것」 셋째의 값(사각지대 실재). **지금 그것을 죽이는 파일은 아래 표에 있다** |
 | C8 | 이 파일이 읽는 워크플로 경로를 없는 이름으로 바꾼다 | **4 failed** — 탐침이 **침묵하지 않는다** |
 
 **C1 이 이 감시의 요점이다**: 잡을 지우는 편집은 어떤 테스트도 죽이지 않던 종류의 편집이었고
@@ -75,6 +87,39 @@
 
 **C8 은 탐침 자신에 대한 변이다**(§6-2 5): 읽는 자리가 틀리면 「그 잡이 있다」가 아니라
 「파일을 못 읽었다」가 보고돼야 하고, 초록이어서는 안 된다.
+
+## C7 을 지금은 누가 죽이는가 — **두 게이트의 경계** (계획 0018 작업 2)
+
+**위 표의 C7 행을 지우지 않는다.** 그 값은 그것을 잰 시점의 참이고 이 표는 기록물이다 —
+기록물의 값은 트리가 움직였다고 뒤늦게 갱신하지 않는다(CLAUDE.md §3-13 첫째 갈래, **재서술 · 발췌**;
+이 주석의 `grep` 은 `tests/invariants/` 에서 돈다: `grep -n "뒤늦게 갱신하지 않는다" ../../CLAUDE.md`).
+아래는 **같은 변이를 이 사이클이 다시 심어** 잰 값이다(2026-09-08 21:25~21:39 UTC 한 세션, **각 N=1**,
+서로 몇 분 간격). 변이는 **한 자리씩** 심고 **심기 직전의 작업 트리 사본과 `diff`** 로 적용을 확인한
+뒤 재고, 그 사본으로 원복하고 **저장소 루트에서** `git status --porcelain` 을 확인했다.
+
+| 심은 것 | 이 파일 | 이웃 `test_no_step_swallows_its_own_failure.py` | `pytest tests/invariants -q` |
+|---|---|---|---|
+| 없음(음성 대조군) | **4 passed** | **4 passed** | **130 passed** |
+| C7 재현 — 짓는 스텝의 `run` 을 `set +e` + 빌드 + `exit 0` 로 | **4 passed**(무변화) | **1 failed, 3 passed** — `test_no_run_step_in_any_workflow_turns_a_failure_into_success` | **1 failed, 129 passed** |
+| C2 재현 — 짓는 스텝에 `continue-on-error: true` | **1 failed, 3 passed** — ⓚ | **1 failed, 3 passed** — `test_no_job_or_step_in_any_workflow_carries_the_swallowing_key` | **2 failed, 128 passed** |
+| C3 재현 — `image` **잡**에 `continue-on-error: true` | **1 failed, 3 passed** — ⓚ | **1 failed, 3 passed** — 같은 단언(그 이름이 적는 대로 잡과 스텝을 함께 본다) | **2 failed, 128 passed** |
+| C1 재현 — `image` 잡을 통째로 지운다 | **3 failed, 1 passed** — ⓘⓙⓚ | **4 passed**(무변화) | **3 failed, 127 passed** |
+
+**경계.** 이 파일은 **`image` 잡의 선언**(ⓘ 존재 · ⓙ 짓는 명령 · ⓚ 열쇠와 배선의 부재)을 보고,
+`run:` **안에서** rc 를 0 으로 만드는 편집은 보지 않는다. 그 축은 이웃이 진다 — 그 파일은 워크플로
+디렉터리를 훑고 `Makefile` 을 읽는다(그 자리에서 도는 참조, `tests/invariants/` 에서:
+`grep -n "^WORKFLOW_DIR\|^MAKEFILE" test_no_step_swallows_its_own_failure.py` ·
+`grep -n "def test_no_run_step_in_any_workflow_turns_a_failure_into_success" test_no_step_swallows_its_own_failure.py`,
+**인용 · 발췌**). **거꾸로도 값이 있다**: 위 **C1 재현** 행에서 `image` 잡이 통째로 사라져도 이웃은
+**4 passed** 다 — 「그 잡이 있는가 · 무엇을 짓는가」를 이웃은 보지 않는다.
+
+**겹치는 칸은 `image` 잡·스텝의 `continue-on-error` 이고, 거기서는 둘 다 죽는 것이 정답이다**
+(CLAUDE.md §6-2 4 — *"두 사실이 함께여야 의미가 있으면 함께 단언한다"*, **인용 · 발췌**;
+`grep -n "두 사실이 함께여야" ../../CLAUDE.md`). 위 **C2 재현**(스텝) 행과 **C3 재현**(잡) 행이
+그 값이고, 그 둘에서 `pytest tests/invariants -q` 는 **2 failed** 다. **그 겹침을
+「중복」이라 부르며 한쪽을 지우지 않는다** — 이 파일을 지우면 **C1 재현** 행의 축(존재 · 짓는 명령)을
+아무도 보지 않고, 이웃을 지우면 **C7 재현** 행과 `image` 밖 잡·두 번째 워크플로·`Makefile` 을
+아무도 보지 않는다(그 축의 값은 이웃 머리의 변이 M2 · M3 · M5, **재서술 · 발췌**).
 
 ## 이 파일이 서기 전 그 트리에서 잰 값 (§6-2 1 — 이 게이트가 없을 때의 값)
 

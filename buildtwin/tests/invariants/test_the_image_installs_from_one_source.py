@@ -38,8 +38,29 @@ ADR 0020 §5 셋째 행이 *"금지되는 것은 토큰이 아니라 「실패�
 ## 이 파일이 **보지 못하는** 것 (CLAUDE.md §6-1 ②)
 
 - **주석.** 1·2 는 주석을 걷어 낸다(위 문단). 주석이 의존성을 열거해 낡는 것은 이 파일 밖이다.
-- **다른 모양의 삼킴.** 잡는 모양은 셸 OR 하나다. `;` 로 이은 명령, `set +e`, `<명령> || true`,
-  `SHELL` 교체는 **전부 이 단언을 지나간다** — 그 블라인드 스팟을 값으로 태운 것이 **M-C** 다.
+- **다른 모양의 삼킴 — 이 목록의 한 항목은 거짓이었고, 계획 0018 작업 2 가 값으로 갈랐다.**
+  잡는 모양은 셸 OR 이므로 **`<명령> || true` 는 이 단언이 잡는다**: 그 변이에서 이 파일은
+  **1 failed, 2 passed** 이고 죽는 것은 1(모양)이다(아래 **M-F**). 지나가는 것은 `;` 로 이은
+  명령(**M-C**)과 `set +e`(**M-G**)이고, `SHELL` 교체는 **재지 않았다**(N=0).
+- **`Dockerfile` 의 `set +e` 는 오늘 이 저장소의 불변식 갈래를 죽이지 않는다**(M-G: 그 변이에서
+  `pytest tests/invariants -q` 가 **130 passed** 로 무변화, N=1). `Dockerfile` 을 **경로로 읽는**
+  테스트는 그 갈래에 있고(그 자리에서 도는 참조: `grep -rn "^DOCKERFILE" tests/ --include=*.py` —
+  히트는 이 파일과 `test_the_build_context_excludes_the_secret.py`, 둘 다 `tests/invariants/` 다),
+  **다른 갈래(unit · regression · integration · e2e)에서는 재지 않았다**(N=0). 계획 0018 작업 1 이 세운
+  `tests/invariants/test_no_step_swallows_its_own_failure.py` 는 그 표기를 **워크플로와 `Makefile`
+  에서만** 잡고 `Dockerfile` 을 읽지 않는다 — 그 파일에서 `Dockerfile` 이 나오는 자리는 머리 주석의
+  산문(그 파일의 ⓗ)뿐이고 경로 상수가 아니다(그 자리에서 도는 참조:
+  `grep -n "^WORKFLOW_DIR\|^MAKEFILE" tests/invariants/test_no_step_swallows_its_own_failure.py` ·
+  `grep -n "Dockerfile" tests/invariants/test_no_step_swallows_its_own_failure.py`, **인용 · 발췌**).
+  **그러므로 계획 0018 작업 1 은 이 줄을 거짓으로 만들지 않았다** — 그 계획이 작업 1 의 「거짓으로
+  만드는 남의 자리」에 이 줄을 올린 예측과 실측이 갈렸고, 그 갈림의 처분은 architect 몫이다
+  (계획 0018 작업 3·4).
+- **두 게이트의 경계**(계획 0018 §1-c 곱 표 ①행의 한정, **재서술 · 발췌**). 이 파일은
+  **`Dockerfile` 의 셸 명령**을 보고 워크플로·`Makefile` 을 읽지 않는다(위 `DOCKERFILE` 상수 —
+  `grep -n "^DOCKERFILE" tests/invariants/test_the_image_installs_from_one_source.py`). 이웃은 그
+  반대다. **겹치는 칸은 없다**: M-F(셸 OR 를 `Dockerfile` 에)에서 이웃은 **4 passed** 이고,
+  이웃이 죽는 워크플로 `run:` 변이에서 이 파일은 **3 passed** 다(아래 **M-H**). **그러므로 「저쪽이
+  본다」며 어느 쪽 단언도 지울 수 없다.**
 - **이미지가 실제로 담게 되는 것.** 이 파일이 읽는 것은 `Dockerfile` 의 **글자**다. 그 명령이 도는
   이미지 안에 무엇이 들어가는지는 **빌드를 돌려야** 알고, 이 사이클은 그것을 재지 못했다
   (계획 0016 §확인하지 않은 것 72).
@@ -54,6 +75,11 @@ ADR 0020 §5 셋째 행이 *"금지되는 것은 토큰이 아니라 「실패�
 `pytest tests/invariants/test_the_image_installs_from_one_source.py -q`, 그리고 M-A 는 두 기준의 답이
 갈리므로 `grep -c '||' Dockerfile` 을 **별도 호출**로 함께 적는다.
 
+**M-F · M-G · M-H 는 계획 0018 작업 2 가 나중에 더한 행이다** — 2026-09-08 21:26~21:30 UTC 한 세션에서
+**각 N=1**, 서로 몇 분 간격으로 쟀고 심고 원복하는 절차는 위와 같다. 그 셋의 행은 이 파일의 명령에
+더해 **이웃 파일과 `pytest tests/invariants -q` 도 별도 호출**로 함께 적는다 — 이 사이클이 재는 것이
+「이 단언이 죽는가」가 아니라 **「어느 파일이 죽는가」**(두 게이트의 경계)이기 때문이다.
+
 | 변이 | 무엇을 심었나 | 실행값(죽는 단언) | `grep -c` |
 |---|---|---|---|
 | 음성 대조군 | 없음(이 커밋의 트리) | **3 passed** | **0** |
@@ -62,6 +88,9 @@ ADR 0020 §5 셋째 행이 *"금지되는 것은 토큰이 아니라 「실패�
 | M-C | `RUN pip install --no-cache-dir -e . ; true`(셸 OR 가 아닌 삼킴) | **3 passed** — 위 「보지 못하는 것」 둘째의 값 | 0 |
 | M-D | `pyproject.toml` 의 이름 하나를 다시 적는다(`RUN pip install --no-cache-dir openpyxl` 한 줄 추가) | **2 failed, 1 passed** — 2(대조)와 3(정본)이 죽고 1(모양)은 산다 | 0 |
 | M-E | `-e` 를 지운다(`RUN pip install --no-cache-dir .`) | **1 failed, 2 passed** — 3 만 죽는다 | 0 |
+| M-F | `RUN pip install --no-cache-dir -e . || true`(= 위 「보지 못하는 것」이 지나간다고 적었던 자리) | **1 failed, 2 passed** — **1(모양)이 죽는다.** 그 목록의 그 항목이 거짓이었다. 같은 트리에서 이웃 `test_no_step_swallows_its_own_failure.py` 는 **4 passed** | **1** |
+| M-G | `RUN set +e; pip install --no-cache-dir -e .` | **3 passed** — 지나간다. 같은 트리에서 `pytest tests/invariants -q` 도 **130 passed**(무변화): 이 표기를 `Dockerfile` 에서 잡는 자리가 그 갈래에 없다 | 0 |
+| M-H | **이 파일 밖의 자리** — 워크플로 `image` 잡의 짓는 스텝을 `set +e` + 빌드 + `exit 0` 로 | **3 passed** — 이 파일은 워크플로를 읽지 않는다. 같은 트리에서 이웃 `test_no_step_swallows_its_own_failure.py` 는 **1 failed, 3 passed** | 0 |
 
 **M-B 의 값은 예측과 갈렸다**(예측 「2 failed」 ↔ 실측 **3 failed**) — 그래서 이 표의 칸은 생각이 아니라
 실행값이다(CLAUDE.md §6-1 3회차: *"반증 목록을 실측 없이 생각으로"*).
