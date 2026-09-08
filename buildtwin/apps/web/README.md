@@ -21,6 +21,11 @@ npx tsc --noEmit     # 타입 검사
 npm run build
 ```
 
+`/api` 프록시 대상은 **환경이 정한다** — `BUILDTWIN_API_PROXY_TARGET`(`vite.proxy-target.ts`).
+말하지 않으면 위의 `http://localhost:8000` 이고(이 호스트 갈래), compose 의 `web` 컨테이너에서는
+그 이름으로 `http://api:8000` 을 받는다 — 컨테이너 안에서 `localhost:8000` 은 api 가 아니라 자기
+자신이기 때문이다(계획 0015 문 4). **선언됐는데 비어 있으면 기본값으로 떨어지지 않고 던진다.**
+
 ## 라우트
 
 | 경로 | 화면 |

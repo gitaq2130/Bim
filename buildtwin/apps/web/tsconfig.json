@@ -17,5 +17,5 @@
     "allowImportingTsExtensions": true,
     "types": ["vitest/globals", "@testing-library/jest-dom", "vite/client"]
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "vite.config.ts", "vite.proxy-target.ts", "vite.proxy-target.test.ts"]
 }
