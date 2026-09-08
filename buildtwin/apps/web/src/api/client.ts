@@ -153,6 +153,22 @@ async function parseBody(res: Response): Promise<unknown> {
   }
 }
 
+/**
+ * 응답 본문에서 사용자에게 보일 오류 문장을 고른다.
+ *
+ * **마지막 줄의 폴백은 「본문이 비어 있다」고 말하지 않는다**(ADR 0020 §2-2 **(나)** — 그 문안을
+ * 인용 · 전체로 가져왔다). 이 함수는 본문이 비지 않은 경우에도 그 줄에 닿기 때문이다:
+ * `{"foo": 1}` 처럼 `detail`·`message` 가 없는 객체, 빈 문자열, 문자열도 객체도 아닌 값.
+ * 그 경우 「본문이 비어 있다」는 **거짓**이고, 그것이 CLAUDE.md §6-4 3 이 금지하는
+ * 「그 상황에서 참일 수 없는 말」이다(그 자리에서 도는 참조:
+ * `grep -n "참일 수 없는 말이 없다" ../../../../CLAUDE.md`). 이 줄에 닿는 **모든** 경우에 참인
+ * 것은 「이 앱이 읽을 수 있는 오류 메시지가 없다」 하나다.
+ *
+ * **문의 이름도 다음 명령도 담지 않는다.** 이 자리는 그 둘을 알지 못한다 — `apps/web/src` 에는
+ * 프록시 대상·포트의 표기가 없다(ADR 0020 §1-2 ⓒ 히트 0). 프록시가 대상에 닿지 못한 경우는
+ * `vite.config.ts` 의 에러 핸들러가 **본문 있는 502** 로 답하므로 아래 문자열 갈래
+ * (`typeof body === "string" && body`)가 그 텍스트를 그대로 화면으로 보내고, 이 폴백에는 오지 않는다.
+ */
 function errorMessage(status: number, body: unknown): string {
   if (body && typeof body === "object") {
     const b = body as { detail?: unknown; message?: unknown };
@@ -161,7 +177,7 @@ function errorMessage(status: number, body: unknown): string {
     if (Array.isArray(b.detail)) return b.detail.map((d) => (d as { msg?: string }).msg ?? JSON.stringify(d)).join("; ");
   }
   if (typeof body === "string" && body) return body;
-  return `HTTP ${status}`;
+  return `HTTP ${status} — 응답에 읽을 수 있는 오류 메시지가 없다.`;
 }
 
 export async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
