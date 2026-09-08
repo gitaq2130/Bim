@@ -1,0 +1,18 @@
+# DXF 레이어명·블록명 → IfcType 규칙. 담당: knowledge. sync-2d3d가 읽는다. 패턴은 fnmatch(대소문자 무시).
+layers:
+  - { pattern: "A-COL*",   ifc_types: [IfcColumn], weight: 1.0 }
+  - { pattern: "S-COL*",   ifc_types: [IfcColumn], weight: 1.0 }
+  - { pattern: "*COLUMN*", ifc_types: [IfcColumn], weight: 0.8 }
+  - { pattern: "S-BEAM*",  ifc_types: [IfcBeam], weight: 1.0 }
+  - { pattern: "*BEAM*",   ifc_types: [IfcBeam], weight: 0.8 }
+  - { pattern: "A-WALL*",  ifc_types: [IfcWall, IfcWallStandardCase], weight: 1.0 }
+  - { pattern: "*WALL*",   ifc_types: [IfcWall, IfcWallStandardCase], weight: 0.8 }
+  - { pattern: "S-SLAB*",  ifc_types: [IfcSlab], weight: 1.0 }
+  - { pattern: "M-DUCT*",  ifc_types: [IfcDuctSegment, IfcDuctFitting], weight: 1.0 }
+  - { pattern: "M-PIPE*",  ifc_types: [IfcPipeSegment, IfcPipeFitting], weight: 1.0 }
+  - { pattern: "E-TRAY*",  ifc_types: [IfcCableCarrierSegment], weight: 1.0 }
+  - { pattern: "E-CABLE*", ifc_types: [IfcCableCarrierSegment], weight: 0.8 }
+  - { pattern: "A-CW*",    ifc_types: [IfcCurtainWall, IfcPlate], weight: 1.0 }
+blocks:
+  - { pattern: "COL*",  ifc_types: [IfcColumn], weight: 0.9 }
+grid_layers: ["GRID", "*GRID*", "A-GRID*", "S-GRID*"]

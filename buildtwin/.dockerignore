@@ -1,0 +1,52 @@
+# BuildTwin 빌드 컨텍스트에서 빼는 것 — 담당: qa (계획 0017 작업 5).
+#
+# 이 파일의 자리는 **빌드 컨텍스트의 뿌리**여야 한다. 컨텍스트는 `buildtwin/` 자신이고
+# (docker-compose.yml 의 api·worker 가 `build: { context: ., dockerfile: Dockerfile }`),
+# 저장소 루트에 두면 아무 효과가 없다.
+#
+# 왜 있는가: `make env` 가 난수 JWT_SECRET 을 이 디렉터리의 `.env` 에 쓰고, `Dockerfile` 의
+# 마지막 줄 `COPY . .` 가 컨텍스트를 통째로 이미지 레이어에 넣는다. 그 레이어는 `.env` 를
+# 지워도 · `docker compose down -v` 뒤에도 남고, `make env` 의 umask 077 은 레이어로 따라가지
+# 않으며, `docker save`/푸시로 레이어째 나갈 수 있다. 그리고 그 사본은 실행에도 쓰이지 않는다 —
+# api·worker 는 `volumes: [".:/app"]` 로 호스트 디렉터리를 /app 위에 덮는다.
+#
+# 축은 하나다: **커밋하지 않는 것은 이미지에도 넣지 않는다** — `.gitignore` 와 같은 축이고
+# 그 목록이 이 목록의 뼈대다. 다만 **패턴 의미는 다르다**: .dockerignore 의 패턴은 컨텍스트
+# 뿌리에 붙고 `*` 는 `/` 를 건너지 않는다. 그래서 `.gitignore` 가 어느 깊이에서나 잡는 이름
+# (node_modules · __pycache__ · *.pyc · *.egg-info · 캐시)은 여기서 `**/` 를 붙여야 한다 —
+# 붙이지 않으면 `apps/web/node_modules` 가 그대로 컨텍스트에 남는다.
+#
+# 여기 없는 것은 컨텍스트에 그대로 남는다. 특히 `services/` · `packages/` · `config/` ·
+# `rules/` · `pyproject.toml` 은 빠지지 않는다 — `pip install -e .` 이 읽는 `pyproject.toml`
+# 은 `COPY . .` 보다 앞선 `COPY pyproject.toml ./` 로 들어가고, 나머지 셋은 뜬 컨테이너의
+# import 경로다. 이 목록을 넓히는 편집은 그 부재를 함께 확인한다 —
+# `tests/invariants/test_the_build_context_excludes_the_secret.py` 가 그것을 붙든다.
+
+# 시크릿 — 이 파일이 있는 이유 그 자체.
+.env
+.env.*
+!.env.example
+
+# 호스트의 가상환경·파이썬 캐시 — 컨테이너의 인터프리터와 무관하다.
+.venv/
+**/__pycache__/
+**/*.pyc
+**/*.egg-info/
+**/.mypy_cache/
+**/.pytest_cache/
+**/.ruff_cache/
+
+# 웹 파생물 — api·worker 는 읽지 않고, web 컨테이너는 node:22-alpine 이미지를 쓴다.
+**/node_modules/
+**/dist/
+apps/web/.e2e-preview*.config.mts
+
+# 런타임 데이터 — 업로드 원본과 로컬 sqlite.
+storage/
+**/*.db
+
+# 재생성되는 대용량 픽스처(make fixtures / scripts/fetch_fixtures.py --public).
+tests/fixtures/*.e57
+tests/fixtures/*.las
+tests/fixtures/*.ply
+tests/fixtures/public/

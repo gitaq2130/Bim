@@ -1,0 +1,47 @@
+# Activity ↔ 객체 매핑 규칙과 공정표 import 추론 규칙. 담당: progress-engine
+# confidence = 일치한 규칙 가중치의 합 (0~1). 층 일치는 필수, 구역 일치는 가점.
+rule_weights:
+  level_match: 0.35      # Activity.level == 객체 level
+  keyword_rule: 0.35     # 작업명 키워드 → IFC 타입
+  wbs_rule: 0.20         # config/wbs_mapping.yaml 표 일치
+  zone_match: 0.10       # Activity.zone == 객체 zone
+
+# 작업명 키워드(정규식) → 대상 IFC 타입. 순서 무관, 여러 개 일치하면 합집합.
+keyword_rules:
+  - {pattern: "기둥|column", ifc_types: [IfcColumn]}
+  - {pattern: "(?<![가-힣])보(?![가-힣])|거더|girder|beam", ifc_types: [IfcBeam]}
+  - {pattern: "슬래브|슬라브|slab|데크", ifc_types: [IfcSlab]}
+  - {pattern: "조적|외벽|내벽|벽체|(?<![가-힣])벽(?![가-힣])|wall", ifc_types: [IfcWall, IfcWallStandardCase]}
+  - {pattern: "덕트|duct", ifc_types: [IfcDuctSegment, IfcDuctFitting]}
+  - {pattern: "배관|pipe|piping", ifc_types: [IfcPipeSegment, IfcPipeFitting]}
+  - {pattern: "트레이|tray|케이블", ifc_types: [IfcCableCarrierSegment, IfcCableCarrierFitting]}
+  - {pattern: "외장|패널|커튼월|curtain", ifc_types: [IfcCurtainWall, IfcPlate]}
+
+# 공종(discipline) 추론 키워드 — discipline 컬럼이 없을 때만 사용
+discipline_keywords:
+  structure: ["기둥", "(?<![가-힣])보(?![가-힣])", "슬래브", "슬라브", "철근", "거푸집", "타설", "콘크리트", "철골", "column", "beam", "slab"]
+  architecture: ["조적", "외벽", "내벽", "마감", "미장", "타일", "외장", "패널", "커튼월", "wall", "facade"]
+  mechanical: ["덕트", "배관", "공조", "위생", "소방", "duct", "pipe", "hvac"]
+  electrical: ["전기", "트레이", "케이블", "조명", "electrical", "tray", "cable"]
+
+# 공종 → 기본 IFC 타입 (키워드가 하나도 없을 때의 폴백)
+discipline_ifc_types:
+  structure: [IfcColumn, IfcBeam, IfcSlab]
+  architecture: [IfcWall, IfcWallStandardCase, IfcCurtainWall, IfcPlate]
+  mechanical: [IfcDuctSegment, IfcDuctFitting, IfcPipeSegment, IfcPipeFitting]
+  electrical: [IfcCableCarrierSegment, IfcCableCarrierFitting]
+
+# 층(level) 정규화: 텍스트에서 첫 일치 패턴을 template 으로 치환. {0}는 첫 캡처 그룹.
+level_patterns:
+  - {pattern: "지하\\s*(\\d+)\\s*층", template: "B{0}"}
+  - {pattern: "(?<![A-Za-z0-9])B(\\d+)(?![A-Za-z0-9])", template: "B{0}"}
+  - {pattern: "지상\\s*(\\d+)\\s*층", template: "{0}F"}
+  - {pattern: "(?<![A-Za-z0-9.])(\\d+)\\s*F(?![A-Za-z0-9])", template: "{0}F"}
+  - {pattern: "(?<![0-9.])(\\d+)\\s*층", template: "{0}F"}
+  - {pattern: "옥상|(?<![A-Za-z])RF(?![A-Za-z])|roof", template: "RF"}
+
+# 구역(zone) 추론: 텍스트에서 첫 일치 패턴, {0}는 첫 캡처 그룹
+zone_patterns:
+  - {pattern: "(?<![A-Za-z0-9])Z(\\d+)(?![A-Za-z0-9])", template: "Z{0}"}
+  - {pattern: "(\\d+)\\s*구역", template: "Z{0}"}
+  - {pattern: "([A-Z])\\s*구역", template: "{0}"}

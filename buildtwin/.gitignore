@@ -1,0 +1,24 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+node_modules/
+dist/
+apps/web/dist/
+# 대용량 픽스처(PLY/E57/LAS)는 make fixtures로 재생성한다. IFC/DXF는 작아서 커밋
+tests/fixtures/*.e57
+tests/fixtures/*.las
+tests/fixtures/*.ply
+!tests/fixtures/README.md
+storage/
+*.db
+# 공개 샘플(scripts/fetch_fixtures.py --public)은 대용량이라 git에 넣지 않는다
+tests/fixtures/public/
+*.egg-info/
+# E2E 스모크가 vite preview 용으로 잠시 생성하는 설정(tests/e2e/conftest.py 가 지운다)
+apps/web/.e2e-preview*.config.mts

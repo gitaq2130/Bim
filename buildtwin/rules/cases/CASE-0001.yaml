@@ -1,0 +1,21 @@
+# 사례 DB. 담당: knowledge. 스키마: packages/core/models/knowledge.py CaseRecord
+- case_id: CASE-0001
+  project_type: logistics_center
+  discipline: structure
+  situation: "지하 1층 기둥 12본 중 3본이 계획 대비 60~80mm 위치 이탈(먹매김 오류)"
+  early_signals:
+    - "먹매김 검측 생략 후 거푸집 설치"
+    - "스캔 판정 MISMATCH 연속 2회"
+  direct_impact: "상부 보 정착 길이 부족, 구조 검토 후 보강 필요"
+  cascading_impacts:
+    - "상부층 골조 착수 2주 지연"
+    - "커튼월 앵커 위치 재산정"
+  recommended_actions:
+    - "해당 구간 시공 중지 및 재측량"
+    - "구조기술사 검토 의뢰(보강 상세)"
+    - "먹매김 검측 절차를 검측 필수 항목으로 지정"
+  outcome: "보강 철물 추가 후 승인, 공기 10일 지연"
+  source_ref: "PM단 월간보고 2025-11"
+  reliability: 0.8
+  created_by: "knowledge"
+  created_at: "2026-08-20T00:00:00Z"

@@ -1,0 +1,33 @@
+{
+  "scan_rotation_deg": -7.0,
+  "scan_translation": [
+    3.2,
+    -1.5,
+    0.3
+  ],
+  "level": "1F",
+  "verdicts": {
+    "05IWCBkgTBg9LoGDDXvbpo": "ESTIMATED_DONE",
+    "06Hqjjs7zBE9j$Vl0X2G7g": "ESTIMATED_DONE",
+    "0BcjbttMr12PUpme0A2uXY": "ESTIMATED_DONE",
+    "07wJs7Y7L2PQX6H9G_gn8l": "IN_PROGRESS",
+    "2BPo4ICcrBBgW7C72p1J60": "MISMATCH",
+    "1jb$gcxd9EtwtS2tSkcKgo": "UNVERIFIABLE",
+    "15e_$4GoP4pPvNGLz7FlJE": "ESTIMATED_DONE",
+    "08IiDAJTPD9P5uPQz_Xxhu": "NOT_BUILT",
+    "2vJEXIlvbEPBfaw$50Xh18": "NOT_BUILT",
+    "1lP0DCzQ98gPWAS$fPqwcu": "NOT_BUILT",
+    "0MDve6QTTA$fyar1a33L0Z": "NOT_BUILT",
+    "24Z3CszIr1IwzMooANR1cb": "NOT_BUILT",
+    "1nsnuTBpX6YPJBSthdy8dT": "NOT_BUILT",
+    "34vkXEubT1fv2UIIiOw8uw": "NOT_BUILT",
+    "14tOqVm5H3V8quwLOOybXv": "NOT_BUILT",
+    "1VtyYRuxHCQwjTPjU5yXdP": "NOT_BUILT",
+    "1247XZuizACQNvpfdv0QV0": "NOT_BUILT",
+    "0eb42JP8n18x5N3FLDU8cO": "NOT_BUILT",
+    "31J_7iRKnCK8u0cm5mnE6n": "NOT_BUILT",
+    "3ZbV81Z858uwKc7ExSy0kU": "NOT_BUILT",
+    "3$sB4fL5zFDu_TuUkKvGcN": "NOT_BUILT"
+  },
+  "point_count": 127526
+}

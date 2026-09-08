@@ -1,0 +1,105 @@
+{
+  "level": "1F",
+  "mappings": [
+    {
+      "handle": "3A",
+      "global_id": "05IWCBkgTBg9LoGDDXvbpo",
+      "layer": "A-COL"
+    },
+    {
+      "handle": "3B",
+      "global_id": "06Hqjjs7zBE9j$Vl0X2G7g",
+      "layer": "A-COL"
+    },
+    {
+      "handle": "3C",
+      "global_id": "0BcjbttMr12PUpme0A2uXY",
+      "layer": "A-COL"
+    },
+    {
+      "handle": "3D",
+      "global_id": "07wJs7Y7L2PQX6H9G_gn8l",
+      "layer": "A-COL"
+    },
+    {
+      "handle": "3E",
+      "global_id": "2BPo4ICcrBBgW7C72p1J60",
+      "layer": "A-COL"
+    },
+    {
+      "handle": "3F",
+      "global_id": "1jb$gcxd9EtwtS2tSkcKgo",
+      "layer": "A-COL"
+    },
+    {
+      "handle": "40",
+      "global_id": "0MDve6QTTA$fyar1a33L0Z",
+      "layer": "S-BEAM"
+    },
+    {
+      "handle": "41",
+      "global_id": "24Z3CszIr1IwzMooANR1cb",
+      "layer": "S-BEAM"
+    },
+    {
+      "handle": "42",
+      "global_id": "1nsnuTBpX6YPJBSthdy8dT",
+      "layer": "S-BEAM"
+    },
+    {
+      "handle": "43",
+      "global_id": "34vkXEubT1fv2UIIiOw8uw",
+      "layer": "S-BEAM"
+    },
+    {
+      "handle": "44",
+      "global_id": "14tOqVm5H3V8quwLOOybXv",
+      "layer": "S-BEAM"
+    },
+    {
+      "handle": "45",
+      "global_id": "1VtyYRuxHCQwjTPjU5yXdP",
+      "layer": "S-BEAM"
+    },
+    {
+      "handle": "46",
+      "global_id": "1247XZuizACQNvpfdv0QV0",
+      "layer": "S-BEAM"
+    },
+    {
+      "handle": "47",
+      "global_id": "0eb42JP8n18x5N3FLDU8cO",
+      "layer": "S-BEAM"
+    },
+    {
+      "handle": "48",
+      "global_id": "15e_$4GoP4pPvNGLz7FlJE",
+      "layer": "A-WALL"
+    },
+    {
+      "handle": "49",
+      "global_id": "08IiDAJTPD9P5uPQz_Xxhu",
+      "layer": "A-WALL"
+    },
+    {
+      "handle": "4A",
+      "global_id": "2vJEXIlvbEPBfaw$50Xh18",
+      "layer": "A-WALL"
+    },
+    {
+      "handle": "4B",
+      "global_id": "1lP0DCzQ98gPWAS$fPqwcu",
+      "layer": "A-WALL"
+    },
+    {
+      "handle": "4C",
+      "global_id": "3ZbV81Z858uwKc7ExSy0kU",
+      "layer": "M-DUCT"
+    },
+    {
+      "handle": "4D",
+      "global_id": "3$sB4fL5zFDu_TuUkKvGcN",
+      "layer": "M-DUCT"
+    }
+  ]
+}

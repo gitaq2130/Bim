@@ -1,0 +1,262 @@
+# 문서관리대장(Document Register) 적재·정규화·매핑 구성. 담당: progress-engine (ADR 0007)
+#
+# 코드에 숫자·한국어 문자열 리터럴을 두지 않는다(CLAUDE.md §3 규칙 5·10, config/README.md).
+# 특히 대장의 열 위치는 시트마다 다르므로 절대 상수로 박지 말고 header_row_search_range 안에서
+# column_aliases 로 헤더 행을 찾아 결정한다(ADR 0007 §2-5).
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. 대장 레이아웃 — 헤더 행 탐색과 컬럼 별칭
+# ─────────────────────────────────────────────────────────────────────────────
+register_layout:
+  # 헤더가 있을 수 있는 행 범위(1-based, 양끝 포함). 이 안에서 별칭이 가장 많이 일치한 행을 헤더로 본다.
+  header_row_search_range: [1, 10]
+  # 헤더로 인정하기 위한 최소 일치 컬럼 수
+  header_min_matched_columns: 3
+  # 헤더 행 다음 몇 번째 행부터 데이터인가
+  data_start_offset: 1
+  # 연속으로 이만큼 빈 행이 나오면 그 시트의 데이터가 끝난 것으로 본다
+  blank_row_stop_streak: 20
+
+  # 논리 컬럼 → 대장 헤더 문자열 별칭(대소문자·공백 무시하고 비교). 첫 일치를 쓴다.
+  # 필수는 title 하나뿐이다 — 나머지는 없으면 NULL 로 둔다(ADR 0007 §2-5 규칙 3).
+  column_aliases:
+    issued_on:    ["문서발생일", "발생일", "발신일", "작성일", "일자", "date"]
+    sender:       ["발신", "발신처", "발신자", "작성자", "제출처", "sender"]
+    discipline_raw: ["공종", "공종명", "discipline"]
+    seq_raw:      ["번호", "일련번호", "no.", "no", "순번"]
+    doc_number:   ["문서번호", "문서 번호", "doc no.", "doc no", "document no."]
+    title:        ["제목", "문서제목", "문서 제목", "title", "subject"]
+    result_raw:   ["처리결과", "처리 결과", "결과", "회신결과", "검토결과", "result"]
+    completed_on: ["처리완료일", "처리 완료일", "완료일", "회신일", "완료 일자"]
+  required_columns: ["title"]
+
+  # 시트명 → 문서 종류(doc_type). 시트명에 아래 문자열 중 하나가 포함되면 그 종류로 본다.
+  # 어디에도 걸리지 않는 시트는 doc_type = other 로 적재하며 readiness 를 움직이지 않는다.
+  sheet_doc_types:
+    TFA:  ["TFA", "승인/검토/참조", "승인검토참조", "승인 요청", "승인요청서"]
+    TFR:  ["TFR", "자료제출", "자료 제출"]
+    FI:   ["FI", "현장지시"]
+    SCAR: ["SCAR", "시정조치"]
+    NCR:  ["NCR", "부적합"]
+    DN:   ["DN", "설계변경통보", "통보"]
+    VE:   ["VE", "설계변경", "가치공학"]
+    RFI:  ["RFI", "질의", "질의회신"]
+  # 위에 걸리지 않는 시트에 붙는 종류
+  fallback_doc_type: other
+  # 아예 건너뛸 시트(표지·범례 등)
+  skip_sheets: ["표지", "cover", "범례", "index", "목차"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. 값 정규화
+# ─────────────────────────────────────────────────────────────────────────────
+normalization:
+  # 번호: 숫자 이외 문자를 모두 제거해 이어붙인다. 26-049 → 26049, 제26-07-09호 → 260709.
+  # 자릿수를 재해석하지 않는다(연도 확장·선행 0 제거 금지) — ADR 0007 §2-3.
+  seq_digits_only: true
+
+  # 발신 정규화: 공백 제거 + 대문자화 후 아래 별칭 표를 적용한다(doc_id 재료이므로 안정성이 중요).
+  sender_aliases:
+    동부건설: ["동부", "동부건설(주)", "(주)동부건설"]
+    중원엔지니어링: ["중원", "중원ENG", "중원엔지니어링(주)"]
+    SFA: ["에스에프에이", "S.F.A"]
+
+  # 대장 공종(자유 문자열) → glossary discipline 값. 결과는 discipline_normalized 에 담기며
+  # 매핑에서 "가점으로만" 쓴다(불일치 감점·배제 금지 — ADR 0007 §4 규칙 2).
+  # 신뢰할 수 없는 필드이므로 이 표가 비어 있거나 틀려도 매핑 정확도가 무너지지 않아야 한다.
+  discipline_aliases:
+    structure:    ["토목", "구조", "철골", "골조"]
+    architecture: ["건축", "마감", "외장"]
+    mechanical:   ["기계", "소방기계", "소방", "설비", "공조", "위생", "덕트", "배관"]
+    electrical:   ["전기", "전력", "조명"]
+    civil:        ["토공", "부지", "포장"]
+    finishing:    ["인테리어", "내장"]
+  # 어디에도 걸리지 않으면 discipline_normalized = null (매핑 가점 없음, 감점도 없음)
+
+  # 날짜 파싱 허용 형식(엑셀 날짜 셀은 그대로 date 로 읽고, 문자열 셀만 이 형식들로 시도)
+  # 실제 현장 대장(고창CDC)의 문서발생일은 2자리 연도 + 대시(예: 26-09-01)다. %Y 계열은 이 값에
+  # 대해 실패하므로(상호배타적이라 순서는 무관) %y 계열을 함께 둔다. 여기 없는 변형은 코드의
+  # 일반 패턴 폴백이 마지막으로 받아내지만, 흔한 형식은 이 목록에 명시해 폴백에 의존하지 않는다.
+  date_formats: ["%Y-%m-%d", "%y-%m-%d", "%Y.%m.%d", "%y.%m.%d", "%Y/%m/%d", "%y/%m/%d", "%Y%m%d"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. 처리결과 → 승인 상태(DocumentApprovalStatus) 정규화 규칙
+# ─────────────────────────────────────────────────────────────────────────────
+# ADR 0007 §3. 규칙은 위에서부터 순서대로 평가하고 첫 일치를 쓴다(정규식, 대소문자 무시).
+# 공란 → UNKNOWN / confidence 1.0 / method register_status_blank
+# 불일치 → UNKNOWN / confidence 0.0 / method register_status_unmatched / needs_review=True
+# 어느 경우에도 "승인"으로 추측하지 않는다.
+status_normalization:
+  - {id: DOCST-001, status: REJECTED,               confidence: 0.95, pattern: "반려|부적합|불승인|미승인|reject"}
+  - {id: DOCST-002, status: RESUBMIT_REQUIRED,      confidence: 0.90, pattern: "재제출|보완|재검토\\s*요청|resubmit"}
+  - {id: DOCST-003, status: APPROVED_WITH_COMMENTS, confidence: 0.90, pattern: "조건부\\s*승인|승인\\s*\\(.*(코멘트|의견|조건).*\\)|승인\\s*\\(조건\\)|approved\\s*with"}
+  - {id: DOCST-004, status: IN_REVIEW,              confidence: 0.85, pattern: "검토\\s*중|진행\\s*중|접수|회신\\s*대기|in\\s*review|pending"}
+  - {id: DOCST-005, status: APPROVED,               confidence: 0.95, pattern: "^\\s*승인\\s*$|승인\\s*완료|검토\\s*완료|적합|approved"}
+  - {id: DOCST-006, status: APPROVED,               confidence: 0.70, pattern: "^\\s*(완료|O|○|OK)\\s*$"}
+# 규칙 순서 주의: DOCST-001/002/003 이 DOCST-005 보다 먼저 와야 "조건부승인"·"승인 반려"가
+# 단순 "승인" 규칙에 먼저 걸리지 않는다.
+
+unmatched:
+  status: UNKNOWN
+  confidence: 0.0
+  needs_review: true
+blank:
+  status: UNKNOWN
+  confidence: 1.0
+  needs_review: false
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. 제목 텍스트 대조 (매핑의 필수 근거)
+# ─────────────────────────────────────────────────────────────────────────────
+# ADR 0007 §4 규칙 1: 제목 근거 없이는 어떤 조합으로도 매핑하지 않는다.
+title_matching:
+  # 후보 진입 하한. 이 미만이면 다른 근거가 모두 맞아도 후보가 아니다.
+  #
+  # 이 값은 합성 픽스처 6쌍으로만 잰 것이라 아직 보정되지 않았다. 실제 대장·공정표가 들어오면
+  # 반드시 다시 잰다(tests/metrics.json 의 document_mapping_* 참고).
+  #
+  # 0.55 로 두었다가 낮춘 이유: 문서 제목과 Activity 이름은 애초에 다른 종류의 글이다.
+  # 문서 제목은 "그 문서가 무엇인가"(시공상세도 승인요청 - 1F 기둥 배근도)를, Activity 이름은
+  # "그 작업이 무엇인가"(1F 기둥 철근·거푸집·타설)를 적는다. 공유되는 것은 도메인 명사(1F, 기둥, Z1)
+  # 몇 개뿐이라, 문자열 전체 유사도는 정답 쌍에서도 0.4 를 넘기 어렵다. 0.55 는 도달 불가능한
+  # 값이었고 그 결과 매핑이 하나도 생기지 않아 기능 전체가 잠들어 있었다.
+  #
+  # 낮은 임계의 비용이 제한적인 이유: 시스템이 만든 매핑은 언제나 needs_review=True 이고(§4 규칙 5),
+  # readiness 는 확정된 매핑만 센다(§5-2 규칙 3). 임계가 낮으면 CM 검토 큐가 시끄러워질 뿐
+  # 착수 가능 판단이 틀리지는 않는다. 게다가 max_candidates_per_activity 가 상한을 준다.
+  # 반대로 임계가 높으면 기능이 조용히 아무것도 하지 않는다 — 이쪽이 더 나쁘다.
+  #
+  # 값 선정 근거(합성 픽스처 6쌍, 판별 토큰 하드 배제 이후): 정답 쌍은 0.262~0.486, 오답 쌍은
+  # 최대 0.153(대부분 0.150~0.153 에 몰림)이라 0.153~0.262 구간이 비어 있다. 그 가운데를 잡았다.
+  # 유사도는 Activity 의 name 하나로만 계산한다는 점에 주의 — level/zone 은 별도 가중치가 있어
+  # 유사도 텍스트에 넣으면 같은 신호를 두 번 세게 된다. 임계는 반드시 name 기준으로 보정해야 한다.
+  min_similarity: 0.22
+  # 유사도 = seq_weight * SequenceMatcher.ratio + token_weight * 토큰 Jaccard (합 1.0)
+  #
+  # 토큰 쪽에 무게를 싣는다. 측정 결과 문자열 전체 유사도(SequenceMatcher)는 정답 쌍과 오답 쌍을
+  # 구분하지 못했다(정답 최소 0.455 < 오답 최대 0.485 — 역전). 두 제목이 "시공상세도 승인요청"
+  # 같은 공통 상용구를 공유하면 내용이 달라도 점수가 오르기 때문이다. 공유 도메인 명사를 세는
+  # 토큰 Jaccard 가 실제 신호다(같은 데이터에서 마진 +0.083).
+  seq_weight: 0.2
+  token_weight: 0.8
+  # 자동 확정은 어떤 값에서도 하지 않는다. 이 키는 "끄는 스위치"가 아니라 불변식의 문서화다.
+  # true 로 바꾸는 변경은 reviewer 가 반려한다(ADR 0007 §4 규칙 5, ADR 0001 불변식 1과 같은 구조).
+  auto_confirm: false
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 이 블록은 **제목 ↔ Activity 대조 전용**이다 (ADR 0009 §1·§2).
+  # doc_id 는 여기 값을 읽지 않는다 — 식별용 정규화는
+  # packages/core/models/document.identity_title() 에 **동결**돼 있고 config 를 읽지 않는다.
+  # 그래서 min_similarity 를 실데이터로 다시 재면서 이 블록을 함께 튜닝해도 문서 정체성(doc_id)은
+  # 한 건도 움직이지 않는다. 실측으로 고정돼 있다(계획 0003 §7 V1 — 8가지 매칭 뮤테이션 전부 0/10).
+  #
+  # 예전에는 그렇지 않았다: 여기 strip_patterns 에 한 줄을 더하면 픽스처 10건 중 6건의 doc_id 가
+  # 바뀌었고, CM 이 확정·반려한 매핑이 고아 문서를 가리키게 되면서 이력이 조용히 무효화됐다
+  # (예외 없음·테스트 통과·화면 정상). ADR 0009 가 그 결합을 끊었다.
+  #
+  # 식별 정규화를 이 파일에서 조정하려는 키(title_matching.identity_normalization,
+  # normalization.title_identity)는 **존재하기만 해도** 로딩이 UnsafeConfigOverrideError 로 실패한다
+  # (services/progress/config_loader._assert_absent). 식별 규칙을 실제로 바꿔야 한다면 유일한 경로는
+  # DOC_ID_SCHEME 상향 + 마이그레이션이다(ADR 0009 §5 규칙 4).
+  # ─────────────────────────────────────────────────────────────────────────
+  normalize:
+    # 코드가 읽지 않는 문서화 키. 다른 값이면 로딩 실패(auto_confirm·seq_digits_only 와 같은 패턴).
+    affects_doc_id: false
+    lowercase: true
+    collapse_whitespace: true
+    # 제거할 잡음 토큰(괄호 안 첨부 표기·확장자·머리말 등). 정규식.
+    strip_patterns:
+      - "\\(첨부.*?\\)"
+      - "\\[.*?\\]"
+      - "\\.(xlsx|xls|pdf|dwg|docx?)$"
+      - "^\\s*(re|fw|回信)\\s*[:：]"
+    # 구분자로 취급할 문자 — 삭제가 아니라 공백으로 치환한다(_normalize_title).
+    # 괄호가 빠져 있어 "(Z1)" 이 "z1" 과 매칭되지 않았다. ZONE 은 판별력이 가장 높은 필드인데
+    # 괄호 하나 때문에 그 신호가 통째로 사라졌다(Jaccard 0.182 → 0.333). 하이픈도 제목에서는
+    # 구분자다("시공상세도 승인요청 - 1F ..."). 문서번호의 하이픈은 여기서 다루지 않는다 —
+    # 제목 정규화에만 쓰이는 설정이고, 문서번호는 §2-4 대로 파싱하지 않는다.
+    strip_chars: "·・_/\\()[]{}-,;:"
+
+  # 판별 토큰: 양쪽(문서 제목 / Activity)에 모두 존재하고 값이 다르면 후보에서 하드 배제한다.
+  # 한쪽에만 있으면 배제하지 않고 confidence 만 낮춘다. ADR 0007 §4 규칙 3.
+  # ZONE·구간·차수만 다른 별개 문서(ASRS-1구간 vs ASRS-4구간, 1차 vs 2차)를 걸러내는 장치.
+  discriminative_tokens:
+    - {name: zone,     pattern: "(?<![A-Za-z0-9])Z\\s*(\\d+)(?![A-Za-z0-9])"}
+    - {name: zone,     pattern: "(\\d+)\\s*구역"}
+    - {name: section,  pattern: "([A-Za-z가-힣]+)\\s*-?\\s*(\\d+)\\s*구간"}
+    - {name: revision, pattern: "(?<![0-9])(\\d+)\\s*차(?![수관])"}
+    - {name: level,    pattern: "(?<![A-Za-z0-9])B\\s*(\\d+)(?![A-Za-z0-9])"}
+    - {name: level,    pattern: "(?<![0-9.])(\\d+)\\s*(?:F|층)(?![A-Za-z0-9])"}
+  # 한쪽에만 판별 토큰이 있을 때 곱하는 감쇠 계수
+  one_sided_token_penalty: 0.85
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5. 문서 ↔ Activity 매핑 가중치
+# ─────────────────────────────────────────────────────────────────────────────
+# confidence = title_similarity * w.title_similarity + (일치한 가점 규칙 가중치 합). 가중치 합 1.0.
+mapping_weights:
+  title_similarity: 0.60   # 필수 근거. 유사도 값을 곱해 가산
+  level_match:      0.15   # 가점
+  zone_match:       0.10   # 가점
+  discipline_match: 0.10   # 가점만. 불일치는 감점·배제하지 않는다(신뢰 불가 필드)
+  date_window:      0.05   # 문서발생일이 Activity planned_start 이전 date_window_days 이내
+
+mapping:
+  # 이 값 미만이면 매핑 행을 만들지 않는다(애매한 매핑보다 없는 편이 낫다).
+  min_confidence_to_propose: 0.5
+  date_window_days: 90
+  # Activity 하나당 만들 최대 후보 수(검토 큐 폭발 방지). confidence 내림차순 상위 N개.
+  max_candidates_per_activity: 5
+  # 시스템이 만든 매핑은 confidence 와 무관하게 항상 needs_review=True (ADR 0007 §4 규칙 5).
+  always_needs_review: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 6. 적재 경고 code (JobRow.warnings 에 담긴다)
+# ─────────────────────────────────────────────────────────────────────────────
+import_warnings:
+  duplicate_doc_number: "같은 프로젝트에 같은 문서번호가 둘 이상 존재"
+  doc_number_mismatch: "문서번호가 발신/공종/번호 컬럼과 어긋남 — 컬럼 값을 신뢰함"
+  # ADR 0009 §Deferred 2 / 계획 0003 §10-4: 문구 정정. 예전 문구("제목만 다르고 …")는 식별 드리프트
+  # 상황에서 **사실과 달랐다** — 제목이 한 글자도 바뀌지 않았는데도 이 경고가 "제목이 다르다"고 적었다
+  # (원인은 우리 config 였다). ADR 0009 §5-2 가 두 경우를 분리하면서 이 경고는 **대장 제목 원문이 실제로
+  # 다를 때만** 붙고, 원문이 같은데 doc_id 만 이동한 경우는 DOCUMENT_IDENTITY_DRIFT 가 받는다.
+  document_possibly_renamed: "대장에서 제목이 바뀐 것으로 보임 — (종류·발신·번호)가 같고 제목 원문만 다른 기존 문서가 있음. 자동 병합하지 않고 새 문서로 적재하며 기존 문서는 고아 표시된다(제목 원문까지 같은데 doc_id 가 움직였다면 rename 이 아니라 식별 드리프트다 — DOCUMENT_IDENTITY_DRIFT 참고)"
+  header_row_not_found: "헤더 행을 찾지 못해 시트를 건너뜀"
+  required_column_missing: "필수 컬럼(제목)이 없어 시트를 건너뜀"
+  document_status_unmatched: "처리결과 텍스트를 어떤 규칙으로도 해석하지 못함 — UNKNOWN 으로 적재(evidence.method=register_status_unmatched)"
+  sheet_skipped: "skip_sheets 설정에 의해 건너뜀"
+  # services/progress/document_mapper.py 가 만드는 경고(대장 파서가 아니라 문서↔Activity 매핑 동기화
+  # 단계에서 발화). 다른 키와 달리 code 가 대문자인 이유: DOCUMENT_UNMAPPED 는 이 카탈로그가 생기기
+  # 전(9차 리뷰 이전)부터 tests/integration/test_14_document_mapping_order_recovery.py 가 이 정확한
+  # 문자열을 계약으로 고정해 두었다 — 카탈로그로 옮기며 대소문자를 다른 키와 맞추면 그 테스트가 깨진다.
+  # 발화 조건(과제 3, 9차 리뷰): 프로젝트 전체에 매핑이 "단 한 건도" 없을 때만 — 부분 미매핑은 정상
+  # (title_matching 임계값 미만은 흔하다)이라 신호가 아니다. document_mapper._unmapped_document_warnings
+  # 참고.
+  DOCUMENT_UNMAPPED: "프로젝트에 문서는 있으나 어떤 Activity 에도 매핑 후보가 하나도 없음 — 대장을 공정표보다 먼저 올렸거나(업로드 순서 역전) 아직 공정표가 없을 수 있음. 공정표 적재 후 문서 매핑이 자동으로 재생성됨"
+  # services/api/jobs.py 가 만드는 경고(공정표 적재 job). 대문자인 이유는 위 DOCUMENT_UNMAPPED 와 같은
+  # 계열(매핑 동기화 단계 발화)이라 스타일을 맞춘 것이다. 발화 조건(ADR 0007 §4-3): 공정표 적재는
+  # 성공했는데 뒤이은 문서 매핑 재동기화가 실패했을 때 — job 을 실패시키지 않고 경고로 강등한다.
+  # 문서 매핑은 공정표 적재의 부수 효과일 뿐이라, 대장 설정이 잘못됐다고 공정표를 인질로 잡지 않는다.
+  # ADR 0009 §5-2 의 식별 드리프트 탐지가 만드는 경고 2종. 대문자인 이유는 위 DOCUMENT_UNMAPPED 와
+  # 같은 계열(파서가 아니라 적재 판정 단계에서 발화)이라 스타일을 맞춘 것이다. 발화 주체는
+  # services/ingest/persistence.persist_document_register_import (재업로드 판정을 소유한다).
+  #
+  # 드리프트는 대장 탓이 아니라 **우리 config 탓**이다 — 그래서 job 을 실패시키지 않는다(ADR 0007 §1
+  # 규칙 1 과는 다른 이유다): 새 협력사 별칭을 추가한 주에 주간 대장 업로드가 통째로 막히면 운영자는
+  # config 를 되돌리는 대신 탐지를 끄는 방향으로 움직인다. 대신 사람의 판단(확정·반려)이 실제로
+  # 걸려 있을 때만 document_identity_drift 검토요청을 CM 큐에 올린다(ADR 0009 §5-2·§5-3).
+  #
+  # **두 경고의 분담(ADR 0009 개정 2에서 바뀌었다).** DRIFT 는 **우리 식별 규칙이 움직였다**를,
+  # COLLISION 은 **한 적재 안에서 두 행이 한 doc_id 로 수렴했다**를 알린다. 개정 1 의 분담("DRIFT 는
+  # 이동만, COLLISION 은 병합만")은 틀렸다 — 사명 변경 주(별칭표 통합 + 옛 법인명 행이 대장에서 빠짐)의
+  # 판단 오염은 이동도 병합도 아니라서 **두 경고 중 어느 것도 뜨지 않은 채** 검토요청만 생겼다(실측:
+  # moved=0, merged=0, 경고 0건, drawing_approval 0.0 → 1.0). 그래서 이제 moved·merged 가 둘 다 0인데
+  # 판단이 오염된 적재에서는 DRIFT 를 **이동 쌍 없이 경위별 건수만으로** 발화한다(§5-2 (사) 4행).
+  # 세 경위(row_moved·row_replaced·row_absorbed) 모두 검토요청을 만들고, 사람이 해야 할 일이 서로 달라
+  # 제목이 경위별로 갈려 쓰인다(services/progress/document_mapper._identity_drift_review_title).
+  # 지문(identity_fingerprint)이 **같은데도** 이 경고가 뜨는 경우가 있다 — 실측: 워크북 시트명을
+  # 'TFA' → '자료제출' 로 바꾸면 config 는 한 글자도 안 바뀌었는데 doc_id 가 8/10 움직인다(doc_type 이
+  # 시트명에서 오기 때문). 그래서 메시지가 두 경우를 모두 안내한다: 지문이 바뀌었으면 config 를,
+  # 같으면 대장 파일 쪽(시트명 등)을 본다. 계획 0003 §1-a 블라인드 스팟 1 이 이 경로다.
+  DOCUMENT_IDENTITY_DRIFT: "대장 원문은 그대로인데 우리 쪽 식별 규칙이 움직였다 — doc_id 가 다른 행으로 옮겨 갔거나, doc_id 는 그대로인 채 그것이 담고 있는 대장 행이 바뀌었다. 지문(identity_fingerprint)이 함께 바뀌었으면 config(sender_aliases·sheet_doc_types·column_aliases)를, 지문이 그대로면 대장 파일 쪽(워크북 시트명 등 config 밖 입력)을 본다. 함께 실린 moved 는 doc_id 가 옮겨 간 쌍의 수이며 **0 일 수 있다** — 이동 없이 담긴 대장 행만 바뀌는 경위(row_replaced)와 그 행이 다른 doc_id 아래로 가는 경위(row_absorbed)는 이동도 병합도 만들지 않기 때문이다(그때는 by_cause 로 경위별 건수만 적는다). 세 경위(row_moved·row_replaced·row_absorbed) 모두 사람의 판단(확정·반려)이 걸려 있으면 document_identity_drift 검토요청이 적재당 1건 생성되며, 그 제목이 경위마다 무엇이 오염됐고 사람이 무엇을 해야 하는지 갈라 적는다. 되돌리려면 바꾼 쪽을 원래대로 두고 대장을 다시 올린다"
+  DOCUMENT_IDENTITY_COLLISION: "한 적재 안에서 서로 다른 대장 행이 같은 doc_id 로 수렴했다 — 뒤 행이 앞 행을 덮어써 한 행만 남고(document_count 와 실제 행 수가 어긋난다) 살아남은 행의 승인 상태가 도면 승인 판단의 입력이 된다. 식별 규칙이 지나치게 공격적이다. 이 경고는 **관측 보고**이지 판단 오염의 판정 조건이 아니다 — 사람의 판단은 이 묶음 없이도 오염된다(사명 변경 주처럼 옛 법인명 행이 대장에서 빠지면 두 행이 한 적재에 함께 있지 않아 묶음이 만들어지지 않는다). 그 경우는 DOCUMENT_IDENTITY_DRIFT 가 경위(row_replaced·row_absorbed)와 함께 알린다. 함께 실린 lost_decisions_in_merge 는 이 병합 한 건이 건드린 판단 수이며(적재 전체 합계는 잡 요약의 identity_drift_lost_decisions), 0 이 아니면 document_identity_drift 검토요청이 CM 큐에 함께 올라간다"
+  DOCUMENT_MAPPING_RESYNC_FAILED: "공정표는 정상 적재됐으나 뒤이은 문서↔Activity 매핑 재동기화가 실패함 — 공정표 자체는 사용 가능하고, 문서 매핑은 대장을 재업로드하거나 매핑 재생성을 호출하면 다시 시도됨"

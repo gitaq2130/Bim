@@ -1,0 +1,21 @@
+{
+  "entity_counts_by_layer": {
+    "GRID": 5,
+    "A-COL": 7,
+    "S-BEAM": 8,
+    "A-WALL": 4,
+    "M-DUCT": 2,
+    "A-TEXT": 1
+  },
+  "insunits": 4,
+  "unit_to_m": 0.001,
+  "alignment": {
+    "origin_m": [
+      100.0,
+      50.0
+    ],
+    "rotation_deg": 15.0,
+    "scale": 0.001
+  },
+  "block_insert_handle": "53"
+}

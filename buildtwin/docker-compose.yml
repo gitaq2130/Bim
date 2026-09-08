@@ -1,0 +1,79 @@
+# BuildTwin 개발 스택. make dev
+# **publish 는 전부 127.0.0.1 에 묶는다.** 짧은 형식("5432:5432")은 host_ip 가 비어 0.0.0.0 에 붙고,
+# 그러면 이 여섯 포트가 호스트의 모든 인터페이스에서 닿는다(실측: docker compose config 가 여섯 전부
+# host_ip 없이 정규화하고, 그 상태에서 비-루프백 주소로 실제로 닿았다). 아래 서비스들은 그 노출을
+# 견디도록 만들어져 있지 않다 — redis 는 인증이 없고, db·minio 의 자격 증명은 이 파일에 평문이다.
+# 이 자리에 셋째 근거로 적혀 있던 "api 의 POST /api/auth/register 는 users 가 비면 인증 없이 admin 을
+# 만든다"(계획 0014 §후속 67)는 **ADR 0019 가 없앴다**: 그 요청은 users 가 비어 있어도 403
+# forbidden_role 이고 그 뒤에도 users 는 0행이다(services/api/auth/router.py). 빈 DB 에 첫 계정을
+# 만드는 경로는 python -m services.api.seed 하나다. **근거가 하나 줄었을 뿐 위 결론은 그대로다** —
+# 남은 두 근거만으로도 이 여섯 포트는 루프백에 묶는다.
+# **컨테이너 안의 --host 0.0.0.0(api:command, web:command)은 그대로 두어야 한다** — 그것은 컨테이너
+# 안에서 듣는 주소이고, 루프백으로 바꾸면 publish 도 서비스 간 통신도 둘 다 죽는다. 노출을 정하는
+# 것은 command 가 아니라 이 ports 의 host_ip 다.
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: buildtwin
+      POSTGRES_PASSWORD: buildtwin
+      POSTGRES_DB: buildtwin
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+  redis:
+    image: redis:7-alpine
+    ports: ["127.0.0.1:6379:6379"]
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio12345
+    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
+    volumes: ["miniodata:/data"]
+  api:
+    build: { context: ., dockerfile: Dockerfile }
+    command: uvicorn services.api.main:app --host 0.0.0.0 --port 8000 --reload
+    env_file: [.env]
+    environment:
+      DATABASE_URL: postgresql+psycopg://buildtwin:buildtwin@db:5432/buildtwin
+      REDIS_URL: redis://redis:6379/0
+      CELERY_ALWAYS_EAGER: "false"
+      STORAGE_ROOT: /data/storage
+    volumes: [".:/app", "storage:/data/storage"]
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on: [db, redis, minio]
+  worker:
+    build: { context: ., dockerfile: Dockerfile }
+    command: celery -A services.api.celery_app worker --loglevel=info
+    env_file: [.env]
+    environment:
+      DATABASE_URL: postgresql+psycopg://buildtwin:buildtwin@db:5432/buildtwin
+      REDIS_URL: redis://redis:6379/0
+      CELERY_ALWAYS_EAGER: "false"
+      STORAGE_ROOT: /data/storage
+    volumes: [".:/app", "storage:/data/storage"]
+    depends_on: [db, redis]
+  web:
+    image: node:22-alpine
+    working_dir: /app/apps/web
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    # 이 컨테이너 안에서 localhost:8000 은 api 가 아니라 **자기 자신**이다 — vite 의 /api 프록시가
+    # 갈 곳을 여기서 준다(계획 0015 문 4). 읽는 자리는 apps/web/vite.proxy-target.ts 이고 이름의
+    # 정본은 그 파일의 API_PROXY_TARGET_ENV 다(찾는 명령:
+    # `grep -n "API_PROXY_TARGET_ENV = " apps/web/vite.proxy-target.ts` — 그 파일 안 히트 하나).
+    # **한쪽에서만 철자가 갈리면 나는 것은 예외가 아니라 침묵이다** — 실측(architect, 각 N=1):
+    # 읽는 이름을 API_PROXY_TARGET 으로 바꾼 변이에서 `npx vitest run vite.proxy-target.test.ts` 가
+    # `1 failed, 5 passed` 이고, 그 상태에서 아래 이름으로 값을 줘도 resolveApiProxyTarget 은
+    # 예외 없이 http://localhost:8000 을 돌려준다(= web 이 다시 자기 자신을 가리킨다).
+    # **값을 비우지 않는다** — 선언됐는데 비면 vite 가 던진다(그 파일의 resolveApiProxyTarget).
+    # env_file 은 주지 않는다 — 이 컨테이너가 알아야 할 값은 이 하나뿐이고, .env 에는 JWT_SECRET 이 있다.
+    environment:
+      BUILDTWIN_API_PROXY_TARGET: "http://api:8000"
+    volumes: [".:/app"]
+    ports: ["127.0.0.1:5173:5173"]
+    depends_on: [api]
+volumes:
+  pgdata: {}
+  miniodata: {}
+  storage: {}

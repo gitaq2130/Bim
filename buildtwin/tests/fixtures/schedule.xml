@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Project xmlns="http://schemas.microsoft.com/project"><Tasks>
+<Task><UID>1</UID><ID>1</ID><Name>1F 기둥 철근·거푸집·타설</Name><WBS>1.1.1</WBS><Start>2026-09-01T08:00:00</Start><Finish>2026-09-10T17:00:00</Finish><Duration>PT64H0M0S</Duration>
+
+<ExtendedAttribute><FieldID>188743731</FieldID><Value>A100</Value></ExtendedAttribute></Task>
+<Task><UID>2</UID><ID>2</ID><Name>1F 보 시공</Name><WBS>1.1.2</WBS><Start>2026-09-11T08:00:00</Start><Finish>2026-09-18T17:00:00</Finish><Duration>PT48H0M0S</Duration>
+<PredecessorLink><PredecessorUID>1</PredecessorUID><Type>1</Type><LinkLag>0</LinkLag></PredecessorLink>
+<ExtendedAttribute><FieldID>188743731</FieldID><Value>A110</Value></ExtendedAttribute></Task>
+<Task><UID>3</UID><ID>3</ID><Name>1F 슬래브 타설</Name><WBS>1.1.3</WBS><Start>2026-09-19T08:00:00</Start><Finish>2026-09-24T17:00:00</Finish><Duration>PT32H0M0S</Duration>
+<PredecessorLink><PredecessorUID>2</PredecessorUID><Type>1</Type><LinkLag>0</LinkLag></PredecessorLink>
+<ExtendedAttribute><FieldID>188743731</FieldID><Value>A120</Value></ExtendedAttribute></Task>
+<Task><UID>4</UID><ID>4</ID><Name>1F 외벽 조적</Name><WBS>1.2.1</WBS><Start>2026-09-25T08:00:00</Start><Finish>2026-10-05T17:00:00</Finish><Duration>PT64H0M0S</Duration>
+<PredecessorLink><PredecessorUID>3</PredecessorUID><Type>1</Type><LinkLag>0</LinkLag></PredecessorLink>
+<ExtendedAttribute><FieldID>188743731</FieldID><Value>A200</Value></ExtendedAttribute></Task>
+<Task><UID>5</UID><ID>5</ID><Name>1F 덕트 설치</Name><WBS>1.3.1</WBS><Start>2026-10-06T08:00:00</Start><Finish>2026-10-12T17:00:00</Finish><Duration>PT40H0M0S</Duration>
+<PredecessorLink><PredecessorUID>3</PredecessorUID><Type>1</Type><LinkLag>9600</LinkLag></PredecessorLink>
+<ExtendedAttribute><FieldID>188743731</FieldID><Value>A300</Value></ExtendedAttribute></Task>
+<Task><UID>6</UID><ID>6</ID><Name>2F 기둥 시공</Name><WBS>2.1.1</WBS><Start>2026-09-25T08:00:00</Start><Finish>2026-10-04T17:00:00</Finish><Duration>PT64H0M0S</Duration>
+<PredecessorLink><PredecessorUID>3</PredecessorUID><Type>1</Type><LinkLag>0</LinkLag></PredecessorLink>
+<ExtendedAttribute><FieldID>188743731</FieldID><Value>A400</Value></ExtendedAttribute></Task>
+</Tasks></Project>
