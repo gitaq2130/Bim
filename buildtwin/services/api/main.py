@@ -25,9 +25,9 @@ def init_database() -> None:
     (ADR 0018 §2-1·§2-2 — `python -m services.api.seed`, `make seed`). 같은 프로세스 안에서 부르는
     소비자는 `services.api.seed.seed_all(session)` 을 쓴다(`tests/integration`·`tests/e2e` 의 픽스처).
 
-    그래서 **빈 DB 로 이 앱을 띄우면 계정이 하나도 없다** — 그 상태에서 첫 계정을 만드는 것은
-    `POST /api/auth/register` 의 부트스트랩(`auth/router.py` 의 `users_count(session) == 0` 갈래)이고,
-    그 자리의 처분을 여는 항목이 계획 0014 §후속 67 이다(이 커밋은 그것을 닫지 않는다).
+    그래서 **빈 DB 로 이 앱을 띄우면 계정이 하나도 없고, 아무도 로그인할 수 없다** — 그 상태를 벗어나는
+    경로는 위 명령 하나다. `POST /api/auth/register` 는 인증 없이 부를 수 없다(403 `forbidden_role`,
+    ADR 0019 §2-1) — 기동이 계정을 만들지 않아도 그 DB 가 네트워크에 열리지 않는 이유가 그것이다.
     """
     url = settings.database_url
     core_db.init_db(None if core_db.database_url() == url and core_db._engine is not None else url)

@@ -134,7 +134,9 @@ def main(argv: list[str] | None = None) -> int:
         if not emails:
             print("이 DB 에는 이미 계정이 있어 auth/seed.py 의 users_count(session) > 0 갈래가 무동작이었다. "
                   "이 명령은 남의 계정이 있는 DB 에 데모 계정을 만들지 않는다 — 어떤 DB 인지 가리지 않으므로 "
-                  "운영 DB 일 수 있다(ADR 0018 §2-4 ㉠). 개발 DB 라면 비운 뒤(make db-reset) 다시 부른다.",
+                  "운영 DB 일 수 있다(ADR 0018 §2-4 ㉠). 개발 DB 라면 비운 뒤 다시 부른다 — 비우는 명령은 "
+                  "갈래마다 다르다: 호스트 sqlite(./buildtwin.db)는 'make db-reset', compose 스택의 "
+                  "postgres 는 'docker compose down -v'(그 DB 는 pgdata 볼륨이라 rm -f *.db 가 닿지 않는다).",
                   file=sys.stderr)
         return 1
     return 0

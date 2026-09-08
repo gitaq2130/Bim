@@ -10,7 +10,7 @@
 |---|---|
 | `main.py` | `create_app()` / `app`. CORS, `/api` 프리픽스, startup `init_db()` — **테이블 생성만** 한다(데모 시드는 기동이 하지 않는다, ADR 0018 §2-1) |
 | `deps.py` | `get_session`, `get_current_user`(JWT Bearer), `require_role(*roles)`(비-프로젝트 라우트), `require_project_role(*roles)`/`project_role(...)`(ADR 0006, 프로젝트 범위 인가) |
-| `auth/` | 로그인·등록(admin, 첫 사용자 부트스트랩), 비밀번호 해시(bcrypt → pbkdf2 폴백), JWT(settings.jwt_secret), 개발 시드(사용자 + 데모 프로젝트 멤버십) |
+| `auth/` | 로그인·등록(**admin 전용 — `users` 가 비어 있어도 같다**, ADR 0019 §2-1), 비밀번호 해시(bcrypt → pbkdf2 폴백), JWT(settings.jwt_secret), 개발 시드(사용자 + 데모 프로젝트 멤버십) |
 | `storage.py` | 업로드 저장 `settings.storage_root/<project_id>/<file_id>_<filename>`, sha256, MinIO 미러(선택) |
 | `jobs.py` | 작업 본체: ingest(IFC→모델·객체 / DXF→도면·엔티티→자동 매핑) · registration(스캔 등록) · schedule · verdict |
 | `tasks.py` | Celery 태스크 `api.run_job` (공용 앱, 개발·테스트는 eager) |
@@ -35,10 +35,13 @@
 **데모와 무관한 계정 하나만 있어도** 이 명령은 아무것도 만들지 않는다. `rc=2` 는 호출이 틀렸다
 (인자를 받지 않는다). 하위 프로세스로 부르는 쪽은 stdout 이 아니라 이 값을 봐야 한다.
 
-시드하지 않은 빈 DB 에는 계정이 하나도 없다. 그 DB 의 첫 사용자는
-`POST /api/auth/register`(`users` 가 비어 있으면 누구나 호출 가능, 첫 사용자는 admin — `auth/router.py`
-의 `users_count(session) == 0` 갈래)로 만든다. 이 갈래는 sqlite·postgres 를 가리지 않으며, 그 처분은
-계획 0014 §후속 67 이 연다(이 사이클은 닫지 않았다).
+시드하지 않은 빈 DB 에는 계정이 하나도 없고, **그 상태에서는 아무도 로그인할 수 없다**(로그인 401).
+`POST /api/auth/register` 는 **언제나 admin 인증을 요구한다** — `users` 가 비어 있어도 같고, 인증 없는
+호출은 **403 `forbidden_role`** 이며 그 뒤에도 `users` 는 0행이다(ADR 0019 §2-1). sqlite·postgres 를
+가리지 않는다. 그 상태를 벗어나는 경로는 **위 명령 하나**다 — 호스트 갈래는 `make seed`, compose
+갈래는 `make seed-compose`(그 스택의 DB 는 `db:5432` 라 호스트의 `make seed` 가 닿지 않는다).
+명령은 프로세스·파일시스템 접근을 요구하므로 **네트워크에서 부를 수 없다**; 그것이 열린 엔드포인트와
+다른 점이자 전부다(ADR 0019 §2-2). 셸이 없는 배포에서 첫 계정을 만드는 경로는 **없다**(ADR 0019 §7 1).
 
 | email | role |
 |---|---|
