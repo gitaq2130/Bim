@@ -32,12 +32,20 @@ import {
  * 이 커밋의 트리에는 반대편이 아직 없다. 여기서 「compose 에 그 이름이 없다」를 단언하면 그것은
  * **같은 사이클의 작업 5 가 거짓으로 만드는 부재 단정**이다(CLAUDE.md §6-1 — *"부재를 적을 때
  * 그것을 메우는 작업이 같은 사이클에 있는지 본다"*). 그래서 적지 않고 넘긴다.
+ * 그 단언을 지는 것은 같은 파일의 `test_the_compose_web_service_spells_the_proxy_env_name_the_web_app_reads`
+ * 다(qa 소유 — 이름이 갈리면 그 자리에서 죽는다).
  *
- * **`make e2e` 도 붙들지 못한다 — 실측이다.** Playwright 갈래는 `vite preview` 로 서빙하고
- * `tests/e2e/conftest.py` 가 `preview.proxy` 를 따로 박는데, vite 는 `preview.proxy` 가 있으면
- * `server.proxy` 를 보지 않는다. 그래서 `BUILDTWIN_API_PROXY_TARGET=http://nonexistent-host-for-gate4-probe:9999`
- * 로 `make e2e` 를 돌려도 **12 passed** 다(N=1). 계획 0015 §1-d 곱 표의 문 4 행(*"`make e2e` 못 본다"*)이
- * 이 커밋 뒤에도 그대로라는 뜻이고, 이 파일이 그 칸을 대신 지는 이유다.
+ * **`make e2e` 는 이 이름을 본다 — 실측이다.** Playwright 갈래는 `vite preview` 로 서빙하고
+ * `tests/e2e/conftest.py` 가 `preview.proxy` 를 박는데, vite 는 `preview.proxy` 가 있으면
+ * `server.proxy` 를 보지 않는다(그래서 대상을 **상수로** 적던 배선에서는 `resolveApiProxyTarget` 이
+ * E2E 에서 한 번도 불리지 않았다). 지금 그 픽스처는 대상을 그 함수에서 받고 이 파일 옆의 이름 상수를
+ * 읽어 자기가 주는 이름과 맞대 보므로, `API_PROXY_TARGET_ENV` 를 갈고 `make e2e` 를 돌리면
+ * **9 passed, 3 errors** 다(N=1, 잰 트리 `5bc8d5c`) — 그 값의 정본은 그 픽스처의 표다(qa 소유).
+ *
+ * **그래도 참인 것 하나**: `BUILDTWIN_API_PROXY_TARGET=http://nonexistent-host-for-gate4-probe:9999
+ * make e2e` 는 **12 passed** 다(N=1, 같은 트리). 그 픽스처가 주변 환경의 값을 **일부러 덮기**
+ * 때문이고 — 프록시는 그 실행이 띄운 포트를 가리켜야 한다 — 사각이 아니라 설계다. 즉 「환경으로
+ * 주는 값」축은 여기서 재지지 않고, 재지는 것은 **이름**축이다.
  *
  * **브라우저에서의 손해는 여전히 재지 않았다**(계획 0015 §확인하지 않은 것 63) — 이 환경에 docker
  * 데몬이 없어(`docker info` 가 소켓 부재를 낸다) 컨테이너 안에서 프록시가 무엇을 내는지(연결 거부인지
@@ -90,7 +98,7 @@ describe("resolveApiProxyTarget", () => {
     }
   });
 
-  it("이름은 compose 와의 계약이다 — 이 트리에는 반대편이 없어 갈려도 아무 게이트가 보지 못한다", () => {
+  it("이름은 compose 와의 계약이다 — 갈리면 vite 는 예외 없이 기본값으로 떨어진다", () => {
     expect(API_PROXY_TARGET_ENV).toBe("BUILDTWIN_API_PROXY_TARGET");
   });
 });

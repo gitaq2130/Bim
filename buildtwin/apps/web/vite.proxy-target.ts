@@ -39,10 +39,25 @@
 /**
  * compose 의 `web` 서비스가 이 이름으로 값을 준다(계획 0015 작업 5 — 소유가 다르다).
  *
- * **이 문자열은 파일 둘 사이의 계약이다.** 이 트리에는 그 반대편(`docker-compose.yml`)이 아직 없고,
- * 그래서 여기서 이름이 갈리면 오늘 **아무 게이트도 보지 못한다**(계획 0015 §1-d 곱 표의 문 4 행:
- * `make test` · `make lint` · `make e2e` · CI 넷 다 「못 본다」). `vite.proxy-target.test.ts` 가
- * 그 이유로 이 값을 그대로 붙든다.
+ * **이 문자열은 파일 둘 사이의 계약이다.** 반대편은 `docker-compose.yml` 의 `web.environment` 키이고,
+ * `docker compose config` 가 그 이름으로 `http://api:8000` 을 싣는다. 여기서 이름이 갈리면
+ * **게이트가 그것을 본다** — 이 상수를 `API_PROXY_TARGET` 으로 바꿔 직접 잰 값(각 N=1, 잰 트리
+ * `5bc8d5c`, 변이는 한 자리 + 심기 직전의 작업 트리 사본과 `diff`, 그 사본으로 원복 뒤 루트
+ * `git status --porcelain`):
+ *
+ * | 명령 | 실행값 | 무엇이 죽는가 |
+ * |---|---|---|
+ * | `pytest tests/invariants`(`make test` 의 한 갈래) | **1 failed, 111 passed** | `tests/invariants/test_demo_stack_can_stand.py` 의 `test_the_compose_web_service_spells_the_proxy_env_name_the_web_app_reads` — 이 파일과 compose 를 함께 읽는다 |
+ * | `npx vitest run`(`make test` 의 한 갈래) | **1 failed, 288 passed** | `vite.proxy-target.test.ts` 의 이름 단언 |
+ * | `make e2e` | **9 passed, 3 errors** | `tests/e2e/conftest.py` 의 `web_server` — 이 파일의 상수를 읽어 자기가 주는 이름과 맞대 본다 |
+ * | `make lint` | **exit 0** | 아무것도 — 철자는 타입도 규칙도 아니다 |
+ *
+ * CI 는 같은 명령을 unit 잡(`pytest tests/… tests/invariants …` + `npx vitest run`)과 e2e 잡
+ * (`pytest tests/e2e`)에서 돌린다(`.github/workflows/buildtwin-ci.yml`).
+ *
+ * 계획 0015 §1-d 곱 표의 문 4 행은 이 게이트들을 「못 본다」로 적었다. 그것은 **그 계획을 쓰던 트리의
+ * 기록**이고(CLAUDE.md §3-13 첫째 갈래 — 뒤늦게 갱신하지 않는다), 그 행을 뒤집은 것은 같은 사이클의
+ * 뒤 커밋들이다: compose 반대편(`8926f3d`)과, 두 자리를 함께 읽는 회귀·E2E 배선(`3e54221`).
  */
 export const API_PROXY_TARGET_ENV = "BUILDTWIN_API_PROXY_TARGET";
 
