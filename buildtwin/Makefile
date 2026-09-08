@@ -1,7 +1,7 @@
 # BuildTwin — 담당: qa
-# make dev / make test / make lint / make docs / make fixtures / make e2e / make api / make web / make seed
+# make env / make dev / make test / make lint / make docs / make fixtures / make e2e / make api / make web / make seed
 
-.PHONY: dev test lint docs fixtures fixtures-public test-py test-unit test-invariants test-regression test-integration test-web e2e e2e-deps web-build lint-py lint-web api web setup db-reset seed
+.PHONY: env dev test lint docs fixtures fixtures-public test-py test-unit test-invariants test-regression test-integration test-web e2e e2e-deps web-build lint-py lint-web api web setup db-reset seed
 
 PY := . .venv/bin/activate &&
 
@@ -9,6 +9,23 @@ setup: ## 로컬 개발 환경(venv + npm)
 	python3 -m venv .venv
 	$(PY) pip install -q --upgrade pip && pip install -q -e ".[dev]"
 	cd apps/web && npm install
+
+env: ## .env 가 없으면 만든다(문 1·2). 있으면 **한 바이트도 바꾸지 않는다**(ADR 0019 §2-3).
+	@if [ -e .env ]; then \
+	  echo "※ .env 가 이미 있다 — 한 바이트도 바꾸지 않는다(ADR 0019 §2-3). 새 난수가 필요하면 지우고 다시 부른다."; \
+	else \
+	  secret=$$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))'); \
+	  if [ -z "$$secret" ]; then echo "make env: JWT_SECRET 난수 생성에 실패했다(python3?) — .env 를 만들지 않는다." >&2; exit 1; fi; \
+	  umask 077; \
+	  { echo "# BuildTwin — 'make env' 가 만들었다. 커밋 금지(.gitignore). 키 이름 전체는 .env.example."; \
+	    echo "# JWT_SECRET: compose 갈래(DATABASE_URL 이 postgres)는 이 값이 없으면 로그인에서 죽는다 —"; \
+	    echo "#   packages/core/settings.py 의 resolve_jwt_secret 이 RuntimeError 를 낸다. 값은 난수이고"; \
+	    echo "#   저장소의 어떤 파일에도 상수로 없다(CLAUDE.md §3-4)."; \
+	    echo "# 다른 키는 비워서 적지 않는다 — 빈 값은 기본값을 덮는다(실측: 'DATABASE_URL=' 한 줄이면"; \
+	    echo "#   settings.database_url 이 빈 문자열이 되어 호스트 sqlite 기본값이 사라진다)."; \
+	    echo "JWT_SECRET=$$secret"; } > .env; \
+	  echo "created .env — JWT_SECRET(난수)만 담았다. 값은 출력하지 않는다."; \
+	fi
 
 dev: ## API + Celery worker + web dev server (docker compose)
 	@echo "※ 로컬 SQLite(buildtwin.db)를 쓰다가 모델에 컬럼이 추가된 뒤라면 먼저 'make db-reset'."
