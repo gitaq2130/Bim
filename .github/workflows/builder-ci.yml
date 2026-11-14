@@ -1,0 +1,23 @@
+name: Builder CI
+
+on:
+  pull_request:
+    branches: [builder/main]
+  push:
+    branches: ['builder/**']
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: 문법 검사
+        run: node scripts/check-syntax.mjs
+      - name: 트랙 소유 범위 검사
+        if: github.event_name == 'pull_request'
+        run: node scripts/check-ownership.mjs origin/${{ github.base_ref }} ${{ github.head_ref }}

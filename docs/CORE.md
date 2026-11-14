@@ -1,0 +1,125 @@
+# 빌더 코어 규격 (Core v1.0.0)
+
+모든 툴이 공유하는 계약입니다. **이 문서와 코어 파일은 허브·코어 트랙만 수정합니다.**
+툴 트랙은 이 규격을 읽기만 하고, 바꿔야 하면 아래 "코어 변경 요청" 절차를 따릅니다.
+
+현재 코어 버전은 `CORE_VERSION` 파일이 기준입니다.
+
+## 1. 실행 구조
+
+- 정적 웹앱. `app/index.html` → `app/js/app.js`(ES 모듈) 진입. 빌드 단계 없음.
+- 외부 라이브러리는 `index.html`의 importmap으로 CDN 로드 (three@0.170.0, three-mesh-bvh, three-gpu-pathtracer).
+- `app/lib/`: pdf.js, web-ifc.wasm (벤더 파일, 수정 금지)
+- 배포: `app/` 폴더 전체를 Claude 아티팩트 "빌더 — 건축물 생애주기 통합 플랫폼"에 게시.
+- 해석·설계 계산은 브라우저 JS로만 수행 (AI 호출 없음).
+
+## 2. 툴 등록 (`app/js/app.js` → `TOOLS`)
+
+```js
+{ id, name, full, color, desc, load: () => import('../tools/<id>.js') }
+```
+툴 추가·삭제·순서 변경은 코어 변경입니다.
+
+## 3. 툴 모듈 인터페이스
+
+```js
+export function mount(root, ctx) {
+  // root: 툴 전용 DOM 컨테이너 (height:100%)
+  return { unmount() { /* 리스너·애니메이션·three.js 리소스 해제 */ } };
+}
+```
+- 툴은 다른 툴의 DOM을 건드리지 않습니다.
+- 다른 툴 화면으로 이동: `ctx.go('<toolId>', { sheet, hi })`
+
+## 4. ctx API
+
+| 항목 | 용도 |
+|---|---|
+| `ctx.P` | 현재 프로젝트 객체 (아래 5장) |
+| `ctx.touch(what='meta')` | 변경 알림 → 자동 저장 예약. **P를 수정하면 반드시 호출** |
+| `ctx.go(route, opts)` | 라우팅 (`opts.sheet`, `opts.hi`) |
+| `ctx.state` | `{ P, sheet, sel:Set, hi, tool, mounted, projects }` — `sheet`(현재 도면 id), `sel`(선택 객체), `hi`(강조 객체) |
+| `ctx.bus` | 이벤트 버스: `emit/on` |
+| `ctx.store` | 저장소 (직접 쓰기 금지, `touch` 사용) |
+| `ctx.tools` | TOOLS 배열 |
+
+### 버스 이벤트
+| 이벤트 | 발신 | 의미 |
+|---|---|---|
+| `project` | 코어 | 프로젝트 열림/생성 (인자: P) |
+| `model` | 모든 툴 | 객체(els) 변경 → 물량·3D·간섭 등 재계산 |
+| `status` | store | 저장 상태 |
+
+새 이벤트는 코어 변경 요청으로 이 표에 등록한 뒤 사용합니다.
+
+## 5. 프로젝트 데이터 모델 (`P`)
+
+단위: **mm**, 각도 도(°), 좌표는 도면 좌표 + `P.base` 기준점.
+
+| 키 | 내용 | 쓰기 소유 트랙 |
+|---|---|---|
+| `id, name, updated` | 메타 | core |
+| `sheets[]` | 도면 시트 `{id, name, level, disc, ...}` | cad |
+| `content[sheetId]` | `{ ents:[], els:[] }` — ents=선·문자 등 작도요소, els=객체 | cad (els 스키마는 core) |
+| `levels[]` | 층 정보 (층고·레벨) | cad |
+| `layers[], blocks, underlays` | 레이어·블록·밑그림 | cad |
+| `base {x,y}`, `site {lat,lng,tz,north}` | 기준점·대지 위치 | core |
+| `prevs` | 리비전 기록 (`js/rev.js`) | core |
+| `view {mats}` | 3D 재질·뷰 설정 | view3d |
+| `struct` | 구조 해석 모델·결과 | struct |
+| `boq, takeoffs, rebarSchedule, changeOrders` | 내역·물량·배근표·설계변경 | cost |
+| `bill {periods[]}` | 기성 회차 | cost |
+| `clash {status,tol,clearance}`, `check {status}` | 간섭·정합 결과 상태 | review |
+| `sched {acts[],start}`, `photos[]`, `daily` | 공정·현장사진·일보 | field |
+| `issues[]`, `code` | 이슈·RFI, 법규 검토 | admin |
+
+- 다른 트랙 소유 키는 **읽기만** 합니다.
+- 새 최상위 키 추가, 기존 키의 구조 변경은 코어 변경입니다 (`app.js`의 `migrate()` 갱신 필요).
+
+### 객체 종류 (`js/model.js` → `KINDS`)
+wall, column, beam, slab, footing, opening, duct, pipe, tray, riser, fin, furn
+— 공종(`DISC`): A 건축, S 구조, M 기계, E 전기, P 배관·소방. 재질은 `MATS`.
+객체 종류·기본 속성 추가는 코어 변경입니다.
+
+## 6. 공용 모듈 (core 소유, 툴은 import만)
+
+| 파일 | 내용 |
+|---|---|
+| `js/model.js` | KINDS·DISC·MATS, allElements, takeoff, billReview, levelOf, elName |
+| `js/store.js` | 저장 (Claude db → localStorage → 메모리) |
+| `js/ui.js` | h, $, toast, dialog, confirmBox, table, pickFile, saveFile |
+| `js/util.js` | uid, deep, createBus, 벡터·면적 함수, fmt |
+| `js/rev.js` | 리비전 생성·복원 |
+| `js/rebar.js` | 철근 규격·BBS |
+| `js/mep.js`, `js/furn.js`, `js/blocks.js`, `js/icons.js` | 설비·가구·블록·아이콘 정의 |
+| `js/dxf.js`, `js/ifc.js`, `js/ifcout.js`, `js/excel.js`, `js/zip.js` | 입출력 |
+| `js/house.js`, `js/tower.js` | 샘플 프로젝트 |
+
+### 툴 간 공개 함수 (바꾸면 사용하는 트랙에 영향)
+| 제공 | 함수 | 사용처 |
+|---|---|---|
+| field `tools/sched.js` | `autoGenerate(P, start)` 등 | core(샘플 생성), view3d(4D), daily |
+| field `tools/site.js` | 사진·위치 함수 | daily |
+| cad `tools/cad-geom.js` | 기하 함수 | site |
+| view3d `tools/render3d.js` | 렌더러 | furn3d |
+
+공개 함수의 이름·인자·반환을 바꾸려면 코어 변경 요청으로 등록합니다.
+
+## 7. 버전 규칙
+
+- **Core**: `CORE_VERSION` (SemVer). 데이터 모델·ctx·이벤트를 깨뜨리는 변경은 major, 추가는 minor, 수정은 patch.
+- **툴**: 각 `docs/tools/<track>.md` 머리의 `Rev`. 기능 추가 시 +1 (예: 구조 v14 → v15).
+- 커밋 메시지: `[track] vN: 요약` (예: `[struct] v15: 철골 접합부 검토 추가`, `[core] 1.1.0: P.energy 키 추가`)
+- 각 툴 문서에 "요구 Core 버전"을 적습니다.
+
+## 8. 코어 변경 요청 절차
+
+1. 툴 트랙에서 `docs/sessions/core-requests.md`에 요청을 추가합니다 (무엇을, 왜, 어떤 트랙에 영향).
+2. 허브·코어 트랙이 반영하고 `CORE_VERSION`을 올린 뒤 `builder/main`에 병합합니다.
+3. 툴 트랙은 `builder/main`을 자기 브랜치에 병합(rebase)한 후 이어서 작업합니다.
+
+## 9. 브랜치
+
+- `builder/main`: 통합본 (배포 기준). 직접 커밋하지 않고 PR로 병합합니다.
+- `builder/<track>`: 트랙별 작업 브랜치. 트랙 목록과 소유 파일은 `scripts/owners.mjs`에 있습니다.
+- CI(`.github/workflows/builder-ci.yml`): 문법 검사와 트랙 소유 범위 검사를 수행합니다.

@@ -1,0 +1,11 @@
+{
+  "name": "builder",
+  "private": true,
+  "type": "module",
+  "description": "빌더 — 건축물 생애주기 통합 플랫폼",
+  "scripts": {
+    "check": "node scripts/check-syntax.mjs",
+    "owners": "node scripts/check-ownership.mjs",
+    "serve": "npx --yes http-server app -p 8080 -c-1"
+  }
+}
