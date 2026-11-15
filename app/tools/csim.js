@@ -147,6 +147,7 @@ export function mount(root, ctx) {
   function renderSide() {
     if (tab !== '3d' || !st) return; side.innerHTML = ''; const D = S.s0 + day;
     const issues = S.issues.length ? h('div', { class: 'card', style: { borderColor: '#ef5f5f', marginBottom: '8px' } }, h('b', { style: { color: '#ef5f5f' } }, `역순 시공 ${S.issues.length}건 → 보완 작업 반영됨`), ...S.issues.slice(0, 3).map(x => h('div', { class: 'note', style: { fontSize: '11.5px' } }, x.msg))) : null;
+    if (G.empty.length) side.append(h('div', { class: 'card', style: { borderColor: '#ef5f5f', marginBottom: '8px' } }, h('b', { style: { color: '#ef5f5f' } }, `객체가 없는 층 ${G.empty.length}개 (${G.empty.slice(0, 6).join(', ')}${G.empty.length > 6 ? ' …' : ''})`), h('div', { class: 'note', style: { fontSize: '11.5px' } }, G.all.length ? '이 층들은 시공 작업을 만들지 않았습니다.' : '도면 데이터가 불러와지지 않았습니다 — 저장이 중간에 멈춘 프로젝트일 수 있습니다. 샘플이면 홈에서 다시 만들어 주세요. 공정률은 가설·기초 등 모델과 무관한 작업만으로 계산됩니다.')));
     side.append(h('div', { class: 'note', style: { lineHeight: 1.6, marginBottom: '8px' } }, '날짜를 움직이면 그날의 현장(부재 상태·가설·장비·인원)을 보여줍니다. 부재를 누르면 선행 작업·체크리스트·후행 공정이 열립니다.'), issues || '');
     const working = st.tasks.filter(t => S.cal.can(D, t) && !t.ms); const waiting = st.tasks.filter(t => !S.cal.can(D, t) && !t.ms);
     side.append(h('div', { class: 'cards', style: { gridTemplateColumns: '1fr 1fr 1fr' } }, ...[['작업', working.length + '건'], ['투입 인원', st.total + '명'], ['장비', st.equip.length + '종']].map(([k, v]) => h('div', { class: 'card' }, h('div', { class: 'd' }, k), h('div', { class: 't', style: { fontSize: '17px' } }, v)))));
