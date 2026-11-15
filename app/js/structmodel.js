@@ -152,6 +152,37 @@ export function buildLoads(M) {
   return { loads: L, mass, tot };
 }
 
+// ---------- 시공단계 해석 (고정하중 순차 재하) ----------
+// 층을 최대 groups개 단계로 묶어, 단계마다 그때까지 시공된 부분 구조에 해당 층 고정하중만 재하하고 결과를 누적한다.
+// 새로 설치되는 절점은 처진 하부 위에 설계 레벨로 놓인다고 보아(레벨 보정) 이전 단계 변위를 받지 않는다.
+export function constructionStages(M, model, { groups = 15, onProgress } = {}) {
+  const { nodes, elems } = model; const zmin = M.zmin; const nN = nodes.length;
+  const zs = [...new Set(nodes.filter(n => n.used).map(n => n.z))].filter(z => z > zmin + 1).sort((a, b) => a - b); if (zs.length < 2) return null;
+  const G = Math.min(groups, zs.length); const per = zs.length / G; const stZ = new Map(zs.map((z, i) => [z, Math.min(G - 1, Math.floor(i / per))]));
+  const sz = (z) => z <= zmin + 1 ? 0 : (stZ.get(z) ?? G - 1); const eSt = elems.map(e => Math.max(sz(nodes[e.n1].z), sz(nodes[e.n2].z)));
+  const first = new Int32Array(nN).fill(G); elems.forEach((e, i) => { first[e.n1] = Math.min(first[e.n1], eSt[i]); first[e.n2] = Math.min(first[e.n2], eSt[i]); });
+  const LD = model.loads.D; const nSt = (n) => Math.max(sz(nodes[n].z), first[n]);
+  const acc = { disp: new Float64Array(nN * 6), ef: new Float64Array(elems.length * 12), reac: new Map(), dia: (model.dias || []).map(() => [0, 0, 0]) }; const stages = [];
+  for (let s = 0; s < G; s++) {
+    const t0 = performance.now(); const keep = []; for (let i = 0; i < elems.length; i++) if (eSt[i] <= s) keep.push(i); const loc = new Int32Array(elems.length).fill(-1); keep.forEach((g, i) => { loc[g] = i; });
+    const used = new Uint8Array(nN); for (const g of keep) { used[elems[g].n1] = 1; used[elems[g].n2] = 1; }
+    const dm = new Map(), dias = []; const sn = nodes.map((n, i) => { let dia = null; if (used[i] && n.dia != null) { if (!dm.has(n.dia)) { dm.set(n.dia, dias.length); dias.push(model.dias[n.dia]); } dia = dm.get(n.dia); } return { x: n.x, y: n.y, z: n.z, fix: n.fix, used: !!used[i], dia }; });
+    // 단계 안에서도 층별 하중을 따로 풀어(같은 분해 재사용) 절점은 자기 층 설치 이후 하중의 변위만 받게 한다
+    const zt = zs.filter(z => sz(z) === s); const flo = (z) => { for (const t of zt) if (z <= t + 1) return t; return zt[zt.length - 1]; };
+    const cases = zt.map((_, i) => 'F' + i); const loads = Object.fromEntries(cases.map(c => [c, { node: [], elem: [] }])); const ci = new Map(zt.map((z, i) => [z, cases[i]]));
+    for (const L of LD.node) { const n = L[0]; if (used[n] && nSt(n) === s) loads[ci.get(flo(nodes[n].z))].node.push(L); }
+    for (const L of LD.elem) { const ei = L[0]; if (eSt[ei] !== s) continue; const e = elems[ei]; loads[ci.get(flo(Math.max(nodes[e.n1].z, nodes[e.n2].z)))].elem.push([loc[ei], ...L.slice(1)]); }
+    const R = analyze({ nodes: sn, elems: keep.map(g => elems[g]), dias, cases, loads });
+    zt.forEach((zf, fi) => { const c = R.cases[cases[fi]];
+      for (let n = 0; n < nN; n++) if (used[n] && nodes[n].z <= zf + 1) for (let k = 0; k < 6; k++) acc.disp[n * 6 + k] += c.disp[n * 6 + k];
+      keep.forEach((g, i) => { for (let k = 0; k < 12; k++) acc.ef[g * 12 + k] += c.ef[i * 12 + k]; });
+      for (const [n, r] of c.reac) { let a = acc.reac.get(n); if (!a) acc.reac.set(n, a = new Float64Array(6)); for (let k = 0; k < 6; k++) a[k] += r[k]; }
+      for (const [d, i] of dm) for (let k = 0; k < 3; k++) acc.dia[d][k] += c.dia[i][k]; }); stages.push({ s, z0: zt[0], z1: zt[zt.length - 1], nEl: keep.length, dof: R.N, weak: R.weak.length, ms: performance.now() - t0 });
+    onProgress?.(`시공단계 해석 ${s + 1}/${G}`);
+  }
+  return { case: { disp: acc.disp, ef: acc.ef, reac: acc.reac, dia: acc.dia, eloads: LD.elem }, stages, G };
+}
+
 // ---------- 해석 전체 ----------
 export const COMBOS = (has) => {
   const C = [{ id: 'LC1', name: '1.4D', f: { D: 1.4 } }, { id: 'LC2', name: '1.2D+1.6L', f: { D: 1.2, L: 1.6 } }]; let k = 3;
@@ -223,6 +254,7 @@ export function runStructure(P, { onProgress, settings } = {}) {
     onProgress?.('P-Δ 기하강성 반영 재해석…'); const d = R.cases.D.ef, l = R.cases.L.ef; M.elems.forEach((e, i) => { if (!e.rigid && e.vert) e.Ng = -(1.2 * d[i * 12] + 1.0 * l[i * 12]); });
     R = analyze(model, { onProgress }); info.pdelta = true; M.elems.forEach(e => { delete e.Ng; });
   }
+  if (S0.cs) { onProgress?.('시공단계 해석…'); const cs = constructionStages(M, model, { onProgress }); if (cs) { R.cases.D0 = R.cases.D; R.cases.D = cs.case; info.cs = { G: cs.G, stages: cs.stages, ms: cs.stages.reduce((a, x) => a + x.ms, 0) }; } }
   if (sp) { // 레일리 주기 → 상한 CuTa → 재산정
     const ray = (c) => { let a = 0, b = 0; const lds = loads[c].dia; story.forEach((f, i) => { const d = R.cases[c].dia[f.dia][c === 'EX' ? 0 : 1]; a += f.W * d * d; b += lds[i][c === 'EX' ? 1 : 2] * d; }); return 2 * Math.PI * Math.sqrt(a / (9806.65 * b)); };
     sp.Tray = { X: ray('EX'), Y: ray('EY') }; sp.T = { X: Math.min(sp.Tray.X, sp.Cu * sp.Ta), Y: Math.min(sp.Tray.Y, sp.Cu * sp.Ta) };

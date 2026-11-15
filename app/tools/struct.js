@@ -6,7 +6,7 @@ import { esc } from '../js/util.js';
 import { runStructure, settingsOf, seismicParams, USES, SYSTEMS, GRADES, memberForces, combine, DEFAULTS } from '../js/structmodel.js';
 import { designMember, designFoundations, designConnections } from '../js/kds.js';
 import { FIELDS as RB_FIELDS, specOf } from '../js/rebar.js';
-import { simUI, slabUI, shortUI, heat } from './structsim.js';
+import { simUI, slabUI, shortUI, csUI, heat } from './structsim.js';
 import { schemeUI } from './structscheme.js';
 import { autoRun, baseSettings, REGIONS, USE_INFO, SITE_DEFAULT } from '../js/structauto.js';
 
@@ -45,7 +45,7 @@ export function mount(root, ctx) {
     tb.innerHTML = '';
     tb.append(h('b', { style: { marginRight: '6px' } }, '구조해석'), h('button', { class: 'btn', onclick: settings }, '현장·용도 조건'), h('button', { class: 'btn primary', onclick: run }, C ? '다시 해석' : '해석 실행'), h('button', { class: 'btn' + (st.page === 'scheme' ? ' primary' : ''), onclick: () => setPage(st.page === 'scheme' ? 'res' : 'scheme') }, '구조 형식 비교·추천'));
     if (!C) return;
-    tb.append(h('span', { class: 'note', style: { margin: '0 4px' } }, '|'), ...[['res', '해석 결과'], ['sim', '거동 시뮬레이션'], ['slab', '슬래브'], ['short', '기둥 축소량']].map(([k, l]) => h('button', { class: 'btn' + (st.page === k ? ' primary' : ''), onclick: () => setPage(k) }, l)));
+    tb.append(h('span', { class: 'note', style: { margin: '0 4px' } }, '|'), ...[['res', '해석 결과'], ['sim', '거동 시뮬레이션'], ['slab', '슬래브'], ['cs', '시공단계'], ['short', '기둥 축소량']].map(([k, l]) => h('button', { class: 'btn' + (st.page === k ? ' primary' : ''), onclick: () => setPage(k) }, l)));
     if (st.page !== 'res') return;
     tb.append(h('span', { class: 'note', style: { margin: '0 4px' } }, '|'),
       sel([['ratio', '검토비'], ['model', '모델'], ['defo', '변형'], ...(C.res.info.modal ? [['mode', '모드 형상']] : []), ['My', '모멘트 My(강축)'], ['Mz', '모멘트 Mz(약축·면내)'], ['N', '축력 N'], ['V', '전단 V']], st.view, v => { st.view = v; draw(); }),
@@ -84,7 +84,7 @@ export function mount(root, ctx) {
       C = { res, D, S, at: Date.now(), F: designFoundations(res, S), J, auto: A.rows }; CACHE.set(P, C); P.struct.auto = { at: Date.now(), rows: A.rows };
       const sp = res.info.seis; const drift = sp ? maxDrift(res) : null;
       P.struct.last = { at: Date.now(), members: n, ng: D.filter(d => d.ratio > 1).length, max: Math.max(...D.map(d => d.ratio)), drift, driftLim: sp?.driftLim, T: sp?.T?.X, V: sp?.X?.V }; ctx.touch('meta');
-      st.view = 'ratio'; st.lc = 'env'; st.tab = 'sum'; sub?.leave?.(); sub = null; st.page = 'res'; api.simState = api.slabState = api.shortState = null;
+      st.view = 'ratio'; st.lc = 'env'; st.tab = 'sum'; sub?.leave?.(); sub = null; st.page = 'res'; api.simState = api.slabState = api.shortState = api.csState = null;
     } catch (e) { console.error(e); toast('해석 실패: ' + (e.message || e), 'err', 6000); }
     busy.style.display = 'none'; renderTB(); renderSide(); draw(true);
   }
@@ -177,10 +177,10 @@ export function mount(root, ctx) {
     if (p === 'res') { renderSide(); draw(); return; }
     if (p !== 'scheme' && !C) { st.page = 'res'; renderTB(); renderSide(); return; }
     legend.innerHTML = ''; side.innerHTML = '';
-    sub = (p === 'sim' ? simUI : p === 'slab' ? slabUI : p === 'scheme' ? schemeUI : shortUI)(api);
+    sub = (p === 'sim' ? simUI : p === 'slab' ? slabUI : p === 'scheme' ? schemeUI : p === 'cs' ? csUI : shortUI)(api);
   }
   Object.defineProperty(api, 'C', { get: () => C });
-  Object.assign(api, { P, ctx, side, G, holderEl: holder, markDirty: () => { dirty = true; },
+  Object.assign(api, { P, ctx, side, G, holderEl: holder, markDirty: () => { dirty = true; }, select: (mi) => { setPage('res'); select(mi); },
     overlay(el) { holder.querySelector('.st-ov')?.remove(); if (el) { el.classList.add('st-ov'); holder.append(el); } },
     anim: { build: buildAnim }, preview(res, D) { PV = res ? { res, D } : null; st.view = 'ratio'; st.lc = 'env'; G.userData.fitted = false; draw(true); }, invalidate() { C = null; CACHE.delete(P); delete P.struct.last; renderTB(); } });
   function clearG() { for (const o of [...G.children]) { G.remove(o); o.geometry?.dispose(); o.material?.dispose?.(); } pickables = []; }
@@ -239,7 +239,7 @@ export function mount(root, ctx) {
       { k: '평형 — 고정하중', v: h('span', {}, `${kN(eq.D.applied)} kN = 반력 ${kN(eq.D.reac)} `, pill(ok(eq.D.applied, eq.D.reac), ok(eq.D.applied, eq.D.reac) ? '일치' : '불일치')) },
       { k: '평형 — 활하중', v: h('span', {}, `${kN(eq.L.applied)} kN = 반력 ${kN(eq.L.reac)} `, pill(ok(eq.L.applied, eq.L.reac), ok(eq.L.applied, eq.L.reac) ? '일치' : '불일치')) },
       ...(eq.EX ? [{ k: '평형 — 지진 Ex', v: h('span', {}, `${kN(eq.EX.applied)} kN = 반력 ${kN(-eq.EX.reac)} `, pill(ok(eq.EX.applied, -eq.EX.reac), '일치')) }] : []),
-      { k: '해석 옵션', v: `${I.modal ? '응답스펙트럼' : '등가정적'}${I.pdelta ? ' · P-Δ' : ''}${I.userCombos ? ' · 사용자 하중조합' : ''} · 조합 ${res.combos.length}개` },
+      { k: '해석 옵션', v: `${I.modal ? '응답스펙트럼' : '등가정적'}${I.pdelta ? ' · P-Δ' : ''}${I.cs ? ` · 시공단계 ${I.cs.G}단계` : ''}${I.userCombos ? ' · 사용자 하중조합' : ''} · 조합 ${res.combos.length}개` },
       { k: '건물 중량 W', v: `${kN(I.Wt)} kN (${(I.Wt / 1e3 / 9.81).toFixed(0)} ton)` },
       ...(I.weak ? [{ k: '불안정 자유도', v: h('span', { style: { color: '#ff8a8a' } }, `${I.weak}개 — 연결되지 않은 부재 확인`) }] : []),
     ])));
@@ -370,7 +370,7 @@ export function mount(root, ctx) {
     const html = `<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>구조계산서 — ${esc(P.name)}</title><style>body{font-family:'Malgun Gothic',sans-serif;max-width:900px;margin:24px auto;color:#111;font-size:13px;line-height:1.55}h1{font-size:22px}h2{font-size:16px;border-bottom:2px solid #223;padding-bottom:3px;margin-top:26px}h3{font-size:14px;margin:14px 0 4px}table{border-collapse:collapse;width:100%;margin:6px 0 12px}th,td{border:1px solid #999;padding:4px 6px;text-align:left;vertical-align:top}th{background:#eef0f3}.ng{color:#c00;font-weight:700}.ok{color:#080;font-weight:700}.n{color:#666;font-size:12px}@media print{h2{page-break-after:avoid}}</style></head><body>
 <h1>구조계산서</h1><p>${esc(P.name)} · ${esc(P.site?.address || '')} · ${new Date().toLocaleDateString('ko-KR')} · 빌더 구조해석</p>
 <h2>1. 개요 및 결론</h2>${T(['항목', '결과'], [['부재 검토', `${D.length - ng.length}/${D.length} 적합 ${ng.length ? `<span class="ng">NG ${ng.length}개</span>` : '<span class="ok">전 부재 적합</span>'}`], ['최대 검토비', Math.max(...D.map(d => d.ratio)).toFixed(3)], ...(sp ? [['최대 층간변위비 (지진)', `${(drift * 100).toFixed(3)}% — 허용 ${(sp.driftLim * 100).toFixed(1)}% <span class="${drift <= sp.driftLim ? 'ok' : 'ng'}">${drift <= sp.driftLim ? 'OK' : 'NG'}</span>`], ['밑면전단력', `X ${kN(sp.X.V)} kN · Y ${kN(sp.Y.V)} kN`]] : []), ['건물 중량', `${kN(I.Wt)} kN`], ['평형 검증', `고정하중 ${kN(I.check.D.applied)} kN = 반력 ${kN(I.check.D.reac)} kN`]])}
-<h2>2. 설계 조건 (현장 입력 · 툴 산정)</h2>${C.auto ? T(['구분', '항목', '값', '근거'], C.auto.map(r => [r.cat, esc(r.k), esc(r.v), esc(r.why)])) : ''}<h3>기준·재료 요약</h3>${T(['항목', '내용'], [['기준', 'KDS 41 10 15 (설계하중), KDS 41 17 00 (내진), KDS 14 20 (콘크리트), KDS 14 31 (강구조)'], ['콘크리트', `fck ${S.fck} MPa (보·슬래브)${S.fckV ? `, ${S.fckV} MPa (기둥·벽)` : ''}`], ['철근 / 강재', `fy ${S.fy} MPa / Fy ${S.Fy} MPa`], ['세장효과·횡비틀림', '기둥: 층 안정지수 Q로 횡이동 판정, 접합부 강성비 ψ로 k 산정, 모멘트 확대(RC δns·δs, 철골 B1·B2). 철골 보: 슬래브 구속 여부·모멘트도로 비지지길이 Lb·Cb 산정'], ['강성', `균열단면 보 ${S.crack.beam}Ig, 기둥 ${S.crack.col}Ig, 벽 ${S.crack.wall}Ig, 전단변형 고려`], ['해석', `3차원 골조 선형정적, 층 강막 가정, 절점 ${res.M.nodes.filter(n => n.used).length} · 요소 ${res.M.elems.length} · 자유도 ${I.dof}`]])}
+<h2>2. 설계 조건 (현장 입력 · 툴 산정)</h2>${C.auto ? T(['구분', '항목', '값', '근거'], C.auto.map(r => [r.cat, esc(r.k), esc(r.v), esc(r.why)])) : ''}<h3>기준·재료 요약</h3>${T(['항목', '내용'], [['기준', 'KDS 41 10 15 (설계하중), KDS 41 17 00 (내진), KDS 14 20 (콘크리트), KDS 14 31 (강구조)'], ['콘크리트', `fck ${S.fck} MPa (보·슬래브)${S.fckV ? `, ${S.fckV} MPa (기둥·벽)` : ''}`], ['철근 / 강재', `fy ${S.fy} MPa / Fy ${S.Fy} MPa`], ['세장효과·횡비틀림', '기둥: 층 안정지수 Q로 횡이동 판정, 접합부 강성비 ψ로 k 산정, 모멘트 확대(RC δns·δs, 철골 B1·B2). 철골 보: 슬래브 구속 여부·모멘트도로 비지지길이 Lb·Cb 산정'], ['강성', `균열단면 보 ${S.crack.beam}Ig, 기둥 ${S.crack.col}Ig, 벽 ${S.crack.wall}Ig, 전단변형 고려`], ['해석', `3차원 골조 선형정적${I.cs ? `, 고정하중 시공단계 해석(${I.cs.G}단계 순차 재하·레벨 보정)` : ''}, 층 강막 가정, 절점 ${res.M.nodes.filter(n => n.used).length} · 요소 ${res.M.elems.length} · 자유도 ${I.dof}`]])}
 <h2>3. 하중</h2>${T(['하중', '값'], [['고정하중', `부재 자중(RC 24, 강재 77 kN/m³) + 슬래브 자중 + 마감·설비 ${S.SDL} kN/m² + 비구조벽`], ['활하중', `${S.use} ${USES[S.use]} kN/m², 지붕 ${S.LLroof} kN/m²`], ['풍하중', S.wind.on ? `V0 ${S.wind.V0} m/s, 노풍도 ${S.wind.exp}, Gf ${S.wind.Gf}, Cf ${S.wind.Cf} (약식)` : '미적용'], ['지진하중', sp ? `S ${sp.S.toFixed(3)} (Z ${S.seis.Z}×I ${S.seis.I}), 지반 ${S.seis.site}, SDS ${sp.SDS.toFixed(3)}, SD1 ${sp.SD1.toFixed(3)}, ${esc(sp.sysName)} R ${sp.R} Cd ${sp.Cd}, Ie ${sp.Ie}, Ta ${sp.Ta.toFixed(2)}s, 레일리 T ${sp.Tray.X.toFixed(2)}/${sp.Tray.Y.toFixed(2)}s → 적용 ${sp.T.X.toFixed(2)}/${sp.T.Y.toFixed(2)}s, Cs ${sp.X.Cs.toFixed(4)}, 우발편심 5%` : '미적용']])}
 <h3>하중조합 (강도설계)</h3>${T(['ID', '조합'], res.combos.map(c => [c.id, c.name]))}
 <h2>4. 층별 결과</h2>${T(['층', 'W (kN)', ...(sp ? ['Fx (kN)', 'Δ/h Ex', 'Δ/h Ey', '비틀림비'] : []), ...(res.cases.includes('WX') ? ['Wx (kN)', 'Δ/h Wx'] : [])], res.story.slice().reverse().map(f => [res.M.lv.find(l => l.elev === f.z)?.name || '', kN(f.W), ...(sp ? [kN(f.EX || 0), `${((f.drEX || 0) * sp.Cd / sp.Ie * 100).toFixed(3)}%`, `${((f.drEY || 0) * sp.Cd / sp.Ie * 100).toFixed(3)}%`, Math.max(f.torEX || 1, f.torEY || 1).toFixed(2)] : []), ...(res.cases.includes('WX') ? [kN(f.WX || 0), `${((f.drWX || 0) * 100).toFixed(3)}%`] : [])]))}
@@ -381,7 +381,7 @@ ${I.modal ? `<h2>7. 고유치·응답스펙트럼</h2>${T(['모드', 'T (s)', 'X
 <h2>8. 기초</h2>${(C.F || []).length ? T(['종류', '부재', '크기', 'Ps (kN)', 'q / qa (kPa)', '펀칭', '1방향 전단', '휨(실배근)', '판정'], C.F.map(x => [x.kind, esc(x.tag || ''), x.size, kN(x.Ps), x.q ? (x.qa == null ? `필요 ≥ ${(x.q * 1e3).toFixed(0)}` : `${(x.q * 1e3).toFixed(0)} / ${(x.qa * 1e3).toFixed(0)}`) : '-', x.rp != null ? x.rp.toFixed(3) : '-', x.rv ? x.rv.toFixed(3) : '-', x.rm != null ? x.rm.toFixed(3) : '-', x.ratio == null ? '기초 없음' : `<span class="${x.ratio > 1 ? 'ng' : 'ok'}">${x.ratio.toFixed(3)}</span>`])) : '<p>기초 객체 없음</p>'}
 ${(C.J || []).length ? (() => { const J = C.J; const by = {}; for (const j of J) { const k = `${j.kind} — ${j.type}`; (by[k] ||= { n: 0, ng: 0, max: 0 }); by[k].n++; if (j.ratio > 1) by[k].ng++; by[k].max = Math.max(by[k].max, j.ratio); } const top = [...J].sort((a, b) => b.ratio - a.ratio).slice(0, 8);
   return `<h2>9. 철골 접합부</h2><p class="n">F10T 고력볼트 마찰접합(미끄럼계수 0.5, 표준구멍), 연결판 SM355, 용접봉 E49. 전단판은 탄성법으로 볼트군 편심을 고려하고, 강접은 플랜지력 Ff = Mu/(d−tf)로 기둥 플랜지 휨·웨브 항복·크리플링과 패널존 전단을 검토합니다.</p>${T(['지지 — 형식', '개수', 'NG', '최대 검토비'], Object.entries(by).map(([k, v]) => [esc(k), v.n, v.ng ? `<span class="ng">${v.ng}</span>` : '-', v.max.toFixed(3)]))}${top.map(j => `<h3>${j.level} ${esc(j.tag)} (${j.end ? '끝단' : '시작단'}) — ${esc(j.type)} 검토비 ${j.ratio.toFixed(3)}</h3>${T(['항목', '값', ''], j.rows.map(r => [esc(r[0]), esc(r[1]), typeof r[2] === 'number' ? r[2].toFixed(3) : '']))}`).join('')}`; })() : ''}
-<h2>${(C.J || []).length ? 10 : 9}. 한계</h2><p class="n">본 계산서는 모델 기반 약식 검토로, 등가정적 지진하중·약식 풍하중을 사용한 선형정적 해석입니다. 철골 보의 횡비틀림좌굴(슬래브 구속·모멘트도 기반 Lb·Cb)과 기둥 세장효과(층 안정지수 Q, ψ 기반 k, δns·δs / B1·B2)는 부재 검토에 반영했습니다. 철골 보 접합부(전단판·플랜지 용접·스티프너·패널존)를 자동 설계했으며, RC 매입 철판의 콘크리트 파괴와 철골 기둥 이음·주각은 포함하지 않습니다. 시공단계, 비선형 해석, 균열폭, 패턴 활하중은 포함하지 않습니다(슬래브는 별도 판 해석 화면). 배근 미입력 부재는 필요 철근량(가정 철근비) 기준이며, 최종 설계는 구조기술사의 검토가 필요합니다.</p>
+<h2>${(C.J || []).length ? 10 : 9}. 한계</h2><p class="n">본 계산서는 모델 기반 약식 검토로, 등가정적 지진하중·약식 풍하중을 사용한 선형정적 해석입니다. 철골 보의 횡비틀림좌굴(슬래브 구속·모멘트도 기반 Lb·Cb)과 기둥 세장효과(층 안정지수 Q, ψ 기반 k, δns·δs / B1·B2)는 부재 검토에 반영했습니다. 철골 보 접합부(전단판·플랜지 용접·스티프너·패널존)를 자동 설계했으며, RC 매입 철판의 콘크리트 파괴와 철골 기둥 이음·주각은 포함하지 않습니다. ${I.cs ? '' : '시공단계 해석은 15층·50 m 미만이라 적용하지 않았고, '}비선형 해석, 균열폭, 패턴 활하중, 시공 중 콘크리트 재령에 따른 강성 변화는 포함하지 않습니다(슬래브는 별도 판 해석 화면). 배근 미입력 부재는 필요 철근량(가정 철근비) 기준이며, 최종 설계는 구조기술사의 검토가 필요합니다.</p>
 </body></html>`;
     saveFile(`${P.name.replace(/[\\/:*?"<>|]/g, '_')}_구조계산서.html`, html);
   }

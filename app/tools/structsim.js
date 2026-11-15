@@ -1,7 +1,8 @@
 // 빌더 구조 — 거동 시뮬레이션 · 슬래브 판 해석 · 시공단계 기둥 축소량 화면 (struct.js 에서 api 로 호출)
 import * as THREE from 'three';
 import { h, toast, dialog, table, saveFile } from '../js/ui.js';
-import { settingsOf, USES } from '../js/structmodel.js';
+import { settingsOf, USES, constructionStages } from '../js/structmodel.js';
+import { stationForces } from '../js/fem.js';
 import { windField, caseField, groundMotion, timeHistory, longTermField, columnShortening, xiOf, ensureModes } from '../js/simcore.js';
 import { analyzeSlab } from '../js/plate.js';
 import { specOf, FIELDS as RB_FIELDS } from '../js/rebar.js';
@@ -189,5 +190,52 @@ export function shortUI(api) {
     side.append(row(h('button', { class: 'btn sm', onclick: async () => { const { writeBook } = await import('../js/excel.js'); saveFile(`${api.P.name.replace(/[\\/:*?"<>|]/g, '_')}_기둥축소량.xlsx`, await writeBook([{ name: '층별', rows: [['층', '기둥 준공(mm)', '기둥 장기(mm)', '코어 준공(mm)', '코어 장기(mm)', '부등(mm)'], ...B.map(b => [b.level, b.colTc, b.colTend, b.wallTc, b.wallTend, b.diff].map(v => typeof v === 'number' ? +v.toFixed(2) : v ?? ''))] }, { name: '부재별', rows: [['구분', '태그', 'X', 'Y', '층', '준공(mm)', '장기(mm)', '전체(mm)'], ...o.stacks.flatMap(s => s.floors.map(f => [s.kind === 'wall' ? '벽' : '기둥', s.tag, Math.round(s.x), Math.round(s.y), f.level, +f.Tc.toFixed(2), +f.Tend.toFixed(2), +f.total.toFixed(2)]))] }])); } }, 'Excel')));
   }
   render(); show();
+  return { leave() { } };
+}
+
+// =====================================================================
+// 시공단계 해석 — 일괄 재하 vs 순차 재하 비교
+export function csUI(api) {
+  const { side } = api; const res = api.C.res; const M = res.M, N = M.nodes; const st = api.csState ||= { out: null, show: 'cs' };
+  const anim = api.anim.build();
+  function compute() {
+    const t = performance.now(); let D0, D1, stages, applied = !!res.info.cs;
+    if (applied) { D0 = res.R.cases.D0; D1 = res.R.cases.D; stages = res.info.cs.stages; }
+    else { const cs = constructionStages(M, res.model, {}); if (!cs) { toast('층이 2개 이상이어야 시공단계 해석을 할 수 있습니다', 'err'); return; } D0 = res.R.cases.D; D1 = cs.case; stages = cs.stages; }
+    const byz = new Map(); N.forEach((n, i) => { if (!n.used || !n.vert) return; const a = byz.get(n.z) || { a: 0, b: 0 }; a.a = Math.min(a.a, D0.disp[i * 6 + 2]); a.b = Math.min(a.b, D1.disp[i * 6 + 2]); byz.set(n.z, a); });
+    const zs = [...byz.keys()].sort((a, b) => a - b);
+    const beams = [], verts = [];
+    M.members.forEach((m, mi) => {
+      const s0 = m.segs[0], s1 = m.segs[m.segs.length - 1];
+      if (m.kind === 'beam') { for (const [ei, xi, end] of [[s0, 0, '시작'], [s1, 1, '끝']]) { const a = stationForces(res.R, D0, ei, [xi])[0].My, b = stationForces(res.R, D1, ei, [xi])[0].My; beams.push({ mi, m, end, a, b, d: b - a }); } }
+      else { const a = -stationForces(res.R, D0, s0, [0])[0].N, b = -stationForces(res.R, D1, s0, [0])[0].N; verts.push({ mi, m, a, b, d: b - a, r: a ? (b - a) / Math.abs(a) : 0 }); }
+    });
+    beams.sort((p, q) => Math.abs(q.d) - Math.abs(p.d)); verts.sort((p, q) => Math.abs(q.r) - Math.abs(p.r));
+    st.out = { D0, D1, stages, applied, zs, byz, beams, verts, ms: performance.now() - t }; render(); show();
+  }
+  function show() {
+    const o = st.out; if (!o) { anim.update(null); api.markDirty(); return; } const d = st.show === 'cs' ? o.D1.disp : o.D0.disp; const f = new Float64Array(N.length * 3); let mx = 0;
+    for (let i = 0; i < N.length; i++) { f[i * 3] = d[i * 6]; f[i * 3 + 1] = d[i * 6 + 1]; f[i * 3 + 2] = d[i * 6 + 2]; mx = Math.max(mx, Math.hypot(d[i * 6], d[i * 6 + 1], d[i * 6 + 2])); }
+    let ref = 0; for (let i = 0; i < N.length; i++) if (N[i].vert) ref = Math.max(ref, Math.abs(o.D0.disp[i * 6 + 2]), Math.abs(o.D1.disp[i * 6 + 2]));
+    anim.update(f, anim.size * 1000 * 0.08 / (ref || 1), ref); api.markDirty();
+  }
+  const tag = (m) => `${m.r.level.name} ${m.el.tag || ''}`.trim();
+  function render() {
+    side.innerHTML = ''; const cs = res.info.cs;
+    side.append(h('div', { class: 'note', style: { marginBottom: '8px', lineHeight: 1.6 } }, '층 순서대로 골조를 세우고 각 층 고정하중을 그때까지 지어진 부분 구조에만 재하합니다. 새 층은 처진 하부 위에 설계 레벨로 설치된다고 보므로(레벨 보정) 상층 연직변위가 줄고, 기둥·코어의 부등 축소에 따른 보 모멘트 재분배가 일괄 재하와 달라집니다.'),
+      h('div', { class: 'card', style: { marginBottom: '8px' } }, h('div', { class: 'd' }, '설계 반영'), h('div', { style: { fontSize: '12.5px', marginTop: '4px' } }, cs ? `적용 — 고정하중 D를 ${cs.G}단계 순차 재하 결과로 검토 (툴 산정: 15층 또는 50 m 이상)` : '미적용 — 저층이라 일괄 재하로 검토합니다. 아래 비교는 참고용입니다.')));
+    if (!st.out) { side.append(row(h('button', { class: 'btn primary sm', onclick: () => { side.append(h('div', { class: 'note' }, '계산 중…')); setTimeout(compute, 20); } }, cs ? '비교 보기' : '시공단계 비교 계산'))); return; }
+    const o = st.out; const pct = (v) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}%`;
+    side.append(row(h('select', { onchange: e => { st.show = e.target.value; show(); } }, [['cs', '시공단계 (순차 재하) 변형'], ['all', '일괄 재하 변형']].map(([k, l]) => h('option', { value: k, selected: k === st.show }, l))), h('span', { class: 'note' }, `${o.stages.length}단계 · ${(o.stages.reduce((a, x) => a + x.ms, 0) / 1000).toFixed(1)}초`)));
+    const zmax = o.zs[o.zs.length - 1] || 1, z0 = o.zs[0];
+    side.append(sec('층별 기둥·벽 최대 연직변위 (mm, 고정하중)'), profile(o.zs.map(z => ({ y: (z - z0) / (zmax - z0 || 1), vals: [{ v: -o.byz.get(z).a, color: '#8a94a6' }, { v: -o.byz.get(z).b, color: '#ff9f1c' }] })), { label: '— 회색: 일괄 재하 · 주황: 시공단계', unit: ' mm' }));
+    const top = o.byz.get(zmax); const peak = Math.max(...o.zs.map(z => -o.byz.get(z).b)); const zp = o.zs.find(z => -o.byz.get(z).b === peak);
+    side.append(h('div', { class: 'note' }, `최상층 ${(-top.a).toFixed(1)} → ${(-top.b).toFixed(1)} mm · 시공단계 최대 ${peak.toFixed(1)} mm (높이 ${(zp / 1000).toFixed(1)} m)`));
+    side.append(sec('보 단부 고정하중 모멘트 변화 (상위 15)'), h('div', { class: 'tbl' }, table([{ label: '보', render: b => tag(b.m) }, { label: '단부', key: 'end' }, { label: '일괄 kN·m', num: true, render: b => (b.a / 1e6).toFixed(1) }, { label: '시공단계', num: true, render: b => (b.b / 1e6).toFixed(1) }, { label: '변화', num: true, render: b => h('span', { style: { color: Math.abs(b.d) > 0.2 * Math.abs(b.a) ? '#ff9f1c' : '' } }, (b.d / 1e6).toFixed(1)) }], o.beams.slice(0, 15), { onRow: b => api.select?.(b.mi) })));
+    side.append(sec('기둥·벽 하단 고정하중 축력 변화 (상위 10)'), h('div', { class: 'tbl' }, table([{ label: '부재', render: v => tag(v.m) }, { label: '종류', render: v => v.m.kind === 'wall' ? '벽' : '기둥' }, { label: '일괄 kN', num: true, render: v => (v.a / 1e3).toFixed(0) }, { label: '시공단계', num: true, render: v => (v.b / 1e3).toFixed(0) }, { label: '변화', num: true, render: v => pct(v.r) }], o.verts.slice(0, 10))));
+    side.append(sec('시공 단계'), h('div', { class: 'tbl' }, table([{ label: '단계', render: x => x.s + 1 }, { label: '층 높이 (m)', render: x => `${(x.z0 / 1000).toFixed(1)} ~ ${(x.z1 / 1000).toFixed(1)}` }, { label: '요소', num: true, key: 'nEl' }, { label: '자유도', num: true, key: 'dof' }, { label: '불안정', num: true, render: x => x.weak || '-' }], o.stages)));
+    side.append(row(h('button', { class: 'btn sm', onclick: async () => { const { writeBook } = await import('../js/excel.js'); saveFile(`${api.P.name.replace(/[\\/:*?"<>|]/g, '_')}_시공단계.xlsx`, await writeBook([{ name: '층별 연직변위', rows: [['높이(m)', '일괄 재하(mm)', '시공단계(mm)'], ...o.zs.map(z => [+(z / 1000).toFixed(2), +o.byz.get(z).a.toFixed(2), +o.byz.get(z).b.toFixed(2)])] }, { name: '보 단부 모멘트', rows: [['층', '보', '단부', '일괄(kN·m)', '시공단계(kN·m)', '변화(kN·m)'], ...o.beams.map(b => [b.m.r.level.name, b.m.el.tag || '', b.end, +(b.a / 1e6).toFixed(2), +(b.b / 1e6).toFixed(2), +(b.d / 1e6).toFixed(2)])] }, { name: '기둥·벽 축력', rows: [['층', '부재', '종류', '일괄(kN)', '시공단계(kN)', '변화(%)'], ...o.verts.map(v => [v.m.r.level.name, v.m.el.tag || '', v.m.kind === 'wall' ? '벽' : '기둥', +(v.a / 1e3).toFixed(1), +(v.b / 1e3).toFixed(1), +(v.r * 100).toFixed(2)])] }])); } }, 'Excel')));
+  }
+  render(); if (st.out) show(); else if (res.info.cs) compute();
   return { leave() { } };
 }
