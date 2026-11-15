@@ -13,6 +13,10 @@
 
 ## 대기
 
+(없음)
+
+## 처리됨
+
 ### [field] 말뚝 객체(pile) 신설과 공법·부지 계획 데이터 등록 — 2026-11-15
 - 변경:
   1. `js/model.js` KINDS에 `pile`(공종 S, geom point) 추가 — 속성 `D`(직경 mm), `L`(길이 mm), `type`(PHC·RCD·PRD), `cap`(연결 기초 id). `elBoxes`는 기초 하단(E − 기초 두께)에서 아래로 L만큼 원형 근사 박스, `qtyOf`는 본수·길이(m) 코드 `PIL`. 말뚝 배치는 field의 `planBasis(P,cond).found.piles`(위치·연결 기초)를 struct/cad가 객체로 만들 때 쓰면 됩니다.
@@ -23,9 +27,10 @@
   - view3d: 4D 재생 때 `P.sched.site.items`(단계 phase별)와 흙막이 선(`planBasis().fpb` + 1 m) 표시, pile 객체 3D 표시
   - csim: `P.sched.method`(공법)로 작업 순서(역타 하향 굴착·지상 동시 시공), `planBasis().found`로 말뚝 작업, `P.sched.site`로 크레인·하역 위치를 반영
   - struct: 선시공 기둥 축력(탑다운 지상 동시 시공 한도 `upLimit`)과 말뚝 지지력 검토 연계
-
-
-## 처리됨
+- **처리 (Core 1.6.0, csim v4)**:
+  - core: `pile` KIND·elName·elBoxes(원형 등가)·qtyOf(PIL)·DEFAULT_BOQ PIL, CORE.md 5장 sched 키·6장 field 공개 함수 등록
+  - csim: `planBasis`로 공법(bu·td·std·uu)·흙막이 형식·말뚝(본수·길이·장비·기간) 반영. 역타는 1층 바닥 → 하향 굴착 → 지하 슬래브 → 역타 벽체 → 최하층 기초 순, 탑다운은 1층 바닥 후 지상 동시, 세미탑다운·업업은 기초 후 지상 착수. 말뚝 3D 표시. 시뮬레이션에서 공법을 따로 지정 가능(P.csim.method)
+  - 남음: view3d(4D에 site.items·흙막이 선·pile 표시), struct(선시공 기둥 축력·말뚝 지지력), csim의 크레인·하역 위치 반영(P.sched.site) — 각 트랙에서 진행
 
 ### [interior] 실 마감 물량을 내역(BOQ)에 연동 — 2026-11-15
 - 변경: `js/model.js` DEFAULT_BOQ에 코드 추가 — `FLR 바닥 마감 m²`, `WLF 벽 마감 m²`, `BSE 걸레받이 m`. `takeoff(P)`가 실(room)별로 `tools/interior.js`의 `roomFinishes(P)` 결과(`q.floor·q.wall·q.base`, 마감명 `fin.*`)를 물량 행으로 추가. 천장은 ceiling 객체가 이미 CLG로 들어가므로 제외.

@@ -36,6 +36,8 @@ export const KINDS = {
   light:   { name: '조명기구', disc: 'I', geom: 'point', def: { type: 'LED 평판', w: 600, d: 600, hh: 50, z: 2700, watt: 40, lm: 4400, circuit: '' } },
   ceiling: { name: '천장', disc: 'I', geom: 'poly', def: { z: 2700, t: 20, fin: '석고보드+도장' } },
   room:    { name: '실', disc: 'I', geom: 'poly', def: { name: '실', use: '사무실', lux: 500, h: 2700 } },
+  // Core 1.6.0 — 말뚝 (field 요청)
+  pile:    { name: '말뚝', disc: 'S', geom: 'point', def: { D: 500, L: 15000, type: 'PHC', z0: -1000, cap: null } },
 };
 export const MATS = {
   RC: { name: '철근콘크리트', color: '#b9b9b4' },
@@ -92,9 +94,10 @@ export const DEFAULT_BOQ = [
   { code: 'BSE', name: '걸레받이', unit: 'm', price: 15000 },
   { code: 'LTR', name: '교목 식재', unit: '주', price: 280000 },
   { code: 'LSH', name: '관목 식재', unit: '주', price: 5000 },
+  { code: 'PIL', name: '말뚝 시공(PHC·현장타설)', unit: 'm', price: 95000 },
 ];
 // 1.3.0에서 추가된 내역 코드 — 기존 프로젝트의 P.boq에 없으면 migrate가 채움
-export const BOQ_ADDED = ['FLR', 'WLF', 'BSE', 'LTR', 'LSH'];
+export const BOQ_ADDED = ['FLR', 'WLF', 'BSE', 'LTR', 'LSH', 'PIL'];
 
 export function newProject(name = '새 프로젝트') {
   const L1 = { id: 'L1', name: '1F', elev: 0, height: 4000 };
@@ -141,6 +144,7 @@ export function elName(el) {
   if (el.k === 'ceiling') return `천장 ${el.fin || ''}`;
   if (el.k === 'room') return `실 ${el.name || ''}${el.use ? ` (${el.use})` : ''}`;
   const k = KINDS[el.k]?.name || el.k;
+  if (el.k === 'pile') return `말뚝 ${el.type || ''} φ${el.D} L${(el.L / 1000).toFixed(1)}m`;
   if (el.k === 'opening') return (el.kind === 'window' ? '창' : '문') + ` ${el.w}×${el.h}`;
   if (el.sec) return `${k} ${el.sec}`;
   if (el.k === 'wall') return `${k} ${MATS[el.mat]?.name || el.mat} ${el.t}`;
@@ -181,6 +185,7 @@ export function elBoxes(el, lv, hostLookup) {
       return [{ cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, hl: (x1 - x0) / 2, hw: (y1 - y0) / 2, ang: 0, z0: top - el.t, z1: top, poly: el.pts }];
     }
     case 'footing': return [{ cx: el.p[0], cy: el.p[1], hl: el.w / 2, hw: el.d / 2, ang: 0, z0: E - el.t, z1: E }];
+    case 'pile': { const top = E + (el.z0 ?? -1000); const r = (el.D || 500) * 0.886 / 2; return [{ cx: el.p[0], cy: el.p[1], hl: r, hw: r, ang: 0, z0: top - (el.L || 15000), z1: top }]; } // 원 단면 등가 정사각(√π/2)
     case 'riser': return [{ cx: el.p[0], cy: el.p[1], hl: el.w / 2, hw: (el.form === 'pipe' ? el.w : el.hh) / 2, ang: 0, z0: E, z1: E + H }];
     case 'fin': return [{ cx: el.p[0], cy: el.p[1], hl: el.d / 2, hw: el.w / 2, ang: (el.rot || 0) * Math.PI / 180, z0: E + (el.z0 || 0), z1: E + (el.h ?? H) }];
     case 'furn': return [{ cx: el.p[0], cy: el.p[1], hl: el.w / 2, hw: el.d / 2, ang: (el.rot || 0) * Math.PI / 180, z0: E + (el.z0 || 0), z1: E + (el.z0 || 0) + el.h }];
@@ -260,6 +265,7 @@ export function qtyOf(el, lv, ctx = {}) {
       push('CON', V, `${A.toFixed(2)}m²×${t}m`); push('FRM', A + P * t, '저면+측면'); rbr('slab', V);
       break;
     }
+    case 'pile': push('PIL', (el.L || 0) / 1000, `${el.type || ''} φ${el.D} 1본`); break;
     case 'footing': { const V = el.w * el.d * el.t * 1e-9; push('CON', V); push('FRM', 2 * (el.w + el.d) * el.t * 1e-6, '측면'); rbr('footing', V); break; }
     case 'opening': { if (el.kind === 'window') push('WIN', el.w * el.h * 1e-6, `${el.w}×${el.h}`); else push('DOR', 1, `${el.w}×${el.h}`); break; }
     case 'duct': push('DCT', dist(el.a, el.b) * m, `${el.w}×${el.hh}`); break;

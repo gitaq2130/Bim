@@ -1,4 +1,4 @@
-# 빌더 코어 규격 (Core v1.5.0)
+# 빌더 코어 규격 (Core v1.6.0)
 
 모든 툴이 공유하는 계약입니다. **이 문서와 코어 파일은 허브·코어 트랙만 수정합니다.**
 툴 트랙은 이 규격을 읽기만 하고, 바꿔야 하면 아래 "코어 변경 요청" 절차를 따릅니다.
@@ -86,7 +86,7 @@ export function mount(root, ctx) {
 | `boq, takeoffs, rebarSchedule, changeOrders` | 내역·물량·배근표·설계변경 | cost |
 | `bill {periods[]}` | 기성 회차 | cost |
 | `clash {status,tol,clearance}`, `check {status}` | 간섭·정합 결과 상태 | review |
-| `sched {acts[],start}`, `photos[]`, `daily` | 공정·현장사진·일보 | field |
+| `sched {acts[],start, method, cond{bear,road,adj,fast,method}, site{items[],notes[]}}`, `photos[]`, `daily` | 공정(공법 bu·td·std·uu, 공법 조건, 부지 동선 배치 — 1.6.0 등록)·현장사진·일보 | field |
 | `mep {systems[], calc{}}` | MEP 계통 정의·계산 결과 (덕트 사이즈·전기 부하·헤드 배치) | mep |
 | `interior {finishes{}, lighting{uf,mf}}` | 마감 기준·조명 계산 조건 | interior |
 | `issues[]`, `code` | 이슈·RFI, 법규 검토 | admin |
@@ -111,9 +111,11 @@ export function mount(root, ctx) {
 | light (1.1.0) | I | point | interior | `watt, lm, z, circuit` — mep가 watt를 읽어 전기 부하 계산 |
 | ceiling (1.1.0) | I | poly | interior | `z, t, fin` |
 | room (1.1.0) | I | poly | interior | `name, use, lux, h` — 공간 정의라 3D 박스·간섭 대상 아님 |
+| pile (1.6.0) | S | point | struct·cad (field `planBasis().found.piles` 기준) | `D, L, type(PHC·RCD·PRD), z0(두부 높이, 레벨 기준), cap(기초 id)` — 3D 원형 등가 박스, 물량 PIL(m) |
 | furn | A | point | interior | 조경 툴이 L 시트에 `tree`·`shrub`(`landscape:true, sp, cnt`)을 배치 → 물량 LTR·LSH(1.3.0) |
 
 - 공종(`DISC`): A 건축, S 구조, M 기계, E 전기, P 배관(위생), F 소방(1.1.0), I 인테리어(1.1.0), C 토목(1.2.0), L 조경(1.2.0). 재질은 `MATS`.
+- 내역 코드 1.6.0 추가: PIL 말뚝 시공(m).
 - 내역 코드(`DEFAULT_BOQ`) 1.3.0 추가: FLR 바닥 마감, WLF 벽 마감, BSE 걸레받이, LTR 교목 식재, LSH 관목 식재 (`BOQ_ADDED` → migrate가 기존 P.boq에 보충)
 - 1.1.0 객체는 `elBoxes`·`elOutline`·`elName`·`qtyOf`(SPK·PNL·LGT·CLG 내역 코드)를 지원합니다. 따라서 물량·간섭에는 자동으로 포함됩니다. 작도 2D 표시와 3D 표시는 각각 cad·view3d 트랙의 후속 작업입니다.
 - 객체 종류·기본 속성 추가는 코어 변경입니다.
@@ -136,7 +138,7 @@ export function mount(root, ctx) {
 ### 툴 간 공개 함수 (바꾸면 사용하는 트랙에 영향)
 | 제공 | 함수 | 사용처 |
 |---|---|---|
-| field `tools/sched.js` | `autoGenerate(P, start)` 등 | core(샘플 생성), view3d(4D), daily |
+| field `tools/sched.js` | `autoGenerate(P, start[, plan])`, `planBasis(P, cond)`, `autoLayout(P, plan)`, `siteChecks`, `craneReach`, `LOGI`, `METHODS`, `PHASES` | core(샘플 생성), view3d(4D), daily, csim(공법·흙막이·말뚝) |
 | field `tools/site.js` | 사진·위치 함수 | daily |
 | cad `tools/cad-geom.js` | 기하 함수 | site |
 | view3d `tools/render3d.js` | 렌더러 | interior(furn3d) |

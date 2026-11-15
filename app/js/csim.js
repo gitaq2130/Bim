@@ -3,6 +3,7 @@
 // 달력(휴일·우천·기온)·실적(역순 시공 보완)·지연 상황을 반영해 다시 계산한다. 단위: 날짜 = 착공일 기준 일 번호(정수).
 import { allElements, takeoff, isRefElement, KINDS, elBoxes } from './model.js';
 import { polyArea } from './util.js';
+import { planBasis, METHODS } from '../tools/sched.js'; // field 공개 함수 — 공법·흙막이·말뚝 산정
 
 const DAY = 86400000;
 export const toD = (s) => Math.floor(new Date(s + 'T00:00:00Z').getTime() / DAY);
@@ -106,14 +107,26 @@ export function buildTasks(P) {
   // 0. 착공·가설
   const t0 = add({ id: 'pre.mob', name: '착공·현장 개설 (가설울타리·가설사무소·가설전기/용수)', ph: '가설', trade: '가설', code: 'TMP', dur: 10, men: 8, out: true, check: ['착공계·안전관리계획서 승인', '가설울타리·출입 게이트', '세륜시설', '가설 전기·용수 인입'], temp: 'fence' });
   const tSurvey = add({ id: 'pre.survey', name: '측량·규준틀·지장물 확인', ph: '가설', trade: '공무', dur: 3, men: 4, out: true, check: ['기준점 인수', '경계 측량', '지장물(매설관) 확인'] }); dep(tSurvey, t0, 0);
-  // 1. 토공·흙막이·기초
+  // 1. 토공·흙막이·말뚝·기초 — 공법은 공정 툴(field)의 planBasis/P.sched.method를 따른다
+  let PB = null; const mWant = C.method || P.sched?.method || P.sched?.cond?.method || ''; try { PB = planBasis(P, { ...(P.sched?.cond || {}), method: mWant }); } catch (e) { console.warn('planBasis 실패', e); }
+  const gi = Math.max(0, lv.findIndex(l => l.elev >= 0)); const nB = gi;
+  let method = PB?.method || mWant || 'bu'; if (!nB && method !== 'bu') method = 'bu';
+  const TD = method === 'td' || method === 'std', UU = method === 'uu';
   const L0 = lv[0]; const basement = L0.elev < 0; const lo = Math.min(0, ...lv.map(l => l.elev));
   const fp = (slabsBy.get(L0.id) || [])[0]; const fpA = area[0] || maxA; const exDepth = basement ? -lo / 1000 + 1.5 : 1.5;
   const excV = (P.civil?.last ? P.civil.last.cut : 0) + fpA * exDepth * 1.15;
   let prev = tSurvey;
-  if (basement || exDepth > 3) { const tSh = add({ id: 'ew.shore', name: '흙막이 (CIP·H-pile·토류판) 시공', ph: '토공', trade: '토공', dur: Math.ceil(Math.sqrt(fpA) * 4 / 12), men: 10, out: true, check: ['흙막이 계측기 설치', '인접 건물 사전 조사'], temp: 'retain' }); dep(tSh, prev); prev = tSh; }
-  const tEx = add({ id: 'ew.exc', name: `터파기 (${Math.round(excV).toLocaleString()} m³) · 잔토 반출`, ph: '토공', trade: '토공', dur: Math.max(2, Math.ceil(excV / 400)), men: 4, out: true, equip: ['굴착기 0.7m³', '덤프'], check: ['굴착 깊이·경사', '지하수·배수', '터파기 바닥 지내력 확인(평판재하)'], temp: 'exc' }); dep(tEx, prev);
-  const tLean = add({ id: 'ew.lean', name: '잡석 다짐·버림 콘크리트·방습층', ph: '토공', trade: '타설', dur: Math.max(1, Math.ceil(fpA / 400)), men: 6, out: true, check: ['다짐도', '버림 레벨'] }); dep(tLean, tEx);
+  const shoreT = PB?.shore?.type && PB.shore.type !== '없음' ? PB.shore.type : (basement || exDepth > 3 ? 'CIP·H-pile·토류판' : null);
+  if (shoreT) { const tSh = add({ id: 'ew.shore', name: `흙막이 (${shoreT}) 시공${PB?.shore?.support ? ` · 지보 ${PB.shore.support}` : ''}`, ph: '토공', trade: '토공', dur: PB?.shore?.dur || Math.ceil(Math.sqrt(fpA) * 4 / 12), men: 10, out: true, check: ['흙막이 계측기 설치', '인접 건물 사전 조사', PB?.shore?.why].filter(Boolean), temp: 'retain' }); dep(tSh, prev); prev = tSh; }
+  // 말뚝 (planBasis.found): 역타·업업은 선시공 기둥(PRD)을 굴착 전에, 순타는 터파기 후
+  const FD = PB?.found; const nPile = FD?.total || 0; let tPile = null;
+  const pileTask = () => { tPile = add({ id: 'ew.pile', name: `${(TD || UU) ? '선시공 기둥·현장타설말뚝 (PRD/RCD)' : FD.type} ${nPile}본 × ${FD.L} m${FD.rigs ? ` · 장비 ${FD.rigs}대` : ''}`, ph: '말뚝', trade: '토공', code: 'PIL', qty: nPile * (FD.L || 0), dur: FD.dur || Math.max(2, Math.ceil(nPile / 12)), men: 6 * (FD.rigs || 1), out: true, equip: [FD.D >= 1000 ? 'RCD 천공기' : '항타기(오거)'], check: ['말뚝 위치 측량', '시항타·동재하 시험', '관입량·리바운드 기록', '두부 정리 레벨', FD.why].filter(Boolean), temp: 'pile' }); return tPile; };
+  if (nPile && (TD || UU)) { dep(pileTask(), prev); prev = tPile; }
+  if (TD) { // 역타: 1층 바닥 하부만 얕게 굴착 → 1층 바닥 → 지하로 내려가며 굴착·슬래브
+    const t = add({ id: 'ew.exc', name: '1층 바닥 하부 굴착·버림 (역타 작업 공간)', ph: '토공', trade: '토공', dur: Math.max(2, Math.ceil(fpA * 1.5 / 400)), men: 4, out: true, equip: ['굴착기 0.7m³', '덤프'], check: ['굴착 깊이', '선시공 기둥 수직도 확인'] }); dep(t, prev); prev = t; }
+  const tEx = TD ? byId.get('ew.exc') : add({ id: 'ew.exc', name: `터파기 (${Math.round(excV).toLocaleString()} m³) · 잔토 반출`, ph: '토공', trade: '토공', dur: Math.max(2, Math.ceil(excV / 400)), men: 4, out: true, equip: ['굴착기 0.7m³', '덤프'], check: ['굴착 깊이·경사', '지하수·배수', '터파기 바닥 지내력 확인(평판재하)'], temp: 'exc' }); if (!TD) dep(tEx, prev);
+  let afterEx = tEx; if (nPile && !TD && !UU) { dep(pileTask(), tEx); const hd = add({ id: 'ew.pilehead', name: `말뚝 두부 정리·재하 시험 (${nPile}본)`, ph: '말뚝', trade: '토공', dur: Math.max(1, Math.ceil(nPile / 40)), men: 4, out: true, check: ['두부 절단 레벨', '정재하 시험'] }); dep(hd, tPile); afterEx = hd; }
+  const tLean = add({ id: 'ew.lean', name: '잡석 다짐·버림 콘크리트·방습층', ph: '토공', trade: '타설', dur: Math.max(1, Math.ceil(fpA / 400)), men: 6, out: true, check: ['다짐도', '버림 레벨'] }); if (!TD) dep(tLean, afterEx);
   // 기초: footing + 최하층 슬래브(기초 매트/지중보/바닥)
   const fEls = all.filter(r => r.el.k === 'footing' || (r.el.k === 'slab' && r.level.id === L0.id));
   const fRB = qOf(fEls, 'RBR'), fFR = qOf(fEls, 'FRM'), fCO = qOf(fEls, 'CON'); const fc = crewsFor(fpA);
@@ -132,8 +145,33 @@ export function buildTasks(P) {
   // 2. 골조 사이클 (층 i: 수직부재 i + 수평부재 = 층 i 보 + 층 i+1 슬래브)
   const sPour = []; // [i][z] 타설 작업
   const sForm = [];
+  // 2-0. 역타(탑다운·세미탑다운) 지하: 1층 바닥 → 굴착하며 아래층 슬래브 → 역타 벽체 → 최하층 기초
+  let sGround = null;
+  if (TD) {
+    const G0 = lv[gi]; const gHor = all.filter(r => (r.level.id === G0.id && r.el.k === 'slab') || (r.level.id === lv[gi - 1].id && r.el.k === 'beam'));
+    const slabSeq = (key, nm, els, after, lvId) => { const b = { lv: lvId, ph: '지하(역타)', out: true };
+      const f = add({ ...b, id: `td.form.${key}`, name: `${nm} 바닥 거푸집 (지반 거푸집·버림)`, trade: '형틀', code: 'FRM', ...plan('FRM', qOf(els, 'FRM'), 3), els: elIds(els), st: 'form', check: ['선시공 기둥 접합부(전단 연결)', '개구부(굴착·반출구) 위치'] }); dep(f, after);
+      const r = add({ ...b, id: `td.rebar.${key}`, name: `${nm} 바닥 철근 배근`, trade: '철근', code: 'RBR', ...plan('RBR', qOf(els, 'RBR'), 2), els: elIds(els), st: 'rebar', check: CK.srebar }); dep(r, f);
+      const e = add({ ...b, id: `td.embed.${key}`, name: `${nm} 바닥 매립 (전선관·슬리브·접지)`, trade: '전기', dur: 1, men: 4, els: elIds(els), st: 'embed', check: CK.sembed }); dep(e, r, -1);
+      const pr = add({ ...b, id: `td.pour.${key}`, name: `${nm} 바닥 타설 (${Math.round(qOf(els, 'CON'))} m³)`, trade: '타설', code: 'CON', qty: qOf(els, 'CON'), dur: durQ('CON', qOf(els, 'CON')), men: 10, els: elIds(els), st: 'poured', pour: true, equip: ['펌프카', '레미콘'], check: CK.pourck }); dep(pr, r); dep(pr, e);
+      const c = add({ ...b, id: `td.cure.${key}`, name: `${nm} 바닥 양생`, trade: '타설', dur: 5, cal: true, curing: true, els: elIds(els), st: 'curing', check: CK.cure }); dep(c, pr); return [pr, c]; };
+    const [gp, gc] = slabSeq(G0.id, `${G0.name}`, gHor, tEx, G0.id); sGround = gp;
+    let up = gc;
+    for (let b = gi - 1; b >= 0; b--) {
+      const L = lv[b]; const hgt = (lv[b + 1].elev - L.elev) / 1000; const v = fpA * hgt * 1.05;
+      const ex = add({ id: `td.exc.${L.id}`, lv: L.id, name: `${L.name} 하향 굴착 (${Math.round(v).toLocaleString()} m³, 슬래브 개구부로 반출)`, ph: '지하(역타)', trade: '토공', dur: Math.max(3, Math.ceil(v / 250)), men: 6, out: true, equip: ['소형 굴착기', '크람쉘', '덤프'], check: ['상부 슬래브 강도 확인', '환기·조명', '계측(흙막이 변위)'], temp: 'exc' }); dep(ex, up);
+      const vEls = all.filter(r => r.level.id === L.id && (r.el.k === 'column' || (r.el.k === 'wall' && isRC(r.el))));
+      let vp = ex; if (vEls.length) { const b0 = { lv: L.id, ph: '지하(역타)' };
+        const vr = add({ ...b0, id: `td.vrebar.${L.id}`, name: `${L.name} 역타 벽체·기둥 철근`, trade: '철근', code: 'RBR', ...plan('RBR', qOf(vEls, 'RBR'), 3), els: elIds(vEls), st: 'rebar', check: [...CK.vrebar, '상부 슬래브 다월바 연결'] }); dep(vr, ex);
+        const ve = add({ ...b0, id: `td.vembed.${L.id}`, name: `${L.name} 역타 벽체 매립 (전선관·접지·슬리브)`, trade: '전기', dur: 1, men: 4, els: elIds(vEls), st: 'embed', check: CK.embed }); dep(ve, vr, -1);
+        const vf = add({ ...b0, id: `td.vform.${L.id}`, name: `${L.name} 역타 벽체 거푸집`, trade: '형틀', code: 'FRM', ...plan('FRM', qOf(vEls, 'FRM'), 3), els: elIds(vEls), st: 'form', check: CK.vform }); dep(vf, ve);
+        vp = add({ ...b0, id: `td.vpour.${L.id}`, name: `${L.name} 역타 벽체 타설·상부 이음부 그라우팅`, trade: '타설', code: 'CON', qty: qOf(vEls, 'CON'), dur: durQ('CON', qOf(vEls, 'CON')), men: 8, els: elIds(vEls), st: 'poured', pour: true, equip: ['펌프카'], check: [...CK.pourck, '역타 이음부(상부 슬래브 하단) 무수축 그라우팅'] }); dep(vp, vf); }
+      if (b > 0) { const sEls = all.filter(r => (r.level.id === L.id && r.el.k === 'slab') || (r.level.id === lv[b - 1].id && r.el.k === 'beam')); if (sEls.length) { const [sp, sc] = slabSeq(L.id, L.name, sEls, ex, L.id); up = sc; sPour[b] = [vp !== ex ? vp : sp]; dep(sp, ex); continue; } }
+      sPour[b] = [vp]; up = vp; if (b === 0) dep(tLean, ex);
+    }
+  }
   let prevVert = null;
-  for (let i = 0; i < n; i++) {
+  for (let i = TD ? gi : 0; i < n; i++) {
     const L = lv[i], up = lv[i + 1]; const top = !up; sPour[i] = []; sForm[i] = [];
     const vert = all.filter(r => r.level.id === L.id && ((r.el.k === 'column') || (r.el.k === 'wall' && isRC(r.el) && (r.sheet.disc === 'S' || r.el.mat === 'RC'))));
     const hor = all.filter(r => (r.level.id === L.id && r.el.k === 'beam') || (up && r.level.id === up.id && r.el.k === 'slab'));
@@ -144,7 +182,7 @@ export function buildTasks(P) {
     for (let z = 0; z < Z; z++) {
       const V = vert.filter(r => inZone(r, z)), Hh = hor.filter(r => inZone(r, z)); for (const r of [...V, ...Hh]) if (span(r.el)) share.set(r.el.id, 1 / Z); if (!V.length && !Hh.length) continue;
       const tag = `${L.name}${ZN(z)}`; const key = `${L.id}.${z}`; const base = { lv: L.id, zone: z, ph: parapet ? '옥상' : '골조', out: true };
-      const below = i > 0 ? (sPour[i - 1][z] || sPour[i - 1].find(Boolean)) : tFs;
+      const below = (i === gi && nB && method === 'td') ? sGround : (i === gi && nB && (method === 'std' || UU)) ? tFs : i > 0 ? (sPour[i - 1]?.[z] || sPour[i - 1]?.find(Boolean) || tFs) : tFs;
       if (parapet) { // 옥상 파라펫 → 방수 → 후레싱·두겁석
         const r1 = add({ ...base, id: `rf.rebar.${key}`, name: `${tag} 파라펫 철근 배근 + 피뢰 파라펫링 결속`, trade: '철근', code: 'RBR', ...plan('RBR', qOf(V, 'RBR'), 2), els: elIds(V), st: 'rebar', check: CK.parapet }); dep(r1, below, 1);
         const r1e = add({ ...base, id: `rf.ground.${key}`, name: `${tag} 피뢰 도체·인하도선 연결 확인`, trade: '전기', dur: 1, men: 2, els: elIds(V), st: 'embed', check: CK.parapet }); dep(r1e, r1);
@@ -155,7 +193,7 @@ export function buildTasks(P) {
         sPour[i][z] = r3; continue;
       }
       let last = below;
-      const tLay = add({ ...base, id: `st.lay.${key}`, name: `${tag} 먹매김`, trade: '형틀', dur: 1, men: 3, check: CK.layout }); dep(tLay, last, 0); if (z > 0) dep(tLay, byId.get(`st.lay.${L.id}.${z - 1}`)); else if (i > 0) { const pl = [...Array(Z).keys()].reverse().map(k => byId.get(`st.lay.${lv[i - 1].id}.${k}`)).find(Boolean); if (pl) dep(tLay, pl, 2); } last = tLay;
+      const tLay = add({ ...base, id: `st.lay.${key}`, name: `${tag} 먹매김`, trade: '형틀', dur: 1, men: 3, check: CK.layout }); dep(tLay, last, 0); if (z > 0) dep(tLay, byId.get(`st.lay.${L.id}.${z - 1}`)); else if (i > 0 && !(i === gi && nB && method !== 'bu')) { const pl = [...Array(Z).keys()].reverse().map(k => byId.get(`st.lay.${lv[i - 1].id}.${k}`)).find(Boolean); if (pl) dep(tLay, pl, 2); } last = tLay;
       let vDone = tLay;
       if (V.length) {
         const vs = V.filter(r => r.el.mat === 'STEEL' || r.el.mat === 'SRC');
@@ -207,7 +245,7 @@ export function buildTasks(P) {
 
   // 3. 외부 비계 (층별 설치 → 외장 후 해체)
   const scafUp = [], scafDn = [];
-  for (let i = 0; i < n; i++) { const p = (sPour[i] || []).find(Boolean); if (!p) continue; const hi = n > 15; const t = add({ lv: lv[i].id, id: `sc.up.${lv[i].id}`, name: hi ? `${lv[i].name} 외부 보호망(SCN)·작업발판 인상` : `${lv[i].name} 외부 시스템비계 설치`, ph: '가설', trade: '가설', dur: 1, men: 4, out: true, temp: 'scaf', check: CK.scaf }); dep(t, p, 1); scafUp[i] = t; }
+  for (let i = 0; i < n; i++) { const p = (sPour[i] || []).find(Boolean); if (!p || lv[i].elev < 0) continue; const hi = n > 15; const t = add({ lv: lv[i].id, id: `sc.up.${lv[i].id}`, name: hi ? `${lv[i].name} 외부 보호망(SCN)·작업발판 인상` : `${lv[i].name} 외부 시스템비계 설치`, ph: '가설', trade: '가설', dur: 1, men: 4, out: true, temp: 'scaf', check: CK.scaf }); dep(t, p, 1); scafUp[i] = t; }
   // 4. 외장·창호 (층별)
   const envEnd = [];
   for (let i = 0; i < n; i++) {
@@ -284,8 +322,8 @@ export function buildTasks(P) {
   // 7. 도급내역 커버리지: 내역 코드 → 작업, 매칭 안 되는 항목은 이름 키워드로 배정, 그래도 없으면 '기타 내역' 작업으로 공정에 포함
   const KW = [[/방수/, 'rf.wp'], [/실링|코킹/, 'ex.wing'], [/도장|페인트/, 'in.paint'], [/타일|바닥|에폭시|장판/, 'in.floor'], [/천장|텍스|보드/, 'in.cboard'], [/창호|창|AL|PVC/, 'ex.winf'], [/문|도어/, 'in.door'], [/석재|외장|판넬|패널/, 'ex.paint'], [/흙막이|CIP|파일/, 'ew.shore'], [/터파기|토공|잔토/, 'ew.exc'], [/비계/, 'sc.up'], [/조경|식재|수목/, 'ex.plant'], [/포장|아스팔트/, 'ex.pave'], [/전기|조명|콘센트|배선/, 'in.wire'], [/소방|스프링클러|소화/, 'in.mep.sprinkler'], [/위생|급수|배수|배관/, 'in.mep.pipe'], [/덕트|공조/, 'in.mep.duct'], [/승강기|엘리베이터/, 'in.furn'], [/철골/, 'st.erect'], [/데크/, 'st.deck'], [/접지|피뢰/, 'rf.ground'], [/코핑|두겁|후레싱/, 'rf.coping'], [/가설|안전/, 'pre.mob']];
   const qCodes0 = (c) => { for (const m of q.values()) if (m[c] > 0) return true; return c === 'TMP'; };
-  const cover = []; const codes = new Set(T.filter(t => t.code && (t.code !== 'RBR' || true)).map(t => t.code).filter(c => qCodes0(c)));
-  const qCodes = new Set(); for (const m of q.values()) for (const k in m) if (m[k] > 0) qCodes.add(k); const STD = new Set([...Object.keys(PROD), 'CON', 'TMP']);
+  const cover = []; const codes = new Set(T.filter(t => t.code && (t.code !== 'RBR' || true)).filter(t => t.code && (qCodes0(t.code) || t.qty > 0)).map(t => t.code));
+  const qCodes = new Set(); for (const m of q.values()) for (const k in m) if (m[k] > 0) qCodes.add(k); const STD = new Set([...Object.keys(PROD), 'CON', 'TMP', 'PIL']);
   for (const b of P.boq || []) {
     if (STD.has(b.code) && !qCodes.has(b.code) && !codes.has(b.code)) { cover.push({ code: b.code, name: b.name, tasks: [], none: true }); continue; }
     let hit = codes.has(b.code) ? T.filter(t => t.code === b.code) : [];
@@ -300,7 +338,7 @@ export function buildTasks(P) {
   const elTasks = new Map(); for (const t of T) for (const id of t.els) (elTasks.get(id) || elTasks.set(id, []).get(id)).push(t.id);
   const succ = new Map(); for (const t of T) for (const p of t.preds) (succ.get(p.id) || succ.set(p.id, []).get(p.id)).push(t.id);
   const empty = lv.filter(L => !all.some(r => r.level.id === L.id)).map(L => L.name);
-  return { T, byId, elTasks, succ, Z, lv, cover, all, empty };
+  return { T, byId, elTasks, succ, Z, lv, cover, all, empty, method, plan: PB, piles: FD?.piles || [], pileL: FD?.L || 0, pileD: FD?.D || 0, nB };
 }
 
 // ---------- 일정 계산 ----------
@@ -341,7 +379,7 @@ export function schedule(P, G, opt = {}) {
 // 날짜 d의 작업·부재 상태
 const ST_ORDER = ['none', 'steel', 'rebar', 'embed', 'frame', 'form', 'poured', 'curing', 'stripped', 'clad', 'wp', 'coping', 'done'];
 export function stateAt(S, G, d) {
-  const tasks = []; const el = new Map(); const temp = { scaf: new Set(), shore: new Set(), form: new Set(), tc: false, hoist: false, pump: [], fence: false, exc: false, retain: false };
+  const tasks = []; const el = new Map(); const temp = { scaf: new Set(), shore: new Set(), form: new Set(), tc: false, hoist: false, pump: [], fence: false, exc: false, retain: false, pile: 0 };
   for (const t of S.T) { const r = S.R.get(t.id); if (!r) continue; const started = d >= r.es, finished = d > r.ef; const active = started && !finished;
     if (active) tasks.push(t);
     if (t.st && started) for (const id of t.els) { const cur = el.get(id); const s = active ? (t.st === 'poured' ? 'pouring' : 'w:' + t.st) : t.st; const rank = (x) => ST_ORDER.indexOf(x.replace(/^w:/, '').replace('pouring', 'poured')); if (!cur || rank(s) >= rank(cur)) el.set(id, s); }
@@ -350,6 +388,7 @@ export function stateAt(S, G, d) {
     if (t.temp === 'hoist') { if (t.id === 'eq.hoist' && finished) temp.hoist = true; if (t.id === 'eq.hoist.dn' && finished) temp.hoist = false; }
     if (t.id === 'pre.mob' && started) temp.fence = true; if (t.id === 'ex.pave' && finished) temp.fence = false;
     if (t.temp === 'exc' && started) temp.exc = true; if (t.id === 'fd.strip' && finished) temp.exc = false;
+    if (t.temp === 'pile' && started) temp.pile = finished ? 1 : (d - r.es + 1) / Math.max(1, r.ef - r.es + 1);
     if (t.temp === 'retain' && started) temp.retain = true; if (t.id === 'fd.strip' && finished) temp.retain = false;
     if (t.pour && active) temp.pump.push(t);
   }
