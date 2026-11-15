@@ -1,4 +1,5 @@
 import { furnName } from './furn.js';
+import { roomFinishes } from '../tools/interior.js'; // 순환 import — 함수 안에서만 사용
 // 빌더 데이터 모델: 프로젝트·시트·객체·물량·기성
 import { bbs, specOf } from './rebar.js';
 import { uid, sub, add, mul, norm, perp, len, dist, angOf, rot, polyArea, polyPerim, deep } from './util.js';
@@ -86,7 +87,14 @@ export const DEFAULT_BOQ = [
   { code: 'PNL', name: '분전반 설치', unit: 'EA', price: 1200000 },
   { code: 'LGT', name: '조명기구 설치', unit: 'EA', price: 85000 },
   { code: 'CLG', name: '천장 마감', unit: 'm²', price: 42000 },
+  { code: 'FLR', name: '바닥 마감', unit: 'm²', price: 48000 },
+  { code: 'WLF', name: '벽 마감', unit: 'm²', price: 32000 },
+  { code: 'BSE', name: '걸레받이', unit: 'm', price: 15000 },
+  { code: 'LTR', name: '교목 식재', unit: '주', price: 280000 },
+  { code: 'LSH', name: '관목 식재', unit: '주', price: 5000 },
 ];
+// 1.3.0에서 추가된 내역 코드 — 기존 프로젝트의 P.boq에 없으면 migrate가 채움
+export const BOQ_ADDED = ['FLR', 'WLF', 'BSE', 'LTR', 'LSH'];
 
 export function newProject(name = '새 프로젝트') {
   const L1 = { id: 'L1', name: '1F', elev: 0, height: 4000 };
@@ -263,6 +271,7 @@ export function qtyOf(el, lv, ctx = {}) {
     case 'panel': push('PNL', 1, `${el.sys || ''}`); break;
     case 'light': push('LGT', 1, `${el.type || ''} ${el.watt ?? ''}W`); break;
     case 'ceiling': push('CLG', Math.abs(polyArea(el.pts)) * 1e-6, el.fin || ''); break;
+    case 'furn': if (el.landscape && (el.type === 'tree' || el.type === 'shrub')) push(el.type === 'tree' ? 'LTR' : 'LSH', el.cnt || 1, el.tag || ''); break;
   }
   return out;
 }
@@ -289,6 +298,13 @@ export function takeoff(P) {
       for (const q of qtyOf(e, lv, { openings, slabT: e.k === 'beam' ? slabT : 0, beamDeduct, spec: specOf(P, e) })) rows.push({ el: e, sheet: s, level: lv, ...q });
     }
   }
+  // 실 마감 (바닥·벽·걸레받이) — 인테리어 툴의 실별 마감 산정 결과 (천장은 ceiling 객체가 CLG로 반영)
+  try {
+    for (const x of roomFinishes(P)) for (const [k, code] of [['floor', 'FLR'], ['wall', 'WLF'], ['base', 'BSE']]) {
+      const qty = x.q[k]; if (!(qty > 0)) continue;
+      rows.push({ el: x.r.el, sheet: x.r.sheet, level: x.r.level, code, qty, desc: `${x.r.el.name || '실'} ${x.fin[k] || ''}`.trim() });
+    }
+  } catch (e) { console.warn('실 마감 물량 산정 실패', e); }
   // 도면·PDF 위 수동 산출 (길이·면적·개수)
   for (const t of P.takeoffs || []) {
     if (!t.code) continue; const s = P.sheets.find(x => x.id === t.sheet); if (!s) continue; const q = manualQty(t);
