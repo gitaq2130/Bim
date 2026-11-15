@@ -77,10 +77,10 @@ export async function autoRun(P, { onProgress, tick = () => Promise.resolve() } 
   }
   const zoneOf = (L) => { const li = lv.findIndex(l => l.id === L.id); const z = zones.find(z => li >= z.from && li <= z.to) || (li < (zones[0]?.from ?? 0) ? zones[0] : zones[zones.length - 1]); return z ? z.fck : S.fckV; };
   // --- 재료: 보·슬래브 fck ---
-  const beams = res.M.members.map((m, i) => i).filter(i => res.M.members[i].kind === 'beam' && res.M.members[i].mat !== 'STEEL'); const envB = new Map(beams.map(i => [i, envOf(res, i)]));
+  const beams = res.M.members.map((m, i) => i).filter(i => res.M.members[i].kind === 'beam' && res.M.members[i].mat !== 'STEEL'); const envB = new Map(beams.map(i => [i, envOf(res, i, S)]));
   let fckH = null; const hMin = Math.max(24, U.fmin, tall ? 27 : 0); for (const f of [24, 27, 30, 35, 40].filter(f => f >= hMin)) { if (beams.every(i => beamOk(res, i, S, f, envB.get(i)))) { fckH = f; break; } } const beamNg = fckH == null; if (beamNg) fckH = 40; fckH = Math.max(fckH, 24);
   // --- 강재 ---
-  const steels = res.M.members.map((m, i) => i).filter(i => res.M.members[i].mat === 'STEEL' && res.M.members[i].sh); const envS = new Map(steels.map(i => [i, envOf(res, i)]));
+  const steels = res.M.members.map((m, i) => i).filter(i => res.M.members[i].mat === 'STEEL' && res.M.members[i].sh); const envS = new Map(steels.map(i => [i, envOf(res, i, S)]));
   const fixable = steels.filter(i => steelOk(res, i, S, 460, envS.get(i))); const steelBad = steels.filter(i => !fixable.includes(i)); let Fy = 355; for (const f of [355, 420, 460]) { if (fixable.every(i => steelOk(res, i, S, f, envS.get(i)))) { Fy = f; break; } } const steelNg = steelBad.length > 0;
   const res0 = res;
   // --- 확정 + 재해석 ---

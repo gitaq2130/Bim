@@ -282,4 +282,4 @@ export function memberForces(res, mi, st = [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0
     out[c] = arr; }
   return { m, Lt, byCase: out };
 }
-export function combine(mf, combo) { const ks = Object.keys(combo.f); const n = mf.byCase.D.length; const out = []; for (let i = 0; i < n; i++) { const o = { x: mf.byCase.D[i].x, N: 0, Vy: 0, Vz: 0, T: 0, My: 0, Mz: 0 }; for (const k of ks) { const s = mf.byCase[k]?.[i]; if (!s) continue; const f = combo.f[k]; o.N += f * s.N; o.Vy += f * s.Vy; o.Vz += f * s.Vz; o.T += f * s.T; o.My += f * s.My; o.Mz += f * s.Mz; } out.push(o); } return out; }
+export function combine(mf, combo) { const ks = Object.keys(combo.f); const n = mf.byCase.D.length; const out = []; for (let i = 0; i < n; i++) { const o = { x: mf.byCase.D[i].x, ei: mf.byCase.D[i].ei, N: 0, Vy: 0, Vz: 0, T: 0, My: 0, Mz: 0 }; for (const k of ks) { const s = mf.byCase[k]?.[i]; if (!s) continue; const f = combo.f[k]; o.N += f * s.N; o.Vy += f * s.Vy; o.Vz += f * s.Vz; o.T += f * s.T; o.My += f * s.My; o.Mz += f * s.Mz; } out.push(o); } return out; }
