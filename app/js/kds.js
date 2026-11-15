@@ -37,17 +37,17 @@ function rcBeam(m, env, S) {
 }
 // ---------- P-M 상관도 (변형률 적합) ----------
 // layers: [{y(압축연단에서 깊이), A, fy, Es}], 콘크리트 b×h
-function pmCurve(b, h, layers, fck) {
+function pmCurve(b, h, layers, fck, nominal = false) {
   const b1 = beta1(fck); const Ast = layers.reduce((s, l) => s + l.A, 0); const Ag = b * h; const dt = Math.max(...layers.map(l => l.y));
-  const P0 = 0.85 * fck * (Ag - Ast) + layers.reduce((s, l) => s + l.A * l.fy, 0); const phiPmax = 0.65 * 0.80 * P0;
+  const P0 = 0.85 * fck * (Ag - Ast) + layers.reduce((s, l) => s + l.A * l.fy, 0); const phiPmax = (nominal ? 1 : 0.65) * 0.80 * P0;
   const pts = []; const cs = []; for (let i = 0; i <= 40; i++) cs.push(h * (3 - 2.97 * i / 40)); for (let i = 1; i <= 20; i++) cs.push(h * 0.03 * (1 - i / 21));
   for (const c of cs) {
     const a = Math.min(b1 * c, h); let P = 0.85 * fck * a * b, M = P * (h / 2 - a / 2);
     for (const l of layers) { const e = ECU * (c - l.y) / c; let f = Math.max(-l.fy, Math.min(l.fy, l.Es * e)); if (l.y < a) f -= 0.85 * fck; P += l.A * f; M += l.A * f * (h / 2 - l.y); }
-    const et = ECU * (dt - c) / c, ey = layers[0].fy / ES; const phi = et <= ey ? 0.65 : et >= 0.005 ? 0.85 : 0.65 + 0.2 * (et - ey) / (0.005 - ey);
+    const et = ECU * (dt - c) / c, ey = layers[0].fy / ES; const phi = nominal ? 1 : et <= ey ? 0.65 : et >= 0.005 ? 0.85 : 0.65 + 0.2 * (et - ey) / (0.005 - ey);
     pts.push([Math.min(phi * P, phiPmax), phi * Math.abs(M)]);
   }
-  pts.push([-0.85 * layers.reduce((s, l) => s + l.A * l.fy, 0), 0]);
+  pts.push([-(nominal ? 1 : 0.85) * layers.reduce((s, l) => s + l.A * l.fy, 0), 0]);
   return { pts, phiPmax, Pt: pts[pts.length - 1][0] };
 }
 function capAt(C, Pu) { // φMn at Pu
@@ -394,4 +394,33 @@ export function designConnections(res, S) {
   for (const [, z] of pz) { const c = z.c; const phiRv = 0.9 * 0.6 * z.Fyc * c.h * c.tw; const r = z.F / phiRv; let txt = `ΣFf ${kN(z.F)} / φRv ${kN(phiRv)}`; if (r > 1) { const td = PL.find(t => 0.9 * 0.6 * z.Fyc * c.h * (c.tw + t) >= z.F) || PL[PL.length - 1]; txt += ` → 웨브 보강판 PL-${td} (패널존)`; } else txt += ' → 보강 불요';
     for (const i of z.list) { out[i].rows.splice(out[i].rows.length - (out[i].rows[out[i].rows.length - 1][0] === '비고' ? 1 : 0), 0, ['패널존 전단', txt, Math.min(r, 1)]); if (r > 1) out[i].items.push('패널존 보강판'); } }
   return out;
+}
+
+// ---------- 소성힌지 강도 (푸시오버, 기대강도: 철근 1.2fy · 콘크리트 1.1fck · 강재 Ry 1.1) ----------
+// 회전 한계는 ASCE 41 대표값을 단순화 (즉시거주 IO · 인명안전 LS · 붕괴방지 CP)
+export const HINGE_LIM = { 'RC 보': [0.005, 0.02, 0.025], 'RC 기둥': [0.005, 0.012, 0.016], 'SRC 기둥': [0.005, 0.012, 0.016], 'RC 전단벽': [0.004, 0.008, 0.012] };
+export function hingeCaps(res, mi, d, S, Pg = 0) { const c = hingeFlex(res, mi, d, S, Pg); c.shear = shearCap(res, mi, d, S, Pg); return c; }
+// 공칭 전단강도 (취성 — 힘지배 거동): 도달 시 푸시오버 종료
+function shearCap(res, mi, d, S, Pg) {
+  const m = res.M.members[mi]; const fck = m.fck || S.fckV || S.fck, sq = Math.sqrt(fck), fyt = S.fyt || 400, sp = specOf(m.P, m.el);
+  const st = (str, dflt) => { const q = parseS(str) || parseS(dflt); return q ? 2 * (AREA[q.d] || 71.33) / q.s : 0; };
+  if (m.mat === 'STEEL' && m.sh) { const sh = m.sh, Fy = 1.1 * S.Fy; return m.kind === 'beam' ? { Vz: 0.6 * Fy * sh.h * sh.tw } : { Vz: 0.6 * Fy * sh.h * sh.tw, Vy: 0.6 * Fy * 2 * sh.b * sh.tf }; }
+  if (m.kind === 'beam') { const b = m.by, dd = m.hz - 65; return { Vz: sq / 6 * b * dd + Math.min(st(sp?.stir, d?.auto?.stir || 'D10@200') * fyt * dd, 2 / 3 * sq * b * dd) }; }
+  if (m.kind === 'wall') { const L = m.by, t = m.hz, Acv = L * t; const ph = parseS(sp?.h) || parseS(d?.auto?.h); const rt = ph ? (sp?.layers || 2) * (AREA[ph.d] || 126.7) / (ph.s * t) : 0.0025; const ar = m.L / L, ac = ar <= 1.5 ? 0.25 : ar >= 2 ? 1 / 6 : 0.25 - (ar - 1.5) / 0.5 * (0.25 - 1 / 6); return { Vy: Math.min(Acv * (ac * sq + rt * fyt), 5 / 6 * sq * Acv) }; }
+  const b = m.by, h = m.hz, Ag = b * h, k = 1 + Math.max(0, Pg) / (14 * Ag); const av = st(sp?.hoop, d?.auto?.hoop || 'D10@150'); const vs = (bw, dd) => k * sq / 6 * bw * dd + Math.min(av * fyt * dd, 2 / 3 * sq * bw * dd); const ss = m.sh ? 0.6 * 1.1 * S.Fy * m.sh.h * m.sh.tw : 0;
+  return { Vz: vs(b, h - 60) + ss, Vy: vs(h, b - 60) + ss };
+}
+function hingeFlex(res, mi, d, S, Pg = 0) {
+  const m = res.M.members[mi]; m.P = res.P; const fye = 1.2 * S.fy, fck = (m.fck || S.fckV || S.fck) * 1.1, sp = specOf(m.P, m.el);
+  if (m.mat === 'STEEL' && m.sh) { const sh = m.sh, Fy = 1.1 * S.Fy, E = ES_S; const Mpx = Fy * sh.Zx, Mpy = Fy * sh.Zy; const ty = Mpx * m.L / (6 * E * sh.Ix);
+    if (m.kind === 'beam') return { kind: '철골 보', ax: { My: [Mpx, Mpx] }, lim: [ty, 6 * ty, 8 * ty], ty };
+    const r = Math.max(0, 1 - Math.max(0, Pg) / (Fy * sh.A)); return { kind: '철골 기둥', ax: { My: [Math.min(Mpx, 1.18 * Mpx * r), Math.min(Mpx, 1.18 * Mpx * r)], Mz: [Math.min(Mpy, 1.18 * Mpy * r), Math.min(Mpy, 1.18 * Mpy * r)] }, lim: [ty, 4 * ty, 6 * ty], ty }; }
+  if (m.kind === 'beam') { const b = m.by, dd = m.hz - 65; const mn = (As) => { if (!As) return 0; const a = Math.min(As * fye / (0.85 * fck * b), dd); return As * fye * (dd - a / 2); };
+    const At = asN(sp?.top) || asN(d?.auto?.top) || 0.004 * b * dd, Ab = asN(sp?.bot) || asN(d?.auto?.bot) || 0.004 * b * dd; return { kind: 'RC 보', ax: { My: [mn(Ab), mn(At)] }, lim: HINGE_LIM['RC 보'] }; }
+  if (m.kind === 'wall') { const L = m.by, t = m.hz; const pv = parseS(sp?.v) || parseS(d?.auto?.v); const ly = sp?.layers || d?.auto?.layers || 2; let rho = pv ? ly * (AREA[pv.d] || 126.7) / (pv.s * t) : (isFinite(d?.rhoReq) && d?.rhoReq) || 0.0025;
+    const C = pmCurve(t, L, distLayers(L, rho * L * t, fye), fck, true); const Mn = Math.max(capAt(C, Pg), 1); return { kind: 'RC 전단벽', ax: { Mz: [Mn, Mn] }, lim: HINGE_LIM['RC 전단벽'] }; }
+  const b = m.by, h = m.hz; let As = asN(sp?.main) || asN(d?.auto?.main); if (!As) As = (isFinite(d?.rhoReq) && d?.rhoReq ? d.rhoReq : 0.04) * b * h;
+  const LY = rectLayers(h, As, fye), LZ = rectLayers(b, As, fye); if (m.sh) { LY.push(...steelLayers(m.sh, h, 1.1 * S.Fy, true)); LZ.push(...steelLayers(m.sh, b, 1.1 * S.Fy, false)); }
+  const CY = pmCurve(b, h, LY.sort((p, q) => p.y - q.y), fck, true), CZ = pmCurve(h, b, LZ.sort((p, q) => p.y - q.y), fck, true); const my = Math.max(capAt(CY, Pg), 1), mz = Math.max(capAt(CZ, Pg), 1);
+  return { kind: m.sh ? 'SRC 기둥' : 'RC 기둥', ax: { My: [my, my], Mz: [mz, mz] }, lim: HINGE_LIM[m.sh ? 'SRC 기둥' : 'RC 기둥'] };
 }

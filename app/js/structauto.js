@@ -86,6 +86,8 @@ export async function autoRun(P, { onProgress, tick = () => Promise.resolve() } 
   // --- 확정 + 재해석 ---
   const vmax = zones.length ? Math.max(...zones.map(z => z.fck)) : S.fckV;
   Object.assign(S, { fck: fckH, fckV: vmax, Fy, fckZone: zoneOf, zones, fckF: G.stories >= 30 ? 40 : G.stories >= 10 ? 35 : 27, rhoAuto: true });
+  // 시공단계 해석: 고층은 순차 시공에 따른 고정하중 재분배(부등 축소·레벨 보정)를 설계에 반영
+  const csOn = G.stories >= 15 || G.hn >= 50; S.cs = csOn;
   // 층간변위 만족할 때까지 수직부재 강도 상향 (강성 ∝ fck^(1/3))
   const driftOf = (r) => { const sp = r.info.seis; if (!sp) return { v: 0, lim: 1 }; const rs = r.cases.includes('RX'); return { v: Math.max(0, ...r.story.map(f => rs ? Math.max(f.drRX || 0, f.drRY || 0) : Math.max(f.drEX || 0, f.drEY || 0))) * sp.Cd / sp.Ie, lim: sp.driftLim }; };
   let bump = 0; let drift;
@@ -100,6 +102,7 @@ export async function autoRun(P, { onProgress, tick = () => Promise.resolve() } 
   add('내진등급', `${grade}등급 (Ie=${GRADES[grade][0]}, 허용 층간변위 ${GRADES[grade][1] * 100}%)`, gWhy + ' — KDS 41 17 00');
   add('구조시스템', `${SYSTEMS[sys][0]} (R=${SYSTEMS[sys][1]}, Cd=${SYSTEMS[sys][2]})`, sysWhy);
   add('지진 해석법', rs ? '응답스펙트럼 + 등가정적' : '등가정적', rs ? `${G.hn >= 70 ? `높이 ${G.hn.toFixed(0)} m ≥ 70 m` : G.stories >= 20 ? `${G.stories}층 고층` : `비틀림비 ${torMax.toFixed(2)} > 1.2`} → 동적해석` : `높이 ${G.hn.toFixed(1)} m, 정형 (비틀림비 ${torMax.toFixed(2)})`);
+  add('시공단계 해석', csOn ? `적용 — 고정하중을 ${Math.min(15, G.stories)}단계 순차 재하` : '생략 — 일괄 재하', csOn ? `${G.stories}층 · 높이 ${G.hn.toFixed(0)} m (15층 또는 50 m 이상) → 순차 시공에 따른 고정하중 재분배를 설계에 반영` : `${G.stories}층 · 높이 ${G.hn.toFixed(1)} m — 순차 시공 영향 작음 (비교는 시공단계 화면)`);
   add('P-Δ', S.pdelta ? '고려' : '생략', `안정계수 θmax = ${thMax.toFixed(3)}${S.pdelta ? (thMax > 0.1 ? ' > 0.1' : ' (고층 — 보수적으로 고려)') : ' ≤ 0.1'}`);
   add('콘크리트 — 기둥·벽', zones.length ? zones.map(z => `${lv[z.from].name}~${lv[z.to].name} ${z.fck}`).join(' · ') + ' MPa' : '-', `주근비 2.5% 이내로 모든 수직부재가 P-M·전단을 만족하는 최소 강도를 층 구간별로 산정${bump ? ` → 층간변위(${(drift.v * 100).toFixed(2)}% / 허용 ${(drift.lim * 100).toFixed(1)}%) 만족 위해 ${bump}단계 상향` : ''}${ng.length ? ` (단면 부족 ${ng.length}개 — 단면 증대 필요)` : ''}${tall ? ' · 고층 수직부재 최소 30 MPa (축소량·품질 관리)' : ''}${vmax / fckH > 1.4 ? ` · 기둥/바닥 강도비 ${(vmax / fckH).toFixed(1)} > 1.4 → 접합부 고강도 콘크리트 타설 필요` : ''}`);
   add('콘크리트 — 보·슬래브', `${fckH} MPa`, beamNg ? '40 MPa에서도 일부 보 단면 부족 — 단면 증대 필요' : `모든 RC 보가 인장지배 철근비·전단 한도를 만족하는 최소 강도 (최소 ${hMin}${tall ? ' — 고층 바닥 균열·처짐 관리' : ' — 내구성'})`);
