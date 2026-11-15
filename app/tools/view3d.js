@@ -6,7 +6,7 @@ import { h, toast, saveFile, dialog } from '../js/ui.js';
 import { IC } from '../js/icons.js';
 import { buildFurn } from './furn3d.js';
 import { sysColor, mepNetwork, SYS } from '../js/mep.js';
-import { FINISHES, finishMaps, worldUV, kelvin, skyTexture, horizonColor, buildInteriorLights, buildFixtureLights } from './render3d.js';
+import { FINISHES, finishMaps, worldUV, kelvin, skyTexture, horizonColor, buildInteriorLights, buildFixtureLights, sectionBasis, sectionCut, chainSegments, sectionProject, sectionSVG, sectionDXF } from './render3d.js';
 import { DISC, KINDS, MATS, SECTIONS, allElements, levelOf, elName, cumProgress, takeoff, isRefElement } from '../js/model.js';
 import { sunVector, localToDate, toDeg } from '../js/sun.js';
 import { statusAt, toD, toS, addDays, daysBetween } from './sched.js';
@@ -58,6 +58,7 @@ export function mount(root, ctx) {
   const side = h('div', { class: 'side' });
   const tb = h('div', { class: 'ribbon' });
   root.append(h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%' } }, tb, h('div', { style: { display: 'flex', flex: 1, minHeight: 0, position: 'relative' } }, tree, holder, side)));
+  const SEC = P.view.sec = Object.assign({ on: false, axis: 'x', pos: {}, ang: 0, off: 0, flip: false, depth: null, plane: true }, P.view.sec || {}); st.secPick = null;
   st.hidden = new Set(P.view.hidden3d || []); st.iso = null; st.sideTab = 'prop'; st.secBox = null; st.treeQ = ''; st.treeOpen = P.view.tree3d ?? (window.innerWidth > 1100);
   const sel = new Set(); const selRef = new Map();
   const add2 = (el, ...xs) => el.append(...xs.flat().filter(x => x != null && x !== false));
@@ -69,7 +70,7 @@ export function mount(root, ctx) {
   catch (e) { holder.append(h('div', { class: 'empty' }, '이 기기에서 WebGL을 사용할 수 없어 3D를 표시할 수 없습니다.')); return {}; }
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1)); renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.localClippingEnabled = true;
-  const clipPlanes = [new THREE.Plane(new THREE.Vector3(0, -1, 0), 1e6), new THREE.Plane(new THREE.Vector3(-1, 0, 0), 1e6), new THREE.Plane(new THREE.Vector3(0, 0, 1), 1e6), new THREE.Plane(new THREE.Vector3(0, 1, 0), 1e6), new THREE.Plane(new THREE.Vector3(1, 0, 0), 1e6), new THREE.Plane(new THREE.Vector3(0, 0, -1), 1e6)];
+  const clipPlanes = [new THREE.Plane(new THREE.Vector3(0, -1, 0), 1e6), new THREE.Plane(new THREE.Vector3(-1, 0, 0), 1e6), new THREE.Plane(new THREE.Vector3(0, 0, 1), 1e6), new THREE.Plane(new THREE.Vector3(0, 1, 0), 1e6), new THREE.Plane(new THREE.Vector3(1, 0, 0), 1e6), new THREE.Plane(new THREE.Vector3(0, 0, -1), 1e6), new THREE.Plane(new THREE.Vector3(0, -1, 0), 1e6)]; // [6] 단면 축
   renderer.outputColorSpace = THREE.SRGBColorSpace; const TONES = { aces: THREE.ACESFilmicToneMapping, agx: THREE.AgXToneMapping, neutral: THREE.NeutralToneMapping, filmic: THREE.CineonToneMapping }; renderer.toneMapping = TONES[RD.tone] || THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.0;
   holder.prepend(renderer.domElement); renderer.domElement.style.display = 'block'; renderer.domElement.style.touchAction = 'none';
   const scene = new THREE.Scene();
@@ -183,7 +184,7 @@ export function mount(root, ctx) {
       const only = new Set(RV.diff.removedObjs.map(x => x.el.id));
       buildInto({ ...P, ...RV.baseSnap }, { keep: true, only, ghost: true });
     }
-    mergeStatic(); rowsCache = null; netCache = null; refreshSel();
+    mergeStatic(); rowsCache = null; netCache = null; refreshSel(); if (SEC.on) updateSec();
   }
   // 대형 모델: 같은 재질 메시를 합쳐 그리기 호출 수를 줄임 (원본은 숨겨 선택·속성용으로 유지)
   function mergeStatic() {
@@ -330,7 +331,7 @@ export function mount(root, ctx) {
     clearMats(); buildModel(); if (q === 'path') await startPath(); buildToolbar(); if (st.sideTab === 'set') renderSide();
   }
   async function startPath() {
-    if (st.clip.x != null || st.clip.y != null || st.clip.z != null || st.secBox) toast('사진 렌더는 단면(클리핑)을 지원하지 않아 전체 모델로 렌더합니다');
+    if (st.clip.x != null || st.clip.y != null || st.clip.z != null || st.secBox || SEC.on) toast('사진 렌더는 단면(클리핑)을 지원하지 않아 전체 모델로 렌더합니다');
     if (st.mode === 'walk') setMode('orbit');
     try { toast('사진 렌더 준비 중… (형상 가속구조 생성)'); const { WebGLPathTracer } = await import('three-gpu-pathtracer'); pt = new WebGLPathTracer(renderer); pt.filterGlossyFactor = 0.5; pt.minSamples = 1; pt.renderDelay = 0; pt.fadeDuration = 300; pt.tiles.set(2, 2); pt.bounces = 6; pt.dynamicLowRes = true; pt.lowResScale = 0.35;
       for (const g of [selG, markers, measureG, analysisG, photoG]) g.visible = false; scene.fog = null; await ptSet(); ptInfo.style.display = 'block'; }
@@ -447,6 +448,7 @@ export function mount(root, ctx) {
     const r = renderer.domElement.getBoundingClientRect(); const v = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
     ray.setFromCamera(v, camera);
     if (showPhotos && photoG.children.length) { const hp = ray.intersectObjects(photoG.children, false)[0]; if (hp) return showPhoto(hp.object.userData.photo); }
+    if (st.secPick) { const hs = ray.intersectObjects([...model.children, ground], true).find(i => !isClipped(i.point) && (i.object.visible || i.object.userData.merged)); if (hs) secPickPoint(hs.point); return; }
     if (st.measure) { const hm = ray.intersectObjects([...model.children, ground], true).find(i => !isClipped(i.point)); if (hm) addMeasurePoint(hm.point); return; }
     const hit = ray.intersectObjects(model.children, true).find(i => i.object.userData.ref && !isClipped(i.point) && (i.object.visible || i.object.userData.merged));
     const add = e.ctrlKey || e.metaKey || e.shiftKey;
@@ -628,12 +630,112 @@ export function mount(root, ctx) {
     const c = st.clip;
     clipPlanes[0].constant = c.y == null ? 1e6 : c.y; clipPlanes[1].constant = c.x == null ? 1e6 : c.x; clipPlanes[2].constant = c.z == null ? 1e6 : -c.z;
     for (let i = 3; i < 6; i++) clipPlanes[i].constant = 1e6;
+    const sp = secPlane(); if (sp) clipPlanes[6].copy(sp.plane); else clipPlanes[6].set(new THREE.Vector3(0, -1, 0), 1e6);
     if (boxHelper) { scene.remove(boxHelper); boxHelper = null; }
     const B = st.secBox; if (!B) return;
     clipPlanes[0].constant = Math.min(clipPlanes[0].constant, B.max.y); clipPlanes[3].constant = -B.min.y;
     clipPlanes[1].constant = Math.min(clipPlanes[1].constant, B.max.x); clipPlanes[4].constant = -B.min.x;
     clipPlanes[2].constant = Math.min(clipPlanes[2].constant, -B.min.z); clipPlanes[5].constant = B.max.z;
     boxHelper = new THREE.Box3Helper(new THREE.Box3(B.min.clone(), B.max.clone()), 0xffa62b); scene.add(boxHelper);
+  }
+
+  // ---------- 단면 축 (X·Y·Z·자유) ----------
+  // SEC.pos.x: three x(m), SEC.pos.y: 평면 y(m, 북쪽 +), SEC.pos.z: 표고(m), 자유: SEC.ang(평면 각도°, 동=0 반시계) + SEC.off(모델 중심에서 법선 방향 m)
+  const secG = new THREE.Group(); scene.add(secG);
+  const secCenter = () => bbox.getCenter(new THREE.Vector3());
+  function secRaw() {
+    const c = secCenter(); let n, p0;
+    if (SEC.axis === 'x') { n = new THREE.Vector3(1, 0, 0); p0 = new THREE.Vector3(SEC.pos.x ?? c.x, c.y, c.z); }
+    else if (SEC.axis === 'y') { n = new THREE.Vector3(0, 0, -1); p0 = new THREE.Vector3(c.x, c.y, -(SEC.pos.y ?? -c.z)); }
+    else if (SEC.axis === 'z') { n = new THREE.Vector3(0, -1, 0); p0 = new THREE.Vector3(c.x, SEC.pos.z ?? c.y, c.z); }
+    else { const a = (SEC.ang || 0) * Math.PI / 180; n = new THREE.Vector3(Math.sin(a), 0, Math.cos(a)); p0 = c.clone().addScaledVector(n, SEC.off || 0); }
+    return { n, p0 };
+  }
+  function secPlane() {
+    if (!SEC.on) return null; const { n, p0 } = secRaw(); if (SEC.flip) n.negate();
+    return { n, p0, plane: new THREE.Plane().setFromNormalAndCoplanarPoint(n, p0) };
+  }
+  const secAxisName = () => ({ x: 'X 단면', y: 'Y 단면', z: SEC.flip ? '천장 평면(올려봄)' : '평면 단면(내려봄)', free: '자유 단면' })[SEC.axis];
+  function secDir(n) { if (Math.abs(n.y) > 0.7) return n.y < 0 ? '아래' : '위'; const az = (Math.atan2(n.x, -n.z) * 180 / Math.PI + 360 + (P.site.north || 0)) % 360; return ['북', '북동', '동', '남동', '남', '남서', '서', '북서'][Math.round(az / 45) % 8]; }
+  function secPosMM() { const sp = secPlane(); if (!sp) return ''; if (SEC.axis === 'x') return `X = ${fmt0(sp.p0.x * 1000 + bx)}`; if (SEC.axis === 'y') return `Y = ${fmt0(-sp.p0.z * 1000 + by)}`; if (SEC.axis === 'z') { const e = sp.p0.y * 1000; const L = [...VP.levels].sort((a, b) => b.elev - a.elev).find(l => l.elev <= e + 1); return `EL${e >= 0 ? '+' : ''}${fmt0(e)}${L ? ` (${L.name} FL+${fmt0(e - L.elev)})` : ''}`; } return `${fmt(SEC.ang, 1)}° · 오프셋 ${fmt0(SEC.off * 1000)}`; }
+  function secMeshes() { model.updateMatrixWorld(true); const out = []; model.traverse(o => { if (!o.isMesh || o.userData.mergedMesh) return; const ref = o.userData.ref; if (!ref || ref.removed) return; if (!(o.visible || o.userData.merged)) return; out.push({ mesh: o, id: ref.id }); }); return out; }
+  let secTimer = null;
+  function updateSec(now) {
+    applyClip(); secG.clear(); if (!SEC.on) return;
+    const sp = secPlane(); const c = secCenter(), r = bbox.getSize(new THREE.Vector3()).length() * 0.6 + 2;
+    const q = c.clone().addScaledVector(sp.n, -sp.plane.distanceToPoint(c));
+    if (SEC.plane) {
+      const pm = new THREE.Mesh(new THREE.PlaneGeometry(r * 2, r * 2), new THREE.MeshBasicMaterial({ color: 0xff7a45, transparent: true, opacity: 0.08, side: THREE.DoubleSide, depthWrite: false }));
+      pm.position.copy(q); pm.lookAt(q.clone().add(sp.n)); pm.renderOrder = 5; secG.add(pm);
+      const edge = new THREE.LineSegments(new THREE.EdgesGeometry(pm.geometry), new THREE.LineBasicMaterial({ color: 0xff7a45 })); edge.position.copy(pm.position); edge.quaternion.copy(pm.quaternion); secG.add(edge);
+      const ar = new THREE.ArrowHelper(sp.n, q, Math.min(4, r * 0.25), 0xff7a45, 0.6, 0.35); secG.add(ar);
+    }
+    clearTimeout(secTimer); secTimer = setTimeout(() => { // 절단선 실시간 표시 (이동 중엔 120ms 늦춰 계산)
+      if (!SEC.on) return; const p2 = secPlane(); const cut = sectionCut(secMeshes(), p2.plane, clipPlanes.slice(0, 6)); const arr = []; const off = p2.n.clone().multiplyScalar(-0.004);
+      for (const segs of cut.values()) for (const [a, b] of segs) arr.push(a.x + off.x, a.y + off.y, a.z + off.z, b.x + off.x, b.y + off.y, b.z + off.z);
+      for (const o of [...secG.children]) if (o.userData.cutLines) { o.geometry.dispose(); secG.remove(o); }
+      const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3));
+      const ls = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0xff2d2d })); ls.userData.cutLines = true; ls.renderOrder = 6; secG.add(ls); st.secCutN = cut.size;
+      const n = side.querySelector('.sec-cutn'); if (n) n.textContent = `절단 객체 ${cut.size}개`;
+    }, now ? 0 : 120);
+  }
+  function setSec(patch) { Object.assign(SEC, patch); ctx.touch('meta'); updateSec(); }
+  function secPickPoint(p) {
+    st.secPick.push(p.clone()); addMeasurePointMark(p);
+    if (st.secPick.length < 2) return toast('단면 절단선: 두 번째 점을 클릭하세요');
+    const [a, b] = st.secPick; st.secPick = null; measureG.clear();
+    const dx = b.x - a.x, dy = -(b.z - a.z); if (Math.hypot(dx, dy) < 0.05) return toast('두 점이 너무 가깝습니다', 'err');
+    const ang = Math.atan2(dy, dx) * 180 / Math.PI; SEC.axis = 'free'; SEC.ang = ang; SEC.on = true; SEC.flip = false;
+    const { n } = secRaw(); SEC.off = a.clone().sub(secCenter()).dot(n); SEC.flip = camera.position.clone().sub(a).dot(n) > 0; // 카메라 쪽을 잘라내고 건너편을 봄
+    ctx.touch('meta'); updateSec(true); buildToolbar(); goSec('단면 축'); toast('절단선으로 자유 단면을 만들었습니다', 'ok');
+  }
+  function addMeasurePointMark(p) { const s = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 8), new THREE.MeshBasicMaterial({ color: 0xff7a45, depthTest: false })); s.position.copy(p); s.renderOrder = 10; measureG.add(s); }
+  function secDepthDefault(sp) {
+    if (SEC.axis === 'z' && !SEC.flip) { const e = sp.p0.y * 1000; const L = [...VP.levels].sort((a, b) => b.elev - a.elev).find(l => l.elev <= e + 1); if (L) return Math.max(0.2, (e - L.elev) / 1000 - 0.005); } // 바닥면 바로 위까지 (바닥 아래 기초선 제외)
+    if (SEC.axis === 'z' && SEC.flip) { const e = sp.p0.y * 1000; const L = [...VP.levels].sort((a, b) => a.elev - b.elev).find(l => l.elev > e + 1); if (L) return Math.max(0.3, (L.elev - e) / 1000 + 0.05); }
+    const sz = bbox.getSize(new THREE.Vector3()); return sz.length() + 2;
+  }
+  async function extractSection() {
+    const sp = secPlane(); if (!sp) return toast('단면 축을 먼저 켜세요', 'err');
+    if (pt) return toast('사진 렌더 중에는 추출할 수 없습니다 — 품질을 바꾼 뒤 다시 시도하세요', 'err');
+    const basis = sectionBasis(sp.n); const extra = clipPlanes.slice(0, 6); const meshes = secMeshes(); const depth = SEC.depth ? SEC.depth / 1000 : secDepthDefault(sp);
+    const toUV = basis.horiz ? (p) => [p.x * 1000 + bx, -p.z * 1000 + by] : (p) => [p.dot(basis.right) * 1000, p.y * 1000];
+    const info = new Map(); for (const r of allElements(VP)) info.set(r.el.id, { k: r.el.k, disc: KINDS[r.el.k]?.disc || r.sheet.disc, mat: r.el.mat, name: elName(r.el) });
+    const prog = h('div', { class: 'mono', style: { position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%,-50%)', background: '#0f1218ee', border: '1px solid #2a3342', borderRadius: '8px', padding: '10px 16px', fontSize: '13px', zIndex: 5 } }, '단면 계산 중…'); holder.append(prog);
+    await new Promise(r => setTimeout(r, 30));
+    try {
+      const cutMap = sectionCut(meshes, sp.plane, extra); const cuts = [];
+      for (const [id, segs] of cutMap) { const ch = chainSegments(segs.map(([a, b]) => [toUV(a), toUV(b)])); if (ch.loops.length || ch.open.length) cuts.push({ id, info: info.get(id), ...ch }); }
+      const lines = await sectionProject(renderer, scene, model, meshes, sp.plane, basis, { depth, extra, toUV, onProgress: (f) => { prog.textContent = `투영선·숨은선 계산 중… ${Math.round(f * 100)}%`; } });
+      const res = { cuts, lines, horiz: basis.horiz };
+      const meta = { title: `${secAxisName()} — ${secPosMM()}`, sub: `${P.name} · 보는 방향 ${secDir(sp.n)} · 투영 깊이 ${fmt(depth, 1)}m`, levels: basis.horiz ? [] : VP.levels.map(l => ({ name: l.name, elev: l.elev })) };
+      showSectionDialog(res, meta);
+    } catch (e) { console.warn(e); toast('단면 추출 실패: ' + e.message, 'err'); }
+    finally { prog.remove(); }
+  }
+  function showSectionDialog(res, meta) {
+    const { svg, S } = sectionSVG(res, meta); const base = (P.name + '_' + meta.title).replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ');
+    const bg = h('div', { class: 'modal-bg' }); const box = h('div', { class: 'modal', style: { width: 'min(1200px, 96vw)', height: '90vh', display: 'flex', flexDirection: 'column', padding: '12px' } });
+    const view = h('div', { style: { flex: 1, minHeight: 0, background: '#fff', borderRadius: '6px', overflow: 'hidden', position: 'relative', cursor: 'grab', touchAction: 'none' }, html: svg });
+    const sv = view.querySelector('svg'); sv.removeAttribute('width'); sv.removeAttribute('height'); Object.assign(sv.style, { width: '100%', height: '100%', display: 'block' });
+    let vb = sv.getAttribute('viewBox').split(' ').map(Number); const vb0 = vb.slice(); const setVB = () => sv.setAttribute('viewBox', vb.map(v => v.toFixed(1)).join(' '));
+    view.addEventListener('wheel', (e) => { e.preventDefault(); const r = view.getBoundingClientRect(); const k = e.deltaY > 0 ? 1.15 : 1 / 1.15; const sx = vb[2] / r.width, sy = vb[3] / r.height, s = Math.max(sx, sy); const fx = vb[0] + (e.clientX - r.left - (r.width - vb[2] / s) / 2) * s, fy = vb[1] + (e.clientY - r.top - (r.height - vb[3] / s) / 2) * s; vb = [fx - (fx - vb[0]) * k, fy - (fy - vb[1]) * k, vb[2] * k, vb[3] * k]; setVB(); }, { passive: false });
+    let drag = null; view.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY, vb: vb.slice() }; view.setPointerCapture(e.pointerId); view.style.cursor = 'grabbing'; });
+    view.addEventListener('pointermove', (e) => { if (!drag) return; const r = view.getBoundingClientRect(); const s = Math.max(vb[2] / r.width, vb[3] / r.height); vb = [drag.vb[0] - (e.clientX - drag.x) * s, drag.vb[1] - (e.clientY - drag.y) * s, vb[2], vb[3]]; setVB(); });
+    view.addEventListener('pointerup', () => { drag = null; view.style.cursor = 'grab'; });
+    const close = () => { bg.remove(); window.removeEventListener('keydown', onEsc); }; const onEsc = (e) => { if (e.key === 'Escape') close(); }; window.addEventListener('keydown', onEsc);
+    const png = () => { const img = new Image(); const [, , w, hh] = vb0; const pxPerMM = 8; const W = Math.round(w / S * pxPerMM), H = Math.round(hh / S * pxPerMM); img.onload = () => { const c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W, H); g.drawImage(img, 0, 0, W, H); c.toBlob(b => saveFile(base + '.png', b), 'image/png'); }; img.onerror = () => toast('PNG 변환 실패', 'err'); img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); };
+    const cutN = res.cuts.length, lineN = res.lines.length;
+    box.append(h('div', { class: 'row', style: { gap: '6px', marginBottom: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+      h('h3', { style: { margin: 0, marginRight: 'auto', fontSize: '15px' } }, meta.title),
+      h('span', { class: 'note' }, `절단 객체 ${cutN}개 · 투영선 ${lineN}개 · 축척 1/${S} (A3)`),
+      h('button', { class: 'btn sm', onclick: () => { vb = vb0.slice(); setVB(); } }, '전체 보기'),
+      h('button', { class: 'btn sm', onclick: () => saveFile(base + '.svg', new Blob([svg], { type: 'image/svg+xml' })) }, 'SVG 저장'),
+      h('button', { class: 'btn sm', onclick: () => saveFile(base + '.dxf', new Blob([sectionDXF(res, meta)], { type: 'application/dxf' })) }, 'DXF 저장'),
+      h('button', { class: 'btn sm', onclick: png }, 'PNG 저장'),
+      h('button', { class: 'btn sm', onclick: close }, '닫기')), view,
+      h('div', { class: 'note', style: { marginTop: '6px' } }, '굵은 선·해치 = 절단면(RC는 사선 해치, 벽은 회색), 가는 선 = 평면 너머 투영선(가려진 선 제거). 휠: 확대·축소, 끌기: 이동. DXF는 작도 툴에서 가져올 수 있습니다(레이어 단면-절단·투영·레벨·문자).'));
+    bg.append(box); bg.addEventListener('pointerdown', (e) => { if (e.target === bg) close(); }); document.body.append(bg);
   }
   let boxHelper = null;
   function setSecBox(b) { if (!b) { st.secBox = null; applyClip(); return; } st.secBox = { min: b.min.clone(), max: b.max.clone() }; applyClip(); }
@@ -720,7 +822,8 @@ export function mount(root, ctx) {
         group('효과', col(sm('', '앰비언트 오클루전', () => { RD.ao = !RD.ao; if (aoPass) aoPass.enabled = RD.ao; ctx.touch('meta'); R(); }, RD.ao), sm('', '블룸(빛 번짐)', () => { RD.bloom = !RD.bloom; if (bloomPass) bloomPass.enabled = RD.bloom; ctx.touch('meta'); R(); }, RD.bloom), sm('', '대기 원근(안개)', () => { RD.fog = !RD.fog; updateSun(); ctx.touch('meta'); R(); }, RD.fog))),
         group('출력', big('CAPTURE', pt ? '렌더 저장' : '고해상 저장', () => renderStill(2), false, pt ? '현재 샘플까지의 사진 렌더 저장' : '화면 2배 해상도로 렌더해 PNG 저장'))],
       review: [group('측정', big('MEASURE', '거리 측정', () => { st.measure = !st.measure; mPts = []; toast(st.measure ? '측정: 모델 위 두 점을 클릭하세요' : '측정 끔'); R(); }, st.measure), sm('', '측정 지우기', () => { measureG.clear(); mPts = []; })),
-        group('단면', big('SECBOX', '단면 상자', () => { if (st.secBox) setSecBox(null); else { const b = selBox3(); setSecBox(b.isEmpty() ? bbox.clone() : b.expandByScalar(1)); } R(); goSec('단면'); }, !!st.secBox, '선택 객체(없으면 전체)로 단면 상자 — 오른쪽에서 6면 조절'), big('SECPLANE', '단면 평면', () => goSec('단면'))),
+        group('단면', big('SECBOX', '단면 상자', () => { if (st.secBox) setSecBox(null); else { const b = selBox3(); setSecBox(b.isEmpty() ? bbox.clone() : b.expandByScalar(1)); } R(); goSec('단면'); }, !!st.secBox, '선택 객체(없으면 전체)로 단면 상자 — 오른쪽에서 6면 조절'), big('SECPLANE', '단면 평면', () => goSec('단면(클리핑)'))),
+        group('단면 축 · 2D', big('SECTION', '단면 축', () => { setSec({ on: !SEC.on }); R(); goSec('단면 축'); }, SEC.on, 'X·Y·Z·자유 축으로 건물을 잘라 봄 — 오른쪽에서 위치 조절'), col(...[['x', 'X축'], ['y', 'Y축'], ['z', 'Z축(수평)']].map(([a, l]) => sm('', l, () => { setSec({ on: true, axis: a }); R(); goSec('단면 축'); }, SEC.on && SEC.axis === a))), col(sm('', '두 점 절단선', () => { st.secPick = []; measureG.clear(); toast('모델 위 두 점을 클릭하면 그 선으로 수직 단면을 만듭니다'); }, !!st.secPick), sm('', '방향 반전', () => { setSec({ flip: !SEC.flip }); R(); }, SEC.flip)), big('ELEV', '2D 도면 추출', extractSection, false, '현재 단면을 절단선·투영선 2D 도면(SVG·DXF·PNG)으로 추출')),
         group('리비전', big('REV', 'Rev 비교', () => toast('화면 위쪽 Rev 타임라인에서 고르세요. [ ] 키로 이동'))),
         group('조정', big('CLASHI', '간섭검토', () => ctx.go('clash')), big('ISSUE', '이슈 등록', issueFromSel3d))],
       analysis: [group('태양', big('SUN', '태양·시각', () => goSec('태양')), big('PLAY', st.playing ? '정지' : '하루 재생', () => { st.playing = !st.playing; R(); }, st.playing)), group('일조', big('SUNMAP', '일조 분석', () => goSec('일조')))],
@@ -819,6 +922,36 @@ export function mount(root, ctx) {
       upd();
     }
 
+    // 단면 축 · 2D 추출
+    side.append(h('h4', {}, '단면 축 · 2D 추출'));
+    const sx = h('div', { class: 'sec' }); side.append(sx);
+    const onCb = h('input', { type: 'checkbox', checked: SEC.on }); onCb.onchange = () => { setSec({ on: onCb.checked }); buildToolbar(); renderSide(); };
+    sx.append(h('label', { class: 'row', style: { gap: '6px' } }, onCb, '단면 축 켜기'));
+    const axRow = h('div', { class: 'row', style: { gap: '4px', marginTop: '6px', flexWrap: 'wrap' } });
+    for (const [a, l] of [['x', 'X축'], ['y', 'Y축'], ['z', 'Z축(수평)'], ['free', '자유']]) axRow.append(h('button', { class: 'btn sm' + (SEC.axis === a ? ' on' : ''), onclick: () => { setSec({ on: true, axis: a }); buildToolbar(); renderSide(); } }, l));
+    sx.append(axRow);
+    if (SEC.on) {
+      const sp = secPlane(); const bmn = bbox.min, bmx = bbox.max; const pos = h('span', { class: 'mono note' }, secPosMM());
+      const slider = (label, lo, hi, val, set, step = 0.01) => { const r = h('input', { type: 'range', min: lo, max: hi, step, value: val, style: { width: '100%' } }); r.oninput = () => { set(+r.value); SEC.on = true; updateSec(); pos.textContent = secPosMM(); dirEl.textContent = '보는 방향: ' + secDir(secPlane().n); }; r.onchange = () => ctx.touch('meta'); sx.append(h('div', { class: 'note', style: { marginTop: '6px' } }, label), r); };
+      const dirEl = h('div', { class: 'note' }, '보는 방향: ' + secDir(sp.n));
+      sx.append(h('div', { class: 'row', style: { justifyContent: 'space-between', marginTop: '6px' } }, h('b', { style: { fontSize: '12.5px' } }, secAxisName()), pos), dirEl);
+      if (SEC.axis === 'x') slider('위치 (동서)', bmn.x - 0.5, bmx.x + 0.5, SEC.pos.x ?? sp.p0.x, v => { SEC.pos.x = v; });
+      if (SEC.axis === 'y') slider('위치 (남북)', -bmx.z - 0.5, -bmn.z + 0.5, SEC.pos.y ?? -sp.p0.z, v => { SEC.pos.y = v; });
+      if (SEC.axis === 'z') { slider('높이', bmn.y, bmx.y + 0.2, SEC.pos.z ?? sp.p0.y, v => { SEC.pos.z = v; });
+        const lv = h('div', { class: 'row', style: { gap: '4px', marginTop: '4px', flexWrap: 'wrap' } }); for (const l of [...VP.levels].sort((a, b) => a.elev - b.elev)) lv.append(h('button', { class: 'btn sm', onclick: () => { SEC.pos.z = m(l.elev + 1200); setSec({}); renderSide(); } }, `${l.name} +1.2m`)); sx.append(lv); }
+      if (SEC.axis === 'free') { const r = bbox.getSize(new THREE.Vector3()).length() / 2 + 1; slider('회전각 (평면, 동=0° 반시계)', -180, 180, SEC.ang, v => { SEC.ang = v; }, 0.5); slider('위치 (법선 방향)', -r, r, SEC.off, v => { SEC.off = v; }); }
+      sx.append(h('div', { class: 'row', style: { gap: '4px', marginTop: '8px', flexWrap: 'wrap' } },
+        h('button', { class: 'btn sm' + (SEC.flip ? ' on' : ''), onclick: () => { setSec({ flip: !SEC.flip }); renderSide(); } }, SEC.axis === 'z' ? (SEC.flip ? '올려봄(천장)' : '내려봄(평면)') : '방향 반전'),
+        h('button', { class: 'btn sm' + (st.secPick ? ' on' : ''), onclick: () => { st.secPick = []; measureG.clear(); toast('모델 위 두 점을 클릭하세요'); renderSide(); } }, '두 점 절단선'),
+        h('button', { class: 'btn sm' + (SEC.plane ? ' on' : ''), onclick: () => { setSec({ plane: !SEC.plane }); renderSide(); } }, '평면 표시'),
+        h('button', { class: 'btn sm', onclick: () => { const d = secPlane().n.clone().negate(); if (Math.abs(d.y) > 0.7) d.z += 0.0001; viewDir(d); } }, '정면으로 보기')));
+      const dep = h('input', { type: 'number', min: 0, step: 100, value: SEC.depth ?? '', placeholder: `자동 ${fmt0(secDepthDefault(sp) * 1000)}`, style: { width: '110px' } }); dep.onchange = () => { SEC.depth = +dep.value > 0 ? +dep.value : null; ctx.touch('meta'); };
+      sx.append(h('div', { class: 'row', style: { gap: '6px', marginTop: '8px', alignItems: 'center' } }, h('span', { class: 'note' }, '투영 깊이(mm)'), dep));
+      sx.append(h('div', { class: 'note sec-cutn', style: { marginTop: '4px' } }, st.secCutN != null ? `절단 객체 ${st.secCutN}개` : ''));
+      sx.append(h('button', { class: 'btn', style: { width: '100%', marginTop: '8px' }, onclick: extractSection }, '2D 도면 추출 (SVG·DXF·PNG)'));
+      sx.append(h('div', { class: 'note', style: { marginTop: '4px' } }, '투영 깊이 자동값: 수평 단면은 그 층 바닥(내려봄)·윗층 바닥(올려봄)까지, 수직 단면은 모델 끝까지. 숨김·분리·공종 표시와 X/Y/Z 클리핑·단면 상자가 추출에도 그대로 적용됩니다.'));
+    } else sx.append(h('div', { class: 'note', style: { marginTop: '6px' } }, '축을 고르거나 "두 점 절단선"으로 3D에서 절단 위치를 찍으면, 그 단면을 2D 도면으로 추출할 수 있습니다.'));
+
     // 단면
     side.append(h('h4', {}, '단면(클리핑)'));
     const s4 = h('div', { class: 'sec' }); side.append(s4);
@@ -892,6 +1025,6 @@ export function mount(root, ctx) {
   if (RD.quality === 'high') setupComposer().catch(e => { console.warn(e); RD.quality = 'fast'; }); else if (RD.quality === 'path') { RD.quality = 'high'; setupComposer().catch(() => { }); }
   const offModel = ctx.bus.on('model', () => { if (RV.cur == null && (P.prevs || []).length) setRev(null); else buildModel(); });
   return {
-    unmount() { stopPath(); dropComposer(); fixMat.dispose(); RV.play = false; window.removeEventListener('keydown', onRevKey); window.removeEventListener('keydown', onSelKey); cancelAnimationFrame(raf); ro.disconnect(); offModel(); window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onKey); controls.dispose(); clearMats(); renderer.dispose(); renderer.forceContextLoss?.(); },
+    unmount() { stopPath(); dropComposer(); fixMat.dispose(); clearTimeout(secTimer); RV.play = false; window.removeEventListener('keydown', onRevKey); window.removeEventListener('keydown', onSelKey); cancelAnimationFrame(raf); ro.disconnect(); offModel(); window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onKey); controls.dispose(); clearMats(); renderer.dispose(); renderer.forceContextLoss?.(); },
   };
 }

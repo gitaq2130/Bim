@@ -195,3 +195,191 @@ export function buildFixtureLights(group, fixtures, { K = 4000, maxAll = 32 } = 
   for (const c of cl) { const L = new THREE.PointLight(color, c.lm * LM_SCALE, 0, 2); L.position.set(c.x, c.y, c.z); L.castShadow = false; L.userData.fixtures = c.n; group.add(L); lm += c.lm; }
   return { sources: cl.length, lm };
 }
+
+// ======================================================================
+// 단면 2D 추출 — 실제 3D 형상(삼각형)을 평면으로 잘라 절단선을 만들고,
+// 평면 너머 모서리를 투영해 숨은선을 제거한 투영선을 만든다. 결과 단위 mm.
+// ======================================================================
+// n: 남기는 쪽(보는 방향) 법선. 수평 단면은 위·아래 어느 쪽을 보든 평면도 방향(북쪽 위)으로 그린다.
+export function sectionBasis(n) {
+  if (Math.abs(n.y) > 0.7) return { horiz: true, right: new THREE.Vector3(1, 0, 0), up: new THREE.Vector3(0, 0, -1) };
+  const up = new THREE.Vector3(0, 1, 0); return { horiz: false, right: new THREE.Vector3().crossVectors(n, up).normalize(), up };
+}
+function clipSeg(a, b, planes) {
+  for (const pl of planes) {
+    const da = pl.distanceToPoint(a), db = pl.distanceToPoint(b);
+    if (da < 0 && db < 0) return null;
+    if (da < 0) a = a.clone().lerp(b, da / (da - db)); else if (db < 0) b = b.clone().lerp(a, db / (db - da));
+  }
+  return [a, b];
+}
+// meshes: [{mesh, id}] → Map(id → [[Vector3, Vector3], ...]) (월드 좌표, m)
+export function sectionCut(meshes, plane, extra = []) {
+  const out = new Map(), A = new THREE.Vector3(), B = new THREE.Vector3(), C = new THREE.Vector3(), box = new THREE.Box3();
+  for (const { mesh, id } of meshes) {
+    const g = mesh.geometry; if (!g?.attributes?.position) continue; if (!g.boundingBox) g.computeBoundingBox();
+    box.copy(g.boundingBox).applyMatrix4(mesh.matrixWorld); if (!box.intersectsPlane(plane)) continue;
+    const pos = g.attributes.position, idx = g.index, mw = mesh.matrixWorld, cnt = idx ? idx.count : pos.count; const segs = out.get(id) || [];
+    for (let i = 0; i + 2 < cnt; i += 3) {
+      A.fromBufferAttribute(pos, idx ? idx.getX(i) : i).applyMatrix4(mw); B.fromBufferAttribute(pos, idx ? idx.getX(i + 1) : i + 1).applyMatrix4(mw); C.fromBufferAttribute(pos, idx ? idx.getX(i + 2) : i + 2).applyMatrix4(mw);
+      const da = plane.distanceToPoint(A), db = plane.distanceToPoint(B), dc = plane.distanceToPoint(C); const pts = [];
+      const e = (P, dp, Q, dq) => { if ((dp > 0) !== (dq > 0)) pts.push(P.clone().lerp(Q, dp / (dp - dq))); };
+      e(A, da, B, db); e(B, db, C, dc); e(C, dc, A, da);
+      if (pts.length === 2) { const s = clipSeg(pts[0], pts[1], extra); if (s && s[0].distanceToSquared(s[1]) > 1e-8) segs.push(s); }
+    }
+    if (segs.length) out.set(id, segs);
+  }
+  return out;
+}
+// 2D 선분 → 닫힌 고리·열린 선. 같은 객체 안에서 겹치는 선분(맞붙은 상자의 경계)은 지운다.
+export function chainSegments(segs, tol = 0.5) {
+  const K = (p) => Math.round(p[0] / tol) + ',' + Math.round(p[1] / tol);
+  const cnt = new Map(); for (const s of segs) { const k = [K(s[0]), K(s[1])].sort().join('|'); cnt.set(k, (cnt.get(k) || 0) + 1); }
+  const live = segs.filter(s => { const ka = K(s[0]), kb = K(s[1]); if (ka === kb) return false; return cnt.get([ka, kb].sort().join('|')) % 2 === 1; });
+  const adj = new Map(); live.forEach((s, i) => { for (const k of [K(s[0]), K(s[1])]) { if (!adj.has(k)) adj.set(k, []); adj.get(k).push(i); } });
+  const used = new Uint8Array(live.length), loops = [], open = [];
+  for (let i = 0; i < live.length; i++) {
+    if (used[i]) continue; used[i] = 1; const pts = [live[i][0], live[i][1]];
+    for (const dir of [1, 0]) {
+      for (;;) { const end = dir ? pts[pts.length - 1] : pts[0]; const nx = (adj.get(K(end)) || []).find(j => !used[j]); if (nx == null) break; used[nx] = 1; const s = live[nx]; const other = K(s[0]) === K(end) ? s[1] : s[0]; if (dir) pts.push(other); else pts.unshift(other); }
+    }
+    if (pts.length > 3 && K(pts[0]) === K(pts[pts.length - 1])) { pts.pop(); loops.push(pts); } else open.push(pts);
+  }
+  return { loops, open };
+}
+// 평면 너머 모서리 투영 + 숨은선 제거 (깊이 버퍼 비교)
+const DEPTH_VS = `#include <clipping_planes_pars_vertex>
+varying float vZ;
+void main() { vec4 mvPosition = modelViewMatrix * vec4(position, 1.0); vZ = -mvPosition.z; gl_Position = projectionMatrix * mvPosition;
+#include <clipping_planes_vertex>
+}`;
+const DEPTH_FS = `#include <clipping_planes_pars_fragment>
+uniform float uFar; varying float vZ;
+void main() {
+#include <clipping_planes_fragment>
+  float v = floor(clamp(vZ / uFar, 0.0, 1.0) * 65535.0 + 0.5); float r = floor(v / 256.0); float g = v - r * 256.0;
+  gl_FragColor = vec4(r / 255.0, g / 255.0, 0.0, 1.0); }`;
+export async function sectionProject(renderer, scene, root, meshes, plane, basis, { depth, extra = [], toUV, maxPx = 3072, angle = 25, onProgress } = {}) {
+  const n = plane.normal.clone(); const bb = new THREE.Box3().setFromObject(root); if (bb.isEmpty()) return [];
+  const c0 = bb.getCenter(new THREE.Vector3()); c0.addScaledVector(n, -plane.distanceToPoint(c0));
+  const camRight = new THREE.Vector3().crossVectors(n, basis.up).normalize(), up = basis.up;
+  let l = Infinity, r = -Infinity, b = Infinity, t = -Infinity;
+  for (let i = 0; i < 8; i++) { const p = new THREE.Vector3(i & 1 ? bb.max.x : bb.min.x, i & 2 ? bb.max.y : bb.min.y, i & 4 ? bb.max.z : bb.min.z).sub(c0); const x = p.dot(camRight), y = p.dot(up); l = Math.min(l, x); r = Math.max(r, x); b = Math.min(b, y); t = Math.max(t, y); }
+  l -= 1; r += 1; b -= 1; t += 1;
+  const px = Math.max(0.005, Math.max(r - l, t - b) / maxPx); const W = Math.max(8, Math.ceil((r - l) / px)), H = Math.max(8, Math.ceil((t - b) / px));
+  const far = Math.max(0.05, depth);
+  const cam = new THREE.OrthographicCamera(l, l + W * px, b + H * px, b, 0, far); cam.position.copy(c0); cam.up.copy(up); cam.lookAt(c0.clone().add(n)); cam.updateMatrixWorld(); cam.updateProjectionMatrix();
+  const mat = new THREE.ShaderMaterial({ vertexShader: DEPTH_VS, fragmentShader: DEPTH_FS, uniforms: { uFar: { value: far } }, side: THREE.DoubleSide, clipping: true, clippingPlanes: extra });
+  const rt = new THREE.WebGLRenderTarget(W, H, { depthBuffer: true }); const buf = new Uint8Array(W * H * 4);
+  const keep = { ov: scene.overrideMaterial, bg: scene.background, fog: scene.fog, rt: renderer.getRenderTarget(), cc: renderer.getClearColor(new THREE.Color()), ca: renderer.getClearAlpha(), vis: scene.children.map(o => o.visible) };
+  try {
+    scene.children.forEach(o => { if (o !== root) o.visible = false; }); root.visible = true;
+    scene.overrideMaterial = mat; scene.background = null; scene.fog = null;
+    renderer.setRenderTarget(rt); renderer.setClearColor(0xffffff, 1); renderer.clear(); renderer.render(scene, cam);
+    renderer.readRenderTargetPixels(rt, 0, 0, W, H, buf);
+  } finally {
+    scene.overrideMaterial = keep.ov; scene.background = keep.bg; scene.fog = keep.fog; scene.children.forEach((o, i) => { o.visible = keep.vis[i]; });
+    renderer.setRenderTarget(keep.rt); renderer.setClearColor(keep.cc, keep.ca); rt.dispose(); mat.dispose();
+  }
+  const dAt = (ix, iy) => { if (ix < 0 || iy < 0 || ix >= W || iy >= H) return far; const k = (iy * W + ix) * 4; return (buf[k] * 256 + buf[k + 1]) / 65535 * far; };
+  const farPl = new THREE.Plane(n.clone().negate(), far - plane.constant); const planes = [plane, farPl, ...extra];
+  const tol = 2.5 * px + 0.004, out = [], A = new THREE.Vector3(), B = new THREE.Vector3(), box = new THREE.Box3(), P = new THREE.Vector3();
+  let done = 0;
+  for (const { mesh } of meshes) {
+    if (++done % 250 === 0) { onProgress?.(done / meshes.length); await new Promise(res => setTimeout(res, 0)); }
+    const g = mesh.geometry; if (!g?.attributes?.position) continue; if (!g.boundingBox) g.computeBoundingBox();
+    box.copy(g.boundingBox).applyMatrix4(mesh.matrixWorld); let inside = true; for (const pl of [plane, farPl]) { let mx = -Infinity; for (let i = 0; i < 8; i++) { P.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z); mx = Math.max(mx, pl.distanceToPoint(P)); } if (mx < 0) inside = false; } if (!inside) continue;
+    const eg = g.userData.secEdges || (g.userData.secEdges = new THREE.EdgesGeometry(g, angle)); const ep = eg.attributes.position;
+    for (let i = 0; i + 1 < ep.count; i += 2) {
+      A.fromBufferAttribute(ep, i).applyMatrix4(mesh.matrixWorld); B.fromBufferAttribute(ep, i + 1).applyMatrix4(mesh.matrixWorld);
+      const s = clipSeg(A.clone(), B.clone(), planes); if (!s) continue; const [a, bq] = s;
+      const pa = a.clone().sub(c0), pb = bq.clone().sub(c0); const xa = (pa.dot(camRight) - l) / px, ya = (pa.dot(up) - b) / px, xb = (pb.dot(camRight) - l) / px, yb = (pb.dot(up) - b) / px;
+      const L = Math.hypot(xb - xa, yb - ya); const N = Math.max(2, Math.ceil(L)); let t0 = null;
+      const flush = (t1) => { if (t0 != null && t1 - t0 > 1e-6) { const u0 = toUV(a.clone().lerp(bq, t0)), u1 = toUV(a.clone().lerp(bq, t1)); if (Math.hypot(u1[0] - u0[0], u1[1] - u0[1]) > 1) out.push([u0[0], u0[1], u1[0], u1[1]]); } t0 = null; };
+      for (let k = 0; k <= N; k++) {
+        const tt = k / N; P.copy(a).lerp(bq, tt); const z = plane.distanceToPoint(P); const ix = Math.floor(xa + (xb - xa) * tt), iy = Math.floor(ya + (yb - ya) * tt);
+        let dm = 0; for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) dm = Math.max(dm, dAt(ix + dx, iy + dy));
+        const vis = z <= dm + tol; if (vis && t0 == null) t0 = tt; else if (!vis && t0 != null) flush((k - 0.5) / N);
+      }
+      flush(1);
+    }
+  }
+  onProgress?.(1); return out;
+}
+
+// ---------- 도면 출력 ----------
+const SCALES = [20, 30, 50, 100, 150, 200, 300, 500, 600, 1000, 1500, 2000];
+const STRUCT_K = new Set(['column', 'beam', 'slab', 'footing']);
+export function cutStyle(info) {
+  if (!info) return 'none';
+  if (STRUCT_K.has(info.k) || (info.k === 'wall' && (info.mat === 'RC' || info.disc === 'S'))) return 'rc';
+  if (info.k === 'wall') return 'wall';
+  return 'line';
+}
+// res: { cuts:[{info, loops, open}], lines:[[x1,y1,x2,y2]], horiz }, meta: { title, sub, levels:[{name,elev}] }
+export function sectionLayout(res, meta = {}) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; const ext = (x, y) => { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); };
+  for (const c of res.cuts) for (const pl of [...c.loops, ...c.open]) for (const p of pl) ext(p[0], p[1]);
+  for (const s of res.lines) { ext(s[0], s[1]); ext(s[2], s[3]); }
+  if (!isFinite(x0)) { x0 = y0 = 0; x1 = y1 = 1000; }
+  const w = x1 - x0, h = y1 - y0; const S = SCALES.find(s => w / s <= 380 && h / s <= 240) || Math.ceil(Math.max(w / 380, h / 240) / 500) * 500;
+  return { x0, y0, x1, y1, w, h, S };
+}
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const f0 = (v) => Math.round(v).toLocaleString('ko-KR');
+export function sectionSVG(res, meta = {}) {
+  const Lo = sectionLayout(res, meta), S = Lo.S, M = 18 * S, TB = 16 * S; const lw = (mm) => (mm * S).toFixed(1); const N = (v) => v.toFixed(1);
+  const vx = Lo.x0 - M - (res.horiz ? 0 : 22 * S), vy = -Lo.y1 - M, vw = Lo.w + 2 * M + (res.horiz ? 0 : 22 * S), vh = Lo.h + 2 * M + TB;
+  const o = [];
+  o.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${N(vw / S)}mm" height="${N(vh / S)}mm" viewBox="${N(vx)} ${N(vy)} ${N(vw)} ${N(vh)}" font-family="Noto Sans KR, sans-serif">`);
+  o.push(`<defs><pattern id="rc" patternUnits="userSpaceOnUse" width="${lw(2)}" height="${lw(2)}" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="${lw(2)}" stroke="#555" stroke-width="${lw(0.13)}"/></pattern></defs>`);
+  o.push(`<rect x="${N(vx)}" y="${N(vy)}" width="${N(vw)}" height="${N(vh)}" fill="#fff"/>`);
+  // 투영선
+  o.push(`<g stroke="#6b6b6b" stroke-width="${lw(0.13)}" stroke-linecap="round">`);
+  for (const s of res.lines) o.push(`<line x1="${N(s[0])}" y1="${N(-s[1])}" x2="${N(s[2])}" y2="${N(-s[3])}"/>`);
+  o.push('</g>');
+  // 절단면
+  const path = (loops) => loops.map(pl => 'M' + pl.map(p => `${N(p[0])} ${N(-p[1])}`).join('L') + 'Z').join('');
+  for (const c of res.cuts) {
+    const st = cutStyle(c.info); const d = path(c.loops);
+    if (d && st === 'rc') o.push(`<path d="${d}" fill="#e2e2e2" fill-rule="evenodd"/><path d="${d}" fill="url(#rc)" fill-rule="evenodd"/>`);
+    else if (d && st === 'wall') o.push(`<path d="${d}" fill="#b4b4b4" fill-rule="evenodd"/>`);
+    const sw = st === 'line' ? 0.25 : 0.5;
+    if (d) o.push(`<path d="${d}" fill="none" stroke="#000" stroke-width="${lw(sw)}" stroke-linejoin="round"/>`);
+    for (const pl of c.open) o.push(`<polyline points="${pl.map(p => `${N(p[0])},${N(-p[1])}`).join(' ')}" fill="none" stroke="#000" stroke-width="${lw(sw)}"/>`);
+  }
+  // 레벨선 (수직 단면)
+  const tx = (x, y, s, txt, anchor = 'start', wt = 400, col = '#111') => `<text x="${N(x)}" y="${N(y)}" font-size="${lw(s)}" text-anchor="${anchor}" font-weight="${wt}" fill="${col}">${esc(txt)}</text>`;
+  if (!res.horiz) {
+    const lv = [...(meta.levels || [])]; if (!lv.some(l => Math.abs(l.elev) < 1)) lv.push({ name: 'GL', elev: 0 });
+    o.push(`<g stroke="#2a6fdb" stroke-width="${lw(0.18)}" stroke-dasharray="${lw(6)} ${lw(1.2)} ${lw(1)} ${lw(1.2)}">`);
+    for (const l of lv) o.push(`<line x1="${N(Lo.x0 - 20 * S)}" y1="${N(-l.elev)}" x2="${N(Lo.x1 + 4 * S)}" y2="${N(-l.elev)}"/>`);
+    o.push('</g>');
+    for (const l of lv) o.push(tx(Lo.x0 - 20 * S, -l.elev - 1.2 * S, 2.5, `${l.name} ${l.name === 'GL' ? '±0' : 'FL' + (l.elev >= 0 ? '+' : '') + f0(l.elev)}`, 'start', 600, '#2a6fdb'));
+  }
+  // 표제
+  const by = -Lo.y0 + M * 0.55; o.push(tx(Lo.x0, by + 5 * S, 4.5, meta.title || '단면도', 'start', 700));
+  o.push(tx(Lo.x0, by + 10 * S, 2.6, `${meta.sub ? meta.sub + '  ·  ' : ''}S = 1/${S} (A3)`, 'start', 400, '#444'));
+  const bar = S >= 300 ? 20000 : S >= 150 ? 10000 : S >= 60 ? 5000 : 2000, seg = bar / 5, bx0 = Lo.x1 - bar, by0 = by + 4 * S;
+  for (let i = 0; i < 5; i++) o.push(`<rect x="${N(bx0 + i * seg)}" y="${N(by0)}" width="${N(seg)}" height="${lw(1.2)}" fill="${i % 2 ? '#fff' : '#111'}" stroke="#111" stroke-width="${lw(0.13)}"/>`);
+  o.push(tx(bx0, by0 + 4.5 * S, 2.2, '0', 'middle'), tx(bx0 + bar, by0 + 4.5 * S, 2.2, `${bar / 1000}m`, 'middle'));
+  o.push('</svg>');
+  return { svg: o.join(''), S, layout: Lo };
+}
+// DXF R12 (mm). 레이어: 단면-절단, 단면-투영, 단면-레벨, 단면-문자
+export function sectionDXF(res, meta = {}) {
+  const o = ['0', 'SECTION', '2', 'HEADER', '9', '$ACADVER', '1', 'AC1009', '9', '$INSUNITS', '70', '4', '9', '$DWGCODEPAGE', '3', 'ANSI_949', '0', 'ENDSEC'];
+  const LAY = [['단면-절단', 7], ['단면-절단해치', 8], ['단면-투영', 8], ['단면-레벨', 5], ['단면-문자', 7]];
+  o.push('0', 'SECTION', '2', 'TABLES', '0', 'TABLE', '2', 'LAYER', '70', String(LAY.length));
+  for (const [nm, c] of LAY) o.push('0', 'LAYER', '2', nm, '70', '0', '62', String(c), '6', 'CONTINUOUS');
+  o.push('0', 'ENDTAB', '0', 'ENDSEC', '0', 'SECTION', '2', 'ENTITIES');
+  const F = (v) => (+v).toFixed(2); const line = (ly, x1, y1, x2, y2) => o.push('0', 'LINE', '8', ly, '10', F(x1), '20', F(y1), '30', '0', '11', F(x2), '21', F(y2), '31', '0');
+  const text = (x, y, hgt, s) => o.push('0', 'TEXT', '8', '단면-문자', '10', F(x), '20', F(y), '30', '0', '40', F(hgt), '1', String(s));
+  for (const s of res.lines) line('단면-투영', ...s);
+  for (const c of res.cuts) { for (const pl of c.loops) for (let i = 0; i < pl.length; i++) { const a = pl[i], b = pl[(i + 1) % pl.length]; line('단면-절단', a[0], a[1], b[0], b[1]); } for (const pl of c.open) for (let i = 0; i + 1 < pl.length; i++) line('단면-절단', pl[i][0], pl[i][1], pl[i + 1][0], pl[i + 1][1]); }
+  const Lo = sectionLayout(res, meta);
+  if (!res.horiz) for (const l of meta.levels || []) { line('단면-레벨', Lo.x0 - 20 * Lo.S, l.elev, Lo.x1 + 4 * Lo.S, l.elev); text(Lo.x0 - 20 * Lo.S, l.elev + 1.2 * Lo.S, 2.5 * Lo.S, `${l.name} FL${l.elev >= 0 ? '+' : ''}${Math.round(l.elev)}`); }
+  text(Lo.x0, Lo.y0 - 12 * Lo.S, 4.5 * Lo.S, `${meta.title || '단면도'}  S=1/${Lo.S}`);
+  o.push('0', 'ENDSEC', '0', 'EOF');
+  return o.join('\r\n') + '\r\n';
+}

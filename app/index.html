@@ -31,16 +31,31 @@ header.top{display:flex;align-items:center;gap:10px;padding:0 12px;height:48px;b
 .logo{display:flex;align-items:center;gap:8px;font-weight:700;letter-spacing:.5px;cursor:pointer;white-space:nowrap}
 .logo .mk{width:26px;height:26px;border-radius:6px;background:linear-gradient(135deg,#4ea1ff,#a78bfa);display:grid;place-items:center;color:#0b0e13;font-weight:800;font-size:13px}
 .proj-name{color:var(--fg2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:28vw;font-size:13px}
-nav.tools{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none;flex:1;min-width:0}
+nav.tools{position:relative;display:flex;gap:0;overflow-x:auto;scrollbar-width:none;flex:1;min-width:0;align-self:stretch;align-items:flex-end;padding-top:8px}
 nav.tools::-webkit-scrollbar{display:none}
-nav.tools a{display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:6px;color:var(--fg2);text-decoration:none;white-space:nowrap;font-size:13px}
+nav.tools a{display:flex;align-items:center;gap:6px;height:40px;padding:0 6px 0 12px;border:1px solid transparent;border-bottom:none;border-radius:8px 8px 0 0;color:var(--fg2);text-decoration:none;white-space:nowrap;font-size:13px;user-select:none;-webkit-user-select:none;touch-action:pan-y;position:relative;max-width:220px}
 nav.tools a:hover{background:var(--bg3);color:var(--fg)}
-nav.tools a.on{background:var(--bg3);color:var(--fg);box-shadow:inset 0 -2px 0 var(--acc)}
+nav.tools a.on{background:var(--bg);color:var(--fg);border-color:var(--line);box-shadow:inset 0 2px 0 var(--acc)}
+nav.tools a.pin{padding-right:12px}
+nav.tools a span{overflow:hidden;text-overflow:ellipsis}
+nav.tools a .x{width:18px;height:18px;border-radius:4px;display:grid;place-items:center;font-size:13px;color:var(--fg3);flex:none;margin-left:2px}
+nav.tools a .x:hover{background:#ef5f5f33;color:#ff8f8f}
+nav.tools a.drag{opacity:.35}
+nav.tools .drop-mark{position:absolute;top:6px;bottom:4px;width:2px;background:var(--acc);border-radius:1px;pointer-events:none}
 nav.tools svg{width:16px;height:16px;flex:none}
-nav.tools .ph{align-self:center;font-size:10px;color:var(--fg3);padding:0 4px 0 8px;margin-left:4px;border-left:1px solid var(--line);white-space:nowrap;letter-spacing:.02em}
+.tab-ghost{position:fixed;z-index:200;pointer-events:none;background:var(--bg3);border:1px solid var(--acc);border-radius:8px;padding:6px 12px;font-size:13px;color:var(--fg);box-shadow:0 8px 24px #0008;display:flex;gap:6px;align-items:center}
+.tab-ghost svg{width:16px;height:16px}
+.tool-menu{position:fixed;z-index:150;background:var(--bg2);border:1px solid var(--line2);border-radius:12px;box-shadow:0 20px 60px #000a;padding:12px;width:min(760px,96vw);max-height:80vh;overflow:auto}
+.tool-menu .ph{margin:4px 0 6px;font-size:12px;color:var(--fg3);font-weight:600;letter-spacing:.03em}
+.tool-menu .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:6px;margin-bottom:10px}
+.tool-menu .it{display:grid;grid-template-columns:30px 1fr;gap:8px;align-items:center;padding:8px;border-radius:8px;cursor:pointer;border:1px solid transparent}
+.tool-menu .it:hover,.tool-menu .it.kb{background:var(--bg3);border-color:var(--line2)}
+.tool-menu .it .ic{width:30px;height:30px;border-radius:7px;display:grid;place-items:center}
+.tool-menu .it .ic svg{width:17px;height:17px}
+.tool-menu .it b{font-size:13px;display:flex;gap:6px;align-items:center} .tool-menu .it b i{font-style:normal;font-size:10.5px;color:var(--ok);font-weight:500}
+.tool-menu .it small{display:block;font-size:11px;color:var(--fg3);line-height:1.35;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.tool-menu input{width:100%;margin-bottom:10px}
 .phase-h{margin:14px 0 6px;font-size:13px;color:var(--fg2)}
-@media (max-width:1560px){nav.tools a{padding:6px 7px;gap:4px;font-size:12.5px}}
-@media (max-width:1800px){nav.tools .ph{font-size:0;padding:0;margin:0 3px}}
 .save-st{font-size:12px;color:var(--fg3);white-space:nowrap}
 .save-st.pending{color:var(--warn)} .save-st.error{color:var(--bad)} .save-st.saved{color:var(--ok)}
 main#view{flex:1;min-height:0;position:relative;overflow:hidden}
@@ -185,7 +200,7 @@ textarea.mono{width:100%;font-size:12px}
 .bar{height:6px;background:var(--bg3);border-radius:3px;overflow:hidden} .bar>i{display:block;height:100%;background:var(--acc)}
 @media (max-width:800px){
   .page{padding:12px} .proj-name{display:none} .save-st{display:none}
-  nav.tools a span{display:none} nav.tools a{padding:6px 9px} nav.tools .ph{font-size:0;padding:0;margin:0 3px}
+  nav.tools a span{display:none} nav.tools a{padding:0 4px 0 9px} nav.tools a.pin{padding:0 9px}
   .side{position:absolute;right:0;top:0;bottom:0;z-index:30;width:min(320px,88vw);transform:translateX(100%);transition:transform .2s;box-shadow:-10px 0 30px #0008}
   .side.l{left:0;right:auto;transform:translateX(-100%)}
   .side.open{transform:none}
@@ -202,6 +217,7 @@ textarea.mono{width:100%;font-size:12px}
   <header class="top">
     <div class="logo" id="logo"><div class="mk">B</div><span>빌더</span></div>
     <div class="proj-name" id="projName"></div>
+    <button class="btn sm tool-menu-btn" id="toolBtn" title="툴 열기 (Alt+T)" style="flex:none">☰ 툴 <span class="hide-m">▾</span></button>
     <nav class="tools" id="nav"></nav>
     <button class="btn sm" id="searchBtn" title="통합 검색 (Ctrl+K)" style="flex:none">⌕ 검색</button>
     <div class="save-st" id="saveSt"></div>
