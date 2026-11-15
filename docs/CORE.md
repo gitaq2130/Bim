@@ -1,4 +1,4 @@
-# 빌더 코어 규격 (Core v1.0.0)
+# 빌더 코어 규격 (Core v1.1.0)
 
 모든 툴이 공유하는 계약입니다. **이 문서와 코어 파일은 허브·코어 트랙만 수정합니다.**
 툴 트랙은 이 규격을 읽기만 하고, 바꿔야 하면 아래 "코어 변경 요청" 절차를 따릅니다.
@@ -71,15 +71,32 @@ export function mount(root, ctx) {
 | `bill {periods[]}` | 기성 회차 | cost |
 | `clash {status,tol,clearance}`, `check {status}` | 간섭·정합 결과 상태 | review |
 | `sched {acts[],start}`, `photos[]`, `daily` | 공정·현장사진·일보 | field |
+| `mep {systems[], calc{}}` | MEP 계통 정의·계산 결과 (덕트 사이즈·전기 부하·헤드 배치) | mep |
+| `interior {finishes{}, lighting{uf,mf}}` | 마감 기준·조명 계산 조건 | interior |
 | `issues[]`, `code` | 이슈·RFI, 법규 검토 | admin |
 
 - 다른 트랙 소유 키는 **읽기만** 합니다.
 - 새 최상위 키 추가, 기존 키의 구조 변경은 코어 변경입니다 (`app.js`의 `migrate()` 갱신 필요).
 
 ### 객체 종류 (`js/model.js` → `KINDS`)
-wall, column, beam, slab, footing, opening, duct, pipe, tray, riser, fin, furn
-— 공종(`DISC`): A 건축, S 구조, M 기계, E 전기, P 배관·소방. 재질은 `MATS`.
-객체 종류·기본 속성 추가는 코어 변경입니다.
+
+| 객체 | 공종 | 형상 | 만드는 트랙 | 비고 |
+|---|---|---|---|---|
+| wall, opening, fin | A | line / host / point | cad | |
+| column, beam, slab, footing | S | point / line / poly | cad | 구조 해석은 struct |
+| duct, riser | M | line / point | cad → mep | |
+| pipe | P | line | cad → mep | 계통명이 소화·SP·FP면 MEP 툴에서 소방으로 분류 |
+| tray | E | line | cad → mep | |
+| sprinkler (1.1.0) | F | point | mep | `type, kf, z` |
+| panel (1.1.0) | E | point | mep | `sys, kw, h` |
+| light (1.1.0) | I | point | interior | `watt, lm, z, circuit` — mep가 watt를 읽어 전기 부하 계산 |
+| ceiling (1.1.0) | I | poly | interior | `z, t, fin` |
+| room (1.1.0) | I | poly | interior | `name, use, lux, h` — 공간 정의라 3D 박스·간섭 대상 아님 |
+| furn | A | point | interior | |
+
+- 공종(`DISC`): A 건축, S 구조, M 기계, E 전기, P 배관(위생), F 소방(1.1.0), I 인테리어(1.1.0). 재질은 `MATS`.
+- 1.1.0 객체는 `elBoxes`·`elOutline`·`elName`·`qtyOf`(SPK·PNL·LGT·CLG 내역 코드)를 지원합니다. 따라서 물량·간섭에는 자동으로 포함됩니다. 작도 2D 표시와 3D 표시는 각각 cad·view3d 트랙의 후속 작업입니다.
+- 객체 종류·기본 속성 추가는 코어 변경입니다.
 
 ## 6. 공용 모듈 (core 소유, 툴은 import만)
 
@@ -91,7 +108,7 @@ wall, column, beam, slab, footing, opening, duct, pipe, tray, riser, fin, furn
 | `js/util.js` | uid, deep, createBus, 벡터·면적 함수, fmt |
 | `js/rev.js` | 리비전 생성·복원 |
 | `js/rebar.js` | 철근 규격·BBS |
-| `js/mep.js`, `js/furn.js`, `js/blocks.js`, `js/icons.js` | 설비·가구·블록·아이콘 정의 |
+| `js/blocks.js`, `js/icons.js` | 블록·아이콘 정의 |
 | `js/dxf.js`, `js/ifc.js`, `js/ifcout.js`, `js/excel.js`, `js/zip.js` | 입출력 |
 | `js/house.js`, `js/tower.js` | 샘플 프로젝트 |
 
@@ -101,7 +118,12 @@ wall, column, beam, slab, footing, opening, duct, pipe, tray, riser, fin, furn
 | field `tools/sched.js` | `autoGenerate(P, start)` 등 | core(샘플 생성), view3d(4D), daily |
 | field `tools/site.js` | 사진·위치 함수 | daily |
 | cad `tools/cad-geom.js` | 기하 함수 | site |
-| view3d `tools/render3d.js` | 렌더러 | furn3d |
+| view3d `tools/render3d.js` | 렌더러 | interior(furn3d) |
+| mep `js/mep.js` | `SYS`, `sysKey`, `sysColor`, `mepNetwork` (계통 연결 해석) | cad, check, view3d, section |
+| mep `tools/mep.js` | `mepRows`, `systemSummary`, `heightBands` | — |
+| interior `js/furn.js` | `FURN`, `FURN_CATS`, `furnName`, `furnPlan`, `furnXf` | model(core), cad, ifcout |
+| interior `tools/furn3d.js` | 가구 3D 형상 | view3d |
+| interior `tools/interior.js` | `roomLighting`, `LUX_BY_USE` | mep(조명 부하) |
 
 공개 함수의 이름·인자·반환을 바꾸려면 코어 변경 요청으로 등록합니다.
 
