@@ -3,9 +3,10 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { h, toast, dialog, saveFile, table } from '../js/ui.js';
 import { MATS, DISC, elName, levelOf } from '../js/model.js';
+import { METHODS } from './sched.js';
 import { buildTasks, schedule, stateAt, progressAt, amountAt, recoveryOptions, toD, toS, wdOf, CLIMATE, TRADES, elBoxes } from '../js/csim.js';
 
-const COL = { steel: 0x5b8fd6, rebar: 0xd9473f, embed: 0xff9b2f, frame: 0xc9c3b4, form: 0x9a6b3f, pouring: 0xf2e08a, poured: 0x9aa6b2, curing: 0x8fb2c8, stripped: 0xbdbdb6, clad: 0xd9cdb4, wp: 0x3d7a58, coping: 0xbdbdb6, done: 0xc8c6c0 };
+const COL = { pile: 0x8c8c86, steel: 0x5b8fd6, rebar: 0xd9473f, embed: 0xff9b2f, frame: 0xc9c3b4, form: 0x9a6b3f, pouring: 0xf2e08a, poured: 0x9aa6b2, curing: 0x8fb2c8, stripped: 0xbdbdb6, clad: 0xd9cdb4, wp: 0x3d7a58, coping: 0xbdbdb6, done: 0xc8c6c0 };
 const LABEL = { steel: '철골', rebar: '철근 배근', embed: '매립(전선관·접지)', frame: '틀·프레임', form: '거푸집', pouring: '타설 중', poured: '타설 완료', curing: '양생', stripped: '탈형', clad: '외장 바탕', wp: '방수', coping: '두겁석', done: '완료' };
 const WIRE = new Set(['rebar', 'embed']);
 
@@ -38,6 +39,7 @@ export function mount(root, ctx) {
       h('span', { class: 'note' }, '착공'), inp(C.start, v => { C.start = v; C.baseline = null; save(); rebuild(); day = 0; refresh(); }, { type: 'date', w: '140px' }),
       h('select', { onchange: e => { C.week = +e.target.value; save(); reschedule(); refresh(); } }, ...[[6, '주 6일'], [5, '주 5일']].map(([v, l]) => h('option', { value: v, selected: C.week === v }, l))),
       h('select', { onchange: e => { C.region = e.target.value; save(); reschedule(); refresh(); } }, ...Object.keys(CLIMATE).map(k => h('option', { value: k, selected: C.region === k }, `${k} 기후`))),
+      h('select', { title: '공법 (기본: 공정 툴에서 정한 공법)', onchange: e => { C.method = e.target.value || undefined; C.baseline = null; save(); rebuild(); build3d(); refresh(); } }, h('option', { value: '' }, `공법: 공정 툴 기준(${METHODS[P.sched?.method]?.short || '자동'})`), ...Object.entries(METHODS).map(([k, m]) => h('option', { value: k, selected: C.method === k }, m.short))),
       h('label', { class: 'row', style: { gap: '4px', alignItems: 'center' } }, h('input', { type: 'checkbox', checked: C.climate !== false, onchange: e => { C.climate = e.target.checked; save(); reschedule(); refresh(); } }), '평년 우천 반영'),
       h('span', { style: { flex: 1 } }), h('button', { class: 'btn', onclick: () => { setBaseline(); reschedule(); refresh(); } }, '기준 공정 저장'), h('button', { class: 'btn', onclick: exportXLSX }, 'Excel'));
   }
@@ -49,11 +51,11 @@ export function mount(root, ctx) {
   if (renderer) { renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1)); holder.prepend(renderer.domElement); renderer.domElement.style.display = 'block'; controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true; controls.maxPolarAngle = Math.PI * 0.49; }
   scene.add(new THREE.HemisphereLight(0xeaf4ff, 0x6b7360, 1.1)); const sun = new THREE.DirectionalLight(0xffffff, 1.6); sun.position.set(60, 120, 40); scene.add(sun);
   scene.background = new THREE.Color(0xa9c9e6);
-  const groundM = new THREE.MeshStandardMaterial({ color: 0x8a8f6a, roughness: 1 }); const ground = new THREE.Mesh(new THREE.PlaneGeometry(3000, 3000), groundM); ground.rotation.x = -Math.PI / 2; ground.position.y = -0.02; scene.add(ground);
+  const groundM = new THREE.MeshStandardMaterial({ color: 0x8a8f6a, roughness: 1, transparent: true, opacity: 1 }); const ground = new THREE.Mesh(new THREE.PlaneGeometry(3000, 3000), groundM); ground.rotation.x = -Math.PI / 2; ground.position.y = -0.02; scene.add(ground);
   const bx = P.base?.x || 0, by = P.base?.y || 0; const X = (x) => (x - bx) / 1000, Z = (y) => -(y - by) / 1000, Y = (z) => z / 1000;
   const unit = new THREE.BoxGeometry(1, 1, 1);
   const solidM = new THREE.MeshStandardMaterial({ roughness: 0.85 }), glassM = new THREE.MeshStandardMaterial({ color: 0x9fd6ff, transparent: true, opacity: 0.4, roughness: 0.1 }), wireM = new THREE.MeshBasicMaterial({ wireframe: true }), formM = new THREE.MeshStandardMaterial({ color: COL.form, roughness: 0.9, transparent: true, opacity: 0.92 }), postM = new THREE.MeshStandardMaterial({ color: 0xe0b23a, roughness: 0.6 });
-  let boxes = [], meshS, meshG, meshW, meshF, meshPost, elIndex = new Map(); const tempG = new THREE.Group(); scene.add(tempG); const hiG = new THREE.Group(); scene.add(hiG);
+  let meshPile = null; let boxes = [], meshS, meshG, meshW, meshF, meshPost, elIndex = new Map(); const tempG = new THREE.Group(); scene.add(tempG); const hiG = new THREE.Group(); scene.add(hiG);
   const lvById = new Map(P.levels.map(l => [l.id, l]));
   function build3d() {
     for (const m of [meshS, meshG, meshW, meshF, meshPost]) if (m) { scene.remove(m); m.dispose?.(); }
@@ -62,6 +64,7 @@ export function mount(root, ctx) {
     const N = boxes.length; meshS = new THREE.InstancedMesh(unit, solidM, N); meshG = new THREE.InstancedMesh(unit, glassM, N); meshW = new THREE.InstancedMesh(unit, wireM, N); meshF = new THREE.InstancedMesh(unit, formM, N);
     for (const m of [meshS, meshG, meshW, meshF]) { m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); m.setColorAt(0, new THREE.Color()); m.frustumCulled = false; scene.add(m); }
     meshPost = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.03, 0.03, 1, 5), postM, 12000); meshPost.frustumCulled = false; scene.add(meshPost);
+    if (meshPile) scene.remove(meshPile); meshPile = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.5, 0.5, 1, 12), new THREE.MeshStandardMaterial({ color: 0x8c8c86, roughness: 0.8 }), Math.max(1, G.piles.length)); meshPile.frustumCulled = false; meshPile.count = 0; scene.add(meshPile);
     buildTempStatic(); frame();
   }
   const M4 = new THREE.Matrix4(), Q = new THREE.Quaternion(), V3 = new THREE.Vector3(), SC = new THREE.Vector3(), CO = new THREE.Color(), HID = new THREE.Matrix4().makeScale(0, 0, 0), UPY = new THREE.Vector3(0, 1, 0);
@@ -105,7 +108,9 @@ export function mount(root, ctx) {
       // 동바리: 슬래브·보 아래
       if (st.temp.shore.has(r.el.id) && (r.el.k === 'slab' || r.el.k === 'beam') && pc < 11900) { const L = lvById.get(r.level.id); const below = r.el.k === 'slab' ? [...P.levels].filter(l => l.elev < L.elev).sort((a, c) => c.elev - a.elev)[0] : L; const zb = below ? below.elev : 0, zt = b.z0; if (zt - zb > 300) { const sp = Math.max(1500, Math.sqrt(b.hl * b.hw * 4 / 220)); const c = Math.cos(b.ang), sn = Math.sin(b.ang); for (let u = -b.hl + sp / 2; u < b.hl && pc < 11900; u += sp) for (let v = -b.hw + sp / 2; v < b.hw && pc < 11900; v += (r.el.k === 'beam' ? b.hw * 2 : sp)) { V3.set(X(b.cx + u * c - v * sn), Y((zb + zt) / 2), Z(b.cy + u * sn + v * c)); SC.set(1, (zt - zb) / 1000, 1); M4.compose(V3, Q.identity(), SC); meshPost.setMatrixAt(pc++, M4); } } }
     }
-    meshPost.count = pc; for (const m of [meshS, meshG, meshW, meshF, meshPost]) { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; }
+    meshPost.count = pc;
+    if (meshPile && G.piles.length) { const k = Math.round(G.piles.length * (st.temp.pile || 0)); const lo = Math.min(0, ...P.levels.map(l => l.elev)) - 1000; const D = (G.pileD || 500) / 1000, Lp = (G.pileL || 10); for (let j = 0; j < k; j++) { const p = G.piles[j].p; V3.set(X(p[0]), (lo / 1000) - Lp / 2, Z(p[1])); SC.set(D, Lp, D); M4.compose(V3, Q.identity(), SC); meshPile.setMatrixAt(j, M4); } meshPile.count = k; meshPile.instanceMatrix.needsUpdate = true; }
+    { const under = (st.temp.pile > 0 && st.temp.pile < 1) || st.temp.exc; groundM.opacity = under ? 0.45 : 1; groundM.depthWrite = !under; } for (const m of [meshS, meshG, meshW, meshF, meshPost]) { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; }
     // 가설
     for (const [id, g] of scafBy) g.visible = st.temp.scaf.has(id);
     let topDone = 0; for (const [id, s] of st.el) { const r = G.all.find(x => x.el.id === id); void r; void s; break; }
@@ -147,6 +152,7 @@ export function mount(root, ctx) {
   function renderSide() {
     if (tab !== '3d' || !st) return; side.innerHTML = ''; const D = S.s0 + day;
     const issues = S.issues.length ? h('div', { class: 'card', style: { borderColor: '#ef5f5f', marginBottom: '8px' } }, h('b', { style: { color: '#ef5f5f' } }, `역순 시공 ${S.issues.length}건 → 보완 작업 반영됨`), ...S.issues.slice(0, 3).map(x => h('div', { class: 'note', style: { fontSize: '11.5px' } }, x.msg))) : null;
+    if (G.plan) side.append(h('div', { class: 'note', style: { marginBottom: '6px', fontSize: '11.5px' } }, `공법: ${METHODS[G.method]?.name || G.method}${C.method ? ' (시뮬레이션에서 지정)' : ' (공정 툴 기준)'} · 흙막이: ${G.plan.shore?.type || '-'} · 기초: ${G.plan.found?.type || '-'}${G.piles.length ? ` ${G.piles.length}본` : ''}`));
     if (G.empty.length) side.append(h('div', { class: 'card', style: { borderColor: '#ef5f5f', marginBottom: '8px' } }, h('b', { style: { color: '#ef5f5f' } }, `객체가 없는 층 ${G.empty.length}개 (${G.empty.slice(0, 6).join(', ')}${G.empty.length > 6 ? ' …' : ''})`), h('div', { class: 'note', style: { fontSize: '11.5px' } }, G.all.length ? '이 층들은 시공 작업을 만들지 않았습니다.' : '도면 데이터가 불러와지지 않았습니다 — 저장이 중간에 멈춘 프로젝트일 수 있습니다. 샘플이면 홈에서 다시 만들어 주세요. 공정률은 가설·기초 등 모델과 무관한 작업만으로 계산됩니다.')));
     side.append(h('div', { class: 'note', style: { lineHeight: 1.6, marginBottom: '8px' } }, '날짜를 움직이면 그날의 현장(부재 상태·가설·장비·인원)을 보여줍니다. 부재를 누르면 선행 작업·체크리스트·후행 공정이 열립니다.'), issues || '');
     const working = st.tasks.filter(t => S.cal.can(D, t) && !t.ms); const waiting = st.tasks.filter(t => !S.cal.can(D, t) && !t.ms);
