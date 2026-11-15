@@ -167,3 +167,31 @@ export function buildInteriorLights(group, rects, { K = 4000, lumen = 1800, spac
   }
   return n;
 }
+
+// ---------- 조명기구 광원 (Core 1.1.0 light 객체) ----------
+// 광속(lm) → 장면 광원 세기 환산. 격자 조명(1800lm≈7)은 약 50 lm/m² 밀도 기준이라,
+// 설계 조도(≈500 lx, 약 1000 lm/m²)에서 비슷한 노출이 되도록 0.12배로 낮춤.
+export const LM_SCALE = 7 / 1800 * 0.12;
+// fixtures: [{x,y,z (three 좌표 m), lm}] — 광원 위치는 발광면 바로 아래
+// 광원 수가 maxAll을 넘으면 인접 기구를 묶어 광속을 합산(총 광속 보존)
+export function clusterFixtures(fixtures, maxAll = 32) {
+  const pts = fixtures.map(f => ({ x: f.x, y: f.y, z: f.z, lm: Math.max(0, +f.lm || 0) }));
+  if (pts.length <= maxAll) return pts.map(p => ({ ...p, n: 1 }));
+  pts.sort((a, b) => a.y - b.y || a.x - b.x || a.z - b.z);
+  const k = maxAll, C = Array.from({ length: k }, (_, i) => ({ ...pts[Math.floor((i + 0.5) * pts.length / k)] }));
+  const asg = new Int32Array(pts.length);
+  const d2 = (p, c) => (p.x - c.x) ** 2 + (p.z - c.z) ** 2 + ((p.y - c.y) * 6) ** 2; // 층이 다르면 묶이지 않도록 높이 가중
+  for (let it = 0; it < 8; it++) {
+    for (let i = 0; i < pts.length; i++) { let b = 0, bd = Infinity; for (let j = 0; j < k; j++) { const d = d2(pts[i], C[j]); if (d < bd) { bd = d; b = j; } } asg[i] = b; }
+    const acc = C.map(() => ({ x: 0, y: 0, z: 0, w: 0, lm: 0, n: 0 }));
+    for (let i = 0; i < pts.length; i++) { const p = pts[i], a = acc[asg[i]], w = p.lm || 1; a.x += p.x * w; a.y += p.y * w; a.z += p.z * w; a.w += w; a.lm += p.lm; a.n++; }
+    for (let j = 0; j < k; j++) if (acc[j].n) Object.assign(C[j], { x: acc[j].x / acc[j].w, y: acc[j].y / acc[j].w, z: acc[j].z / acc[j].w, lm: acc[j].lm, n: acc[j].n }); else C[j].n = 0;
+  }
+  return C.filter(c => c.n > 0);
+}
+export function buildFixtureLights(group, fixtures, { K = 4000, maxAll = 32 } = {}) {
+  group.clear(); if (!fixtures.length) return { sources: 0, lm: 0 };
+  const color = kelvin(K); const cl = clusterFixtures(fixtures, maxAll); let lm = 0;
+  for (const c of cl) { const L = new THREE.PointLight(color, c.lm * LM_SCALE, 0, 2); L.position.set(c.x, c.y, c.z); L.castShadow = false; L.userData.fixtures = c.n; group.add(L); lm += c.lm; }
+  return { sources: cl.length, lm };
+}

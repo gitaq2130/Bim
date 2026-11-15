@@ -6,7 +6,7 @@ import { h, toast, saveFile, dialog } from '../js/ui.js';
 import { IC } from '../js/icons.js';
 import { buildFurn } from './furn3d.js';
 import { sysColor, mepNetwork, SYS } from '../js/mep.js';
-import { FINISHES, finishMaps, worldUV, kelvin, skyTexture, horizonColor, buildInteriorLights } from './render3d.js';
+import { FINISHES, finishMaps, worldUV, kelvin, skyTexture, horizonColor, buildInteriorLights, buildFixtureLights } from './render3d.js';
 import { DISC, KINDS, MATS, SECTIONS, allElements, levelOf, elName, cumProgress, takeoff, isRefElement } from '../js/model.js';
 import { sunVector, localToDate, toDeg } from '../js/sun.js';
 import { statusAt, toD, toS, addDays, daysBetween } from './sched.js';
@@ -21,13 +21,25 @@ const PRESETS = {
   '석재 오피스': { ext: '#d6cfc2', int: '#f1eee8', slab: '#c4c0b8', floor: '#e2ddd3', col: '#cfc8bb', beam: '#c9c3b8', glass: '#7fb2d4', ground: '#5c5f63', frame: '#202326', t_ext: 'stone', t_int: 'paint', t_slab: 'concrete', t_floor: 'stone', t_col: 'stone', t_beam: 'concrete', t_ground: 'asphalt' },
 };
 const MEP_COL = { duct: '#9ece6a', pipe: '#4fb6e6', tray: '#f7768e' };
+// Core 1.1.0 객체: 도면 공종이 아니라 객체 공종(F 소방·E 전기·I 인테리어)으로 표시를 켜고 끔
+const OWN_DISC = new Set(['sprinkler', 'panel', 'light', 'ceiling']);
+// 천장 마감명 → 재질 (마감명에 들어간 낱말로 판정)
+function ceilFinish(fin = '') {
+  if (/목|우드|원목|wood/i.test(fin)) return { fin: 'wood', color: '#b08a5a' };
+  if (/금속|알루미늄|메탈|스틸|SMC|metal/i.test(fin)) return { fin: 'metal', color: '#d5d7da' };
+  if (/노출|콘크리트/.test(fin)) return { fin: 'concrete', color: '#b9b8b3' };
+  // 도장·텍스는 근접 광원에서 요철 질감이 과장되므로 무늬 없이 무광 단색
+  if (/텍스|흡음|암면|mineral/i.test(fin)) return { fin: null, color: '#e9e6de', rough: 0.95 };
+  return { fin: null, color: '#f3f2ee', rough: 0.9 };
+}
+const isRound = (el) => /다운|원형|매입등|펜던트|down|pendant/i.test(el.type || '') || (el.w || 0) <= 250;
 
 export function mount(root, ctx) {
   const P = ctx.P, S = ctx.state;
   P.view ||= {}; P.view.mats = Object.assign({}, PRESETS['모던 화이트'], P.view.mats || {});
   const M = P.view.mats; for (const [k, v] of Object.entries(PRESETS['모던 화이트'])) if (M[k] == null) M[k] = v;
   const RD = P.view.render = Object.assign({ quality: window.innerWidth > 800 && !window.__testFast ? 'high' : 'fast', tone: 'aces', ev: 0, ao: true, bloom: true, fog: true, lights: 'auto', K: 4000, lumen: 1800, sunMul: 1, tex: true }, P.view.render || {});
-  const st = { date: P.view.sunDate || new Date().toISOString().slice(0, 10), hour: P.view.sunHour ?? 14, disc: { A: true, S: true, M: true, E: true, P: true }, maxLevel: null, xray: false, mode: 'orbit', period: S.period3d ?? -1, hideUnstarted: false, ground: true, playing: false, clip: { y: null, x: null, z: null }, measure: false, sunMap: null, sched: S.sched4d?.date || null, schedPlay: !!S.sched4d };
+  const st = { date: P.view.sunDate || new Date().toISOString().slice(0, 10), hour: P.view.sunHour ?? 14, disc: Object.fromEntries(Object.keys(DISC).map(d => [d, true])), maxLevel: null, xray: false, mode: 'orbit', period: S.period3d ?? -1, hideUnstarted: false, ground: true, playing: false, clip: { y: null, x: null, z: null }, measure: false, sunMap: null, sched: S.sched4d?.date || null, schedPlay: !!S.sched4d };
   S.sched4d = null;
   const m = (v) => v / 1000;
   const bx = P.base.x, by = P.base.y;
@@ -87,6 +99,54 @@ export function mount(root, ctx) {
     return mats[k];
   }
   const glassMat = () => { if (RD.quality === 'fast') return mat('glass', M.glass, { opacity: 0.38, rough: 0.05, metal: 0.2, double: true }); const k = 'pglass' + M.glass; if (!mats[k]) mats[k] = new THREE.MeshPhysicalMaterial({ clippingPlanes: clipPlanes, color: M.glass, metalness: 0, roughness: 0.02, transmission: 0.92, thickness: 0.012, ior: 1.52, envMapIntensity: 1.6, side: THREE.DoubleSide, specularIntensity: 1 }); return mats[k]; };
+
+  // 조명기구 발광면: 조명 켜짐과 연동 (applyLights에서 세기 조절)
+  const fixMat = new THREE.MeshStandardMaterial({ clippingPlanes: clipPlanes, color: 0xffffff, emissive: kelvin(RD.K), emissiveIntensity: 0, roughness: 0.4 });
+
+  // ---------- Core 1.1.0 객체 형상 ----------
+  // 스프링클러 헤드: z = 천장면(헤드 상단), hh = 헤드 높이. 하향식/상향식/측벽형/은폐형
+  function sprinklerObj(el, E, pm) {
+    const z = E + (el.z ?? 2700), hh = el.hh || 60, r = (el.w || 80) / 2, t = String(el.type || 'pendent');
+    const g = new THREE.Group(), inner = new THREE.Group(); g.add(inner); g.position.copy(W3(el.p, z));
+    const body = pm || mat('spk', '#c9ccd1', { rough: 0.3, metal: 0.9 }), bulb = pm || mat('spkb', '#e0412f', { rough: 0.2 });
+    const cyl = (rr, len, y, mt) => { const me = new THREE.Mesh(new THREE.CylinderGeometry(m(rr), m(rr), m(len), 16), mt); me.position.y = m(y); me.castShadow = true; inner.add(me); return me; };
+    if (/conceal|은폐/i.test(t)) { cyl(r, 6, -3, body); return g; }
+    cyl(r * 0.6, 4, -2, body); cyl(9, hh * 0.65, -hh * 0.35, body); cyl(3, hh * 0.35, -hh * 0.55, bulb);
+    if (/side|측벽/i.test(t)) { const d = new THREE.Mesh(new THREE.BoxGeometry(m(r * 1.6), m(hh * 0.45), m(3)), body); d.position.set(0, m(-hh + hh * 0.22), m(12)); inner.add(d); }
+    else cyl(r, 3, -hh + 1.5, body);
+    if (/upright|상향/i.test(t)) { inner.rotation.x = Math.PI; inner.position.y = m(-hh); }
+    return g;
+  }
+  // 분전반: 바닥(z0)에서 h 높이 함체, 평면 -y 쪽이 문(전면)
+  function panelObj(el, E, pm) {
+    const z0 = E + (el.z0 || 0), z1 = z0 + (el.h || 1800), r = (el.rot || 0) * Math.PI / 180, w = el.w || 600, d = el.d || 250;
+    const g = new THREE.Group(); g.add(boxAt(el.p, w, d, el.rot, z0, z1, pm || mat('pnl', '#b9bec6', { rough: 0.45, metal: 0.6 })));
+    const off = d / 2 + 4, fp = [el.p[0] + Math.sin(r) * off, el.p[1] - Math.cos(r) * off];
+    if (w > 80 && z1 - z0 > 80) g.add(boxAt(fp, w - 40, 8, el.rot, z0 + 20, z1 - 20, pm || mat('pnld', '#9aa1ab', { rough: 0.4, metal: 0.65 })));
+    return g;
+  }
+  // 조명기구: z = 천장면(기구 상단), 평판=사각, 다운라이트=원형. 하부 발광면은 fixMat
+  function lightObj(el, E, pm) {
+    const z = E + (el.z ?? 2700), hh = el.hh || 50, w = el.w || 600, d = el.d || w; const g = new THREE.Group();
+    const frame = pm || mat('lgtf', '#e4e5e7', { rough: 0.4, metal: 0.3 }), face = pm || fixMat;
+    if (isRound(el)) {
+      const c = new THREE.Mesh(new THREE.CylinderGeometry(m(w / 2), m(w / 2), m(hh), 24), frame); c.position.copy(W3(el.p, z - hh / 2)); g.add(c);
+      const f = new THREE.Mesh(new THREE.CylinderGeometry(m(w / 2 - 12), m(w / 2 - 12), m(2), 24), face); f.position.copy(W3(el.p, z - hh - 1)); g.add(f);
+    } else {
+      g.add(boxAt(el.p, w, d, el.rot, z - hh, z, frame));
+      const f = boxAt(el.p, Math.max(10, w - 24), Math.max(10, d - 24), el.rot, z - hh - 2, z - hh, face); f.castShadow = false; g.add(f);
+    }
+    g.traverse(o => { if (o.isMesh) o.castShadow = false; });
+    return g;
+  }
+  // 천장: 외곽 폴리곤, 하단 z ~ 상단 z+t
+  function ceilingObj(el, E, pm, xr) {
+    if (!el.pts || el.pts.length < 3) return null;
+    const F = ceilFinish(el.fin); const mt = pm || xr(F.color) || mat('clg', F.color, F.fin ? { fin: F.fin } : { rough: F.rough });
+    const shape = new THREE.Shape(el.pts.map(q => new THREE.Vector2(m(q[0] - bx), m(q[1] - by))));
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: m(el.t || 20), bevelEnabled: false }); geo.rotateX(-Math.PI / 2); if (mt.userData?.uvSize) worldUV(geo, mt.userData.uvSize);
+    const o = new THREE.Mesh(geo, mt); o.position.y = m(E + (el.z ?? 2700)); o.castShadow = o.receiveShadow = true; return o;
+  }
 
   // 상자 메시: 평면 중심선 a→b, 폭 w, z0~z1
   function boxAlong(a, b, w, z0, z1, mt) {
@@ -153,11 +213,12 @@ export function mount(root, ctx) {
     const hiIds = new Set(S.hi?.ids || []);
     const maxElev = st.maxLevel != null ? levelOf(P, st.maxLevel).elev : Infinity;
     const xrayMat = (c) => mat('x', c, { opacity: 0.18 });
+    const fixtures = opt.keep ? [] : (st.fixtures = []);
     const endKey = (sid, p) => sid + '|' + Math.round(p[0] / 4) + ',' + Math.round(p[1] / 4); const endCnt = new Map(); const opsBy = new Map();
     for (const o of rows) { if (o.el.k === 'wall') for (const p of [o.el.a, o.el.b]) { const k = endKey(o.sheet.id, p); endCnt.set(k, (endCnt.get(k) || 0) + 1); } else if (o.el.k === 'opening') { if (!opsBy.has(o.el.host)) opsBy.set(o.el.host, []); opsBy.get(o.el.host).push(o.el); } }
     for (const r of rows) {
       const { el, sheet, level } = r; const disc = sheet.disc;
-      if (!st.disc[disc]) continue; if (level.elev > maxElev) continue;
+      if (!st.disc[OWN_DISC.has(el.k) ? KINDS[el.k].disc : disc]) continue; if (level.elev > maxElev) continue;
       if (!opt.ghost && (st.hidden.has(el.id) || (el.host && st.hidden.has(el.host)) || (st.iso && !st.iso.has(el.id) && !(el.host && st.iso.has(el.host))))) continue;
       // 구조 부재가 건축 도면에도 있으면(참조) 3D에서는 구조 도면 것만 표시
       if (KINDS[el.k]?.disc === 'S' && disc !== 'S' && rows.some(o => o.sheet.disc === 'S' && o.level.id === level.id && o.el.k === el.k)) continue;
@@ -167,7 +228,7 @@ export function mount(root, ctx) {
       const E = level.elev, H = level.height;
       let obj = null, color;
       const progMat = (base) => { if (ss && ss.s === 'active') return mat('sa', '#ff9f43', { rough: 0.6 }); if (!prog) return null; return p >= 100 ? mat('p', '#3fbf7f') : p > 0 ? mat('p', '#e6b450') : mat('p0', '#9aa0a8', { opacity: 0.25 }); };
-      const xr = (c) => st.xray && (disc === 'A' || el.k === 'slab') ? xrayMat(c) : null;
+      const xr = (c) => st.xray && (disc === 'A' || el.k === 'slab' || el.k === 'ceiling') ? xrayMat(c) : null;
       switch (el.k) {
         case 'wall': {
           const wh = el.h ?? H, z0 = E + (el.z0 || 0), z1 = z0 + wh;
@@ -223,6 +284,14 @@ export function mount(root, ctx) {
           obj = new THREE.Mesh(geo, progMat() || mat('pipe', sysColor(el.sys) || MEP_COL.pipe, { rough: 0.35, metal: 0.5 })); obj.position.copy(W3([(el.a[0] + el.b[0]) / 2, (el.a[1] + el.b[1]) / 2], zc)); obj.rotation.y = angOf(el.a, el.b); obj.castShadow = true;
           break;
         }
+        case 'sprinkler': obj = sprinklerObj(el, E, progMat()); break;
+        case 'panel': obj = panelObj(el, E, progMat()); break;
+        case 'light': {
+          obj = lightObj(el, E, progMat());
+          if (!opt.ghost) fixtures.push({ id: el.id, lv: level.id, lm: el.lm ?? KINDS.light.def.lm, x: m(el.p[0] - bx), y: m(E + (el.z ?? 2700) - (el.hh || 50)) - 0.06, z: -m(el.p[1] - by) });
+          break;
+        }
+        case 'ceiling': obj = ceilingObj(el, E, progMat(), xr); break;
       }
       if (!obj) continue;
       obj.traverse(o => { o.userData.ref = { id: el.id, sheet: sheet.id }; });
@@ -278,14 +347,22 @@ export function mount(root, ctx) {
     sunBall.visible = false; selG.visible = false; if (composer) composer.render(); else renderer.render(scene, camera);
     renderer.domElement.toBlob(b => { saveFile(`${P.name}_렌더_${w}x${hh}.png`.replace(/[\\/:*?"<>|]/g, '_'), b); renderer.setPixelRatio(keepPR); if (composer) composer.setPixelRatio(keepPR); selG.visible = true; resize(); updateSun(); }, 'image/png');
   }
-  // 실내 조명: 층별 벽 범위 안 천장에 격자 배치
+  // 실내 조명: 조명기구(light 객체)가 있는 층은 기구 위치·광속을 광원으로, 없는 층은 천장 격자 자동 배치
+  const gridG = new THREE.Group(), fixG = new THREE.Group(); lightsG.add(gridG, fixG);
+  const MAX_LIGHTS = 32; // WebGL 실시간 광원 한도 (넘으면 인접 기구를 묶어 광속 합산)
   function buildLights() {
     const rects = []; const maxElev = st.maxLevel != null ? levelOf(P, st.maxLevel).elev : Infinity;
-    for (const L of VP.levels) { if (L.elev > maxElev || (L.height || 0) < 2200) continue; const ws = allElements(VP).filter(r => r.level.id === L.id && r.el.k === 'wall' && !st.hidden.has(r.el.id)); if (ws.length < 3) continue; const pts = ws.flatMap(r => [r.el.a, r.el.b]); const b = bboxOf(pts); const pad = 600;
+    const all = allElements(VP); const fxLv = new Set(all.filter(r => r.el.k === 'light').map(r => r.level.id));
+    for (const L of VP.levels) { if (L.elev > maxElev || (L.height || 0) < 2200 || fxLv.has(L.id)) continue; const ws = all.filter(r => r.level.id === L.id && r.el.k === 'wall' && !st.hidden.has(r.el.id)); if (ws.length < 3) continue; const pts = ws.flatMap(r => [r.el.a, r.el.b]); const b = bboxOf(pts); const pad = 600;
       rects.push({ x0: m(b.x0 + pad - bx), x1: m(b.x1 - pad - bx), z0: -m(b.y1 - pad - by), z1: -m(b.y0 + pad - by), y: m(L.elev + L.height) - 0.25 }); }
-    st.nLights = buildInteriorLights(lightsG, rects, { K: RD.K, lumen: RD.lumen }); applyLights();
+    const fx = st.fixtures || [];
+    const nGrid = rects.length ? buildInteriorLights(gridG, rects, { K: RD.K, lumen: RD.lumen, maxAll: fx.length ? 12 : MAX_LIGHTS }) : (gridG.clear(), 0);
+    const fr = buildFixtureLights(fixG, fx, { K: RD.K, maxAll: Math.max(8, MAX_LIGHTS - nGrid) });
+    fixMat.emissive.copy(kelvin(RD.K));
+    st.lightInfo = { fixtures: fx.length, lm: fr.lm, sources: fr.sources, grid: nGrid, levels: fxLv.size };
+    st.nLights = nGrid + fr.sources; applyLights();
   }
-  function applyLights() { const on = RD.lights === 'on' || (RD.lights === 'auto' && (st.alt ?? 1) < 0.12); lightsG.visible = on; for (const c of lightsG.children) c.visible = on; }
+  function applyLights() { const on = RD.lights === 'on' || (RD.lights === 'auto' && (st.alt ?? 1) < 0.12); lightsG.visible = on; for (const c of [...gridG.children, ...fixG.children]) c.visible = on; fixMat.emissiveIntensity = on ? 3.5 : 0; }
   function fitShadow() {
     const c = bbox.getCenter(new THREE.Vector3()), r = bbox.getSize(new THREE.Vector3()).length() / 2 + 5;
     const cam = sun.shadow.camera; cam.left = -r; cam.right = r; cam.top = r; cam.bottom = -r; cam.near = 0.5; cam.far = r * 4; cam.updateProjectionMatrix();
@@ -708,13 +785,14 @@ export function mount(root, ctx) {
     rng('노출(EV)', 'ev', -3, 3, 0.1, updateSun, v => (v > 0 ? '+' : '') + (+v).toFixed(1));
     rng('태양 세기', 'sunMul', 0, 2, 0.05, updateSun, v => '×' + (+v).toFixed(2));
     rng('실내 색온도', 'K', 2200, 7000, 100, buildLights, v => v + 'K');
-    rng('조명 밝기', 'lumen', 300, 6000, 100, buildLights, v => v + 'lm');
+    rng('격자 조명 밝기 (기구 없는 층)', 'lumen', 300, 6000, 100, buildLights, v => v + 'lm');
     const tone = h('select'); for (const [k, l] of [['aces', 'ACES 필름 (언리얼 기본과 유사)'], ['agx', 'AgX (부드러운 하이라이트)'], ['neutral', '뉴트럴 (색 정확)'], ['filmic', '시네온']]) tone.append(h('option', { value: k, selected: RD.tone === k }, l));
     tone.onchange = () => { RD.tone = tone.value; renderer.toneMapping = TONES[RD.tone]; clearMats(); buildModel(); ctx.touch('meta'); };
     kvL.append(h('label', {}, '톤 매핑'), tone);
     const lm = h('select'); for (const [k, l] of [['auto', '자동 (해질녘부터)'], ['on', '항상 켜기'], ['off', '끄기']]) lm.append(h('option', { value: k, selected: RD.lights === k }, l)); lm.onchange = () => { RD.lights = lm.value; applyLights(); ctx.touch('meta'); buildToolbar(); if (pt) ptDirty(); };
     kvL.append(h('label', {}, '실내 조명'), lm);
-    sL.append(h('div', { class: 'note', style: { marginTop: '6px' } }, `실내 조명 ${st.nLights || 0}개 (층별 천장 격자 자동 배치). 하늘은 날짜·시각·위치로 계산한 HDR 하늘이 배경과 환경광(반사)으로 함께 쓰입니다.`));
+    const LI = st.lightInfo || {};
+    sL.append(h('div', { class: 'note', style: { marginTop: '6px' } }, LI.fixtures ? `조명기구 ${LI.fixtures}개(${LI.levels}개 층, 인테리어 배치값) → 광원 ${LI.sources}개, 총 광속 ${fmt0(LI.lm)} lm. 광원은 기구의 정격 광속(lm)을 그대로 쓰며, 실시간 한도(${MAX_LIGHTS}개)를 넘으면 인접 기구를 묶어 광속을 합산합니다.${LI.grid ? ` 기구가 없는 층은 천장 격자 조명 ${LI.grid}개.` : ''} ` : `실내 조명 ${st.nLights || 0}개 (조명기구가 없어 층별 천장 격자 자동 배치). `, `하늘은 날짜·시각·위치로 계산한 HDR 하늘이 배경과 환경광(반사)으로 함께 쓰입니다.`));
     side.append(h('h4', {}, '층·공정(4D)'));
     const s3 = h('div', { class: 'sec' }); side.append(s3);
     const lvSel = h('select'); lvSel.append(h('option', { value: '' }, '전체 층')); for (const l of [...P.levels].sort((a, b) => a.elev - b.elev)) lvSel.append(h('option', { value: l.id, selected: st.maxLevel === l.id }, `${l.name}까지`));
@@ -814,6 +892,6 @@ export function mount(root, ctx) {
   if (RD.quality === 'high') setupComposer().catch(e => { console.warn(e); RD.quality = 'fast'; }); else if (RD.quality === 'path') { RD.quality = 'high'; setupComposer().catch(() => { }); }
   const offModel = ctx.bus.on('model', () => { if (RV.cur == null && (P.prevs || []).length) setRev(null); else buildModel(); });
   return {
-    unmount() { stopPath(); dropComposer(); RV.play = false; window.removeEventListener('keydown', onRevKey); window.removeEventListener('keydown', onSelKey); cancelAnimationFrame(raf); ro.disconnect(); offModel(); window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onKey); controls.dispose(); clearMats(); renderer.dispose(); renderer.forceContextLoss?.(); },
+    unmount() { stopPath(); dropComposer(); fixMat.dispose(); RV.play = false; window.removeEventListener('keydown', onRevKey); window.removeEventListener('keydown', onSelKey); cancelAnimationFrame(raf); ro.disconnect(); offModel(); window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onKey); controls.dispose(); clearMats(); renderer.dispose(); renderer.forceContextLoss?.(); },
   };
 }
