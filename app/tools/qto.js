@@ -1,7 +1,7 @@
 // 빌더 물량 — 객체 기반 물량산출 + 내역 단가 연결
 import { h, toast, dialog, saveFile, table, confirmBox, approvalCell, editApproval } from '../js/ui.js';
 import { loadRev, diffProject, snapshotOf } from '../js/rev.js';
-import { takeoff, KINDS, DISC, levelOf, elName, REBAR_RATIO, isRefElement, allElements } from '../js/model.js';
+import { takeoff, KINDS, DISC, levelOf, elName, REBAR_RATIO, isRefElement, allElements, DEFAULT_BOQ } from '../js/model.js';
 import { BAR, FIELDS, defaultSpec, bbs, specKey, specOf, parseN, parseS, LAP, HOOK, STOCK } from '../js/rebar.js';
 import { fmt, fmt0, csv, uid, esc } from '../js/util.js';
 
@@ -35,9 +35,10 @@ export function mount(root, ctx) {
     for (const [code, qty] of sum) if (!boqMap[code]) sumRows.push({ code, name: '(내역 미등록)', unit: '', price: 0, qty, amt: 0 });
     const total = sumRows.reduce((s, r) => s + r.amt, 0);
     w.append(h('h2', { class: 'row', style: { justifyContent: 'space-between' } }, '내역 요약', h('button', { class: 'btn sm', onclick: editBoq }, '내역·단가 편집')));
+    gapBanner(sum, boqMap);
     w.append(h('div', { class: 'tbl' }, table([
       { label: '코드', key: 'code', w: '70px' }, { label: '명칭', key: 'name' }, { label: '단위', key: 'unit', w: '60px' },
-      { label: '수량', num: true, render: r => fmt(r.qty, 3) }, { label: '단가(원)', num: true, render: r => fmt0(r.price) }, { label: '금액(원)', num: true, render: r => fmt0(r.amt) },
+      { label: '수량', num: true, render: r => fmt(r.qty, 3) }, { label: '단가(원)', num: true, render: r => fmt0(r.price) }, { label: '금액(원)', key: 'amt', num: true, render: r => fmt0(r.amt) },
       { label: '비율', num: true, render: r => total ? fmt(r.amt / total * 100, 1) + '%' : '-' },
     ], sumRows, { foot: { name: '합계', amt: fmt0(total) }, onRow: (r) => { st.open = st.open === r.code ? null : r.code; render(); } })));
     w.append(h('div', { class: 'note', style: { marginTop: '6px' } }, '단가는 예시값입니다. "내역·단가 편집"에서 현장 계약 단가로 바꾸세요. 행을 누르면 해당 코드 산출 근거만 아래에 표시됩니다.'));
@@ -156,7 +157,7 @@ export function mount(root, ctx) {
     box.append(h('h2', {}, `증감 대비표 (${nm(st.cb)} → ${nm(st.ct)})`), h('div', { class: 'tbl' }, table([
       { label: '코드', key: 'code' }, { label: '공종', key: 'name' }, { label: '단위', key: 'unit' }, { label: '단가', num: true, render: x => fmt0(x.price) },
       { label: '당초 수량', num: true, render: x => fmt(x.q0, 3) }, { label: '변경 수량', num: true, render: x => fmt(x.q1, 3) }, { label: '증감 수량', num: true, render: x => sgn(x.dq, 3), cls: x => x.dq > 1e-9 ? 'bad' : '' },
-      { label: '당초 금액', num: true, render: x => fmt0(x.a0) }, { label: '변경 금액', num: true, render: x => fmt0(x.a1) }, { label: '증감 금액', num: true, render: x => sgn(x.da), cls: x => x.da > 0.5 ? 'bad' : '' },
+      { label: '당초 금액', key: 'a0', num: true, render: x => fmt0(x.a0) }, { label: '변경 금액', key: 'a1', num: true, render: x => fmt0(x.a1) }, { label: '증감 금액', key: 'da', num: true, render: x => sgn(x.da), cls: x => x.da > 0.5 ? 'bad' : '' },
     ], D.items, { foot: { name: '합계', a0: fmt0(tot.a0), a1: fmt0(tot.a1), da: sgn(tot.da) } })));
     const lab = { added: '추가', changed: '변경', removed: '삭제' };
     box.append(h('h2', {}, `부재별 증감 근거 (${D.els.length}건)`), h('div', { class: 'tbl', style: { maxHeight: '420px' } }, table([
@@ -183,14 +184,36 @@ export function mount(root, ctx) {
     saveFile(`${P.name}_설계변경내역서_${a}-${b}.html`.replace(/[\\/:*?"<>|]/g, '_'), `<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>설계변경 내역서</title><style>body{font-family:'Malgun Gothic',sans-serif;margin:24px}table{border-collapse:collapse;width:100%;font-size:12px;margin-bottom:18px}td,th{border:1px solid #999;padding:4px 6px}th{background:#eef}td.n{text-align:right}</style></head><body><h1 style="font-size:20px">${esc(P.name)} 설계변경 내역서</h1><p>${esc(a)} → ${esc(b)} · 작성 ${new Date().toLocaleDateString('ko-KR')} · 증감 ${sgn(tot.da)}원 (${tot.a0 ? sgn(tot.da / tot.a0 * 100, 2) : '-'}%)</p><table><tr><th>코드</th><th>공종</th><th>단위</th><th>단가</th><th>당초 수량</th><th>변경 수량</th><th>증감</th><th>당초 금액</th><th>변경 금액</th><th>증감 금액</th></tr>${tr}<tr><th colspan=7>합계</th><th>${fmt0(tot.a0)}</th><th>${fmt0(tot.a1)}</th><th>${sgn(tot.da)}</th></tr></table><h2 style="font-size:15px">부재별 증감 근거</h2><table><tr><th>구분</th><th>도면</th><th>객체</th><th>코드</th><th>증감 수량</th><th>증감 금액</th></tr>${er}</table><p style="font-size:11px;color:#666">빌더 모델 물량 기준. 단가는 프로젝트 내역 단가 적용.</p></body></html>`);
   }
 
+  // ---------- 내역 정합: 물량은 있는데 내역(P.boq)에 없거나 단가 0인 코드 ----------
+  function gapBanner(sum, boqMap) {
+    const missing = [...sum.keys()].filter(c => !boqMap[c]);
+    const zero = [...sum.keys()].filter(c => boqMap[c] && !(boqMap[c].price > 0));
+    if (!missing.length && !zero.length) return;
+    const def = Object.fromEntries(DEFAULT_BOQ.map(b => [b.code, b]));
+    const fillable = missing.filter(c => def[c]);
+    const box = h('div', { class: 'card', style: { margin: '0 0 10px', borderColor: 'var(--warn)' } });
+    if (missing.length) box.append(h('div', { class: 't' }, `내역 미등록 코드 ${missing.length}개 — ${missing.join(', ')}`), h('div', { class: 'd' }, '물량은 산출되지만 내역에 없어 금액이 0원이고, 기성검토·설계변경 금액에서도 빠집니다.' + (fillable.length ? ` ${fillable.map(c => def[c].name).join(', ')}은(는) 기본 내역 단가로 바로 보충할 수 있습니다.` : '')));
+    if (zero.length) box.append(h('div', { class: 'd', style: { marginTop: missing.length ? '6px' : 0 } }, `단가 0원 내역 ${zero.length}개 — ${zero.map(c => `${c} ${boqMap[c].name}`).join(', ')}`));
+    box.append(h('div', { class: 'row', style: { marginTop: '8px' } },
+      fillable.length ? h('button', { class: 'btn sm primary', onclick: () => { const n = fillDefaults(); toast(`기본 내역 ${n}개를 추가했습니다 (기존 내역·단가는 그대로)`, 'ok'); render(); } }, '기본 내역 단가로 보충') : null,
+      (missing.length > fillable.length || zero.length) ? h('button', { class: 'btn sm', onclick: () => editBoq(missing.filter(c => !def[c])) }, '내역·단가 직접 입력') : null));
+    w.append(box);
+  }
+  function fillDefaults() {
+    const have = new Set(P.boq.map(b => b.code)); let n = 0;
+    for (const b of DEFAULT_BOQ) if (!have.has(b.code)) { P.boq.push({ ...b }); n++; }
+    if (n) ctx.touch('meta'); return n;
+  }
+
   function exportCSV(rows) {
     const boqMap = Object.fromEntries(P.boq.map(b => [b.code, b]));
     const out = [['도면', '공종', '층', '구역', '태그', '객체', '코드', '명칭', '수량', '단위', '단가', '금액', '근거']];
     for (const r of rows) { const b = boqMap[r.code] || {}; out.push([r.sheet.name, r.sheet.disc, r.level.name, r.el.zone || '', r.el.tag || '', elName(r.el), r.code, b.name || '', r.qty.toFixed(4), b.unit || '', b.price || 0, Math.round(r.qty * (b.price || 0)), r.desc || '']); }
     saveFile(`${P.name}_물량산출.csv`.replace(/[\\/:*?"<>|]/g, '_'), csv(out));
   }
-  async function editBoq() {
+  async function editBoq(addCodes = []) {
     const list = JSON.parse(JSON.stringify(P.boq)); const body = h('div');
+    for (const c of Array.isArray(addCodes) ? addCodes : []) if (!list.some(b => b.code === c)) list.push({ code: c, name: '', unit: '', price: 0 });
     const draw = () => {
       body.innerHTML = '';
       body.append(h('div', { class: 'tbl', style: { maxHeight: '50vh' } }, table([
@@ -200,12 +223,16 @@ export function mount(root, ctx) {
         { label: '단가(원)', render: r => { const i = h('input', { type: 'number', value: r.price }); i.oninput = () => r.price = +i.value; return i; } },
         { label: '', render: r => h('button', { type: 'button', class: 'btn sm', onclick: () => { list.splice(list.indexOf(r), 1); draw(); } }, '삭제') },
       ], list)));
-      body.append(h('div', { class: 'note', style: { marginTop: '6px' } }, '자동 산출 코드: CON 콘크리트, FRM 거푸집, RBR 철근, STL 철골, CMU 조적, DRY 경량벽, GLZ 커튼월, DOR 문, WIN 창호, DCT 덕트, PIP 배관, TRY 트레이'));
-      body.append(h('button', { type: 'button', class: 'btn sm', style: { marginTop: '6px' }, onclick: () => { list.push({ code: 'NEW' + (list.length + 1), name: '', unit: '', price: 0 }); draw(); } }, '+ 항목 추가'));
+      body.append(h('div', { class: 'note', style: { marginTop: '6px' } }, '자동 산출 코드: ' + DEFAULT_BOQ.map(b => `${b.code} ${b.name}`).join(', ')));
+      const lack = DEFAULT_BOQ.filter(b => !list.some(x => x.code === b.code));
+      body.append(h('div', { class: 'row', style: { marginTop: '6px' } }, h('button', { type: 'button', class: 'btn sm', onclick: () => { list.push({ code: 'NEW' + (list.length + 1), name: '', unit: '', price: 0 }); draw(); } }, '+ 항목 추가'),
+        lack.length ? h('button', { type: 'button', class: 'btn sm', onclick: () => { for (const b of lack) list.push({ ...b }); draw(); } }, `기본 내역 중 없는 ${lack.length}개 추가`) : null));
     };
     draw();
     const ok = await dialog({ title: '내역·단가 편집', body, wide: true, ok: '저장' }); if (!ok) return;
-    P.boq = list; ctx.touch('meta'); render(); toast('내역을 저장했습니다', 'ok');
+    const codes = list.map(b => b.code.trim()).filter(Boolean); const dup = codes.filter((c, i) => codes.indexOf(c) !== i);
+    if (dup.length) return toast(`코드가 중복됩니다: ${[...new Set(dup)].join(', ')}`, 'err');
+    P.boq = list.filter(b => b.code.trim()); ctx.touch('meta'); render(); toast('내역을 저장했습니다', 'ok');
   }
   render();
   const off = ctx.bus.on('model', render);

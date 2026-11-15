@@ -30,6 +30,8 @@ export function mount(root, ctx) {
     sub.append(h('button', { class: 'btn', onclick: () => { ctx.state.period3d = st.pi; ctx.go('view3d'); } }, '3D에서 진척 보기'), h('button', { class: 'btn', onclick: () => { ctx.state.progView = st.pi; ctx.go('cad'); } }, '도면에서 영역 마킹'));
     w.append(sub);
     const rows = takeoff(P);
+    const known = new Set(P.boq.map(b => b.code)); const miss = [...new Set(rows.map(r => r.code))].filter(c => !known.has(c));
+    if (miss.length) w.append(h('div', { class: 'card', style: { marginBottom: '12px', borderColor: 'var(--warn)' } }, h('div', { class: 't' }, `내역 미등록 코드 ${miss.length}개 — ${miss.join(', ')}`), h('div', { class: 'd' }, '이 코드의 물량은 기성 검토에서 빠집니다. 물량산출에서 내역을 보충하세요.'), h('button', { class: 'btn sm', style: { marginTop: '6px' }, onclick: () => ctx.go('qto') }, '물량산출로 이동')));
     if (st.tab === 'review') renderReview(rows); else if (st.tab === 'claim') renderClaim(rows); else if (st.tab === 'status') renderStatus(rows); else renderProg(rows);
   }
 
@@ -50,9 +52,9 @@ export function mount(root, ctx) {
       { label: '차이', num: true, render: r => r.diff == null ? '-' : fmt(r.diff, 2), cls: r => r.diff > 0 && r.verdict !== '적정' ? 'bad' : '' },
       { label: '차이율', num: true, render: r => r.diffPct == null ? '-' : isFinite(r.diffPct) ? fmt(r.diffPct, 1) + '%' : '검토량 0' },
       { label: '판정', render: r => h('span', { class: 'pill ' + VCOL[r.verdict] }, r.verdict) },
-      { label: '검토 금액', num: true, render: r => fmt0(amt(r, r.thisQty)) }, { label: '청구 금액', num: true, render: r => r.claim == null ? '-' : fmt0(amt(r, r.claim)) },
+      { label: '검토 금액', key: 'revAmt', num: true, render: r => fmt0(amt(r, r.thisQty)) }, { label: '청구 금액', key: 'claimAmt', num: true, render: r => r.claim == null ? '-' : fmt0(amt(r, r.claim)) },
       { label: '누계율', num: true, render: r => r.contract ? fmt(r.cum / r.contract * 100, 1) + '%' : '-' },
-    ], rv, { foot: { name: '합계', ...{} }, rowClass: r => '' })));
+    ], rv, { foot: { name: '합계', revAmt: fmt0(tot.rev), claimAmt: fmt0(tot.claim) } })));
     if (issues.length) {
       w.append(h('h2', {}, '검토 의견'));
       const ul = h('div', { class: 'card' });
