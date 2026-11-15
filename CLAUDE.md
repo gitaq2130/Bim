@@ -3,7 +3,7 @@
 이 브랜치 계열(`builder/*`)은 **빌더**(건축물 생애주기 통합 플랫폼)입니다. 같은 저장소의 `claude/agendatalk-*` 브랜치는 별개 제품(안건톡)이므로 건드리지 않습니다.
 
 ## 시작할 때
-1. 사용자가 지정한 트랙을 확인합니다 (core, cad, view3d, struct, cost, review, field, admin, mep, interior, civil, landscape). 지정하지 않았으면 먼저 물어봅니다.
+1. 사용자가 지정한 트랙을 확인합니다 (core, cad, view3d, struct, cost, review, field, admin, mep, interior, civil, landscape, csim). 지정하지 않았으면 먼저 물어봅니다.
 2. 읽는 순서: `docs/CORE.md` → `docs/tools/<track>.md` (core는 `docs/sessions/core-requests.md`) → `CHANGELOG.md`
 3. 작업 브랜치 `builder/<track>`에서 작업합니다. 브랜치가 없으면 `builder/main`에서 만듭니다.
 
