@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { h, toast, dialog, table, saveFile } from '../js/ui.js';
 import { settingsOf, USES, constructionStages } from '../js/structmodel.js';
 import { stationForces } from '../js/fem.js';
-import { windField, caseField, groundMotion, timeHistory, longTermField, columnShortening, xiOf, ensureModes } from '../js/simcore.js';
+import { windField, caseField, groundMotion, timeHistory, longTermField, columnShortening, xiOf, ensureModes, pushover } from '../js/simcore.js';
 import { analyzeSlab } from '../js/plate.js';
 import { specOf, FIELDS as RB_FIELDS } from '../js/rebar.js';
 
@@ -238,4 +238,69 @@ export function csUI(api) {
   }
   render(); if (st.out) show(); else if (res.info.cs) compute();
   return { leave() { } };
+}
+
+// =====================================================================
+// 푸시오버 (비선형 정적) — 역량곡선 · 성능점 · 소성힌지
+const LV = [['탄성', '#3a8fd6'], ['IO 이내', '#4cc38a'], ['LS 이내', '#f5d547'], ['CP 이내', '#ff9f1c'], ['CP 초과', '#ff4d4f']];
+export function pushUI(api) {
+  const { side } = api; const res = api.C.res; const M = res.M, N = M.nodes; const sp = res.info.seis; const st = api.pushState ||= { dir: 'X', sign: 1, out: null, frame: -1, scale: 1 };
+  const anim = api.anim.build(); let pts3 = null;
+  const bx = api.P.base?.x || 0, by = api.P.base?.y || 0;
+  async function run() {
+    const msg = h('div', { class: 'note' }, '계산 중…'); side.append(msg); const t = performance.now();
+    st.out = await pushover(res, api.C.S, api.C.D, { dir: st.dir, sign: st.sign, onProgress: (m) => { msg.textContent = m; }, tick: () => new Promise(r => setTimeout(r, 0)) });
+    if (!st.out) { toast('강막 층이 없어 푸시오버를 할 수 없습니다', 'err'); return; } st.out.ms = performance.now() - t; st.frame = st.out.frames.length - 1; api.C.push = st.out; render(); show();
+  }
+  function lvAt(o, i) { // 단계 i 의 힌지 성능 수준
+    const f = o.frames[i]; return o.H.map((h, j) => !h.y || h.step >= i ? 0 : Math.abs(f.thp[j]) <= h.lim[0] ? 1 : Math.abs(f.thp[j]) <= h.lim[1] ? 2 : Math.abs(f.thp[j]) <= h.lim[2] ? 3 : 4);
+  }
+  function show() {
+    if (pts3) { api.G.remove(pts3); pts3.geometry.dispose(); pts3.material.dispose(); pts3 = null; }
+    const o = st.out; if (!o) { anim.update(null); api.markDirty(); return; } const fr = o.frames[st.frame]; const last = o.frames[o.frames.length - 1].disp; let vmax = 0; for (let i = 0; i < N.length; i++) vmax = Math.max(vmax, Math.hypot(last[i * 3], last[i * 3 + 1], last[i * 3 + 2]));
+    const amp = anim.size * 1000 * 0.06 / (vmax || 1) * st.scale; anim.update(fr.disp, amp, vmax || 1);
+    const lv = lvAt(o, st.frame); const pos = [], col = [];
+    o.H.forEach((h2, j) => { if (!lv[j]) return; const E = res.R.E[h2.ei]; const n = h2.end ? E.e.n2 : E.e.n1, n2 = h2.end ? E.e.n1 : E.e.n2; const a = N[n], b = N[n2]; const t = Math.min(0.12, 400 / (E.L || 1));
+      const x = a.x + (b.x - a.x) * t + (fr.disp[n * 3] * (1 - t) + fr.disp[n2 * 3] * t) * amp / 1000, y = a.y + (b.y - a.y) * t + (fr.disp[n * 3 + 1] * (1 - t) + fr.disp[n2 * 3 + 1] * t) * amp / 1000, z = a.z + (b.z - a.z) * t + (fr.disp[n * 3 + 2] * (1 - t) + fr.disp[n2 * 3 + 2] * t) * amp / 1000;
+      pos.push((x - bx) / 1000, z / 1000, -(y - by) / 1000); const c = new THREE.Color(LV[lv[j]][1]); col.push(c.r, c.g, c.b); });
+    if (pos.length) { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); pts3 = new THREE.Points(g, new THREE.PointsMaterial({ size: 9, sizeAttenuation: false, vertexColors: true, depthTest: false })); pts3.renderOrder = 10; api.G.add(pts3); }
+    api.markDirty();
+  }
+  function curve(o) {
+    const W = 400, H = 240; const cv = h('canvas', { width: W, height: H, style: { width: '100%', background: '#0f1218', borderRadius: '6px' } }); const g = cv.getContext('2d');
+    const dmax = Math.max(o.pts[o.pts.length - 1].d, o.tgt?.MCE.dt || 0) * 1.08 || 1, vmax = o.Vmax * 1.15 || 1; const X = (d) => 44 + d / dmax * (W - 56), Y = (v) => H - 26 - v / vmax * (H - 40);
+    g.strokeStyle = '#2a3342'; g.beginPath(); g.moveTo(44, 10); g.lineTo(44, H - 26); g.lineTo(W - 8, H - 26); g.stroke();
+    g.strokeStyle = '#8a94a6'; g.setLineDash([4, 3]); g.beginPath(); g.moveTo(X(0), Y(0)); g.lineTo(X(o.dy), Y(o.Vy)); g.lineTo(X(o.pts[o.pts.length - 1].d), Y(o.pts[o.pts.length - 1].V)); g.stroke(); g.setLineDash([]);
+    g.strokeStyle = '#5ab0ff'; g.lineWidth = 1.6; g.beginPath(); o.pts.forEach((p, i) => i ? g.lineTo(X(p.d), Y(p.V)) : g.moveTo(X(p.d), Y(p.V))); g.stroke(); g.lineWidth = 1;
+    if (o.brittle || o.mech) { const p = o.pts[o.pts.length - 1]; g.fillStyle = '#ff4d4f'; g.beginPath(); g.arc(X(p.d), Y(p.V), 4, 0, 7); g.fill(); }
+    if (o.tgt) for (const [k, c, lab] of [['DE', '#ff9f1c', '설계지진'], ['MCE', '#ff4d4f', 'MCE']]) { const t = o.tgt[k]; if (!(t.dt > 0)) continue; g.strokeStyle = c; g.setLineDash([3, 3]); g.beginPath(); g.moveTo(X(t.dt), 10); g.lineTo(X(t.dt), H - 26); g.stroke(); g.setLineDash([]); g.fillStyle = c; g.font = '11px sans-serif'; g.fillText(`${lab} ${t.dt.toFixed(0)}`, Math.min(W - 80, X(t.dt) + 3), k === 'DE' ? 22 : 36); }
+    const p = o.pts[Math.min(st.frame, o.pts.length - 1)]; g.fillStyle = '#e6edf7'; g.beginPath(); g.arc(X(p.d), Y(p.V), 3.5, 0, 7); g.fill();
+    g.fillStyle = '#8a94a6'; g.font = '11px sans-serif'; g.fillText(`V (kN) ${o.Vmax.toFixed(0)}`, 4, 12); g.fillText('지붕 변위 (mm) →', W - 110, H - 8); g.fillText(dmax.toFixed(0), W - 36, H - 14); return cv;
+  }
+  function render() {
+    side.innerHTML = '';
+    side.append(h('div', { class: 'note', style: { marginBottom: '8px', lineHeight: 1.6 } }, '중력(1.0D+0.25L) 상태에서 등가정적 분포의 수평력을 단계적으로 늘리며, 부재 양단에 소성힌지(기대강도, 탄성-완전소성)가 생길 때마다 강성을 갱신합니다. 전단강도 도달은 취성 파괴로 보고 종료합니다. 목표변위는 변위계수법(C0·C1·C2)으로 산정합니다.'),
+      row(h('select', { onchange: e => { st.dir = e.target.value; } }, [['X', 'X 방향'], ['Y', 'Y 방향']].map(([k, l]) => h('option', { value: k, selected: k === st.dir }, l))), h('select', { onchange: e => { st.sign = +e.target.value; } }, [[1, '+ 방향'], [-1, '− 방향']].map(([k, l]) => h('option', { value: k, selected: k === st.sign }, l))), h('button', { class: 'btn primary sm', onclick: () => setTimeout(run, 10) }, st.out ? '다시 계산' : '푸시오버 계산')));
+    const o = st.out; if (!o) return; const fmt = (v, d = 0) => v.toFixed(d);
+    side.append(curve(o), row(lab('단계', h('input', { type: 'range', min: 0, max: o.frames.length - 1, step: 1, value: st.frame, style: { width: '170px' }, oninput: e => { st.frame = +e.target.value; render(); show(); } })), h('span', { class: 'mono' }, `${st.frame}/${o.frames.length - 1} · V ${fmt(o.pts[st.frame].V)} kN · 힌지 ${o.pts[st.frame].nh}`)),
+      row(lab('변형 배율', h('input', { type: 'range', min: 0.2, max: 5, step: 0.1, value: st.scale, style: { width: '120px' }, onchange: e => { st.scale = +e.target.value; show(); } }))),
+      h('div', { class: 'note', style: { marginBottom: '6px' } }, LV.slice(1).map(([l, c]) => `<span style="color:${c}">●</span> ${l}`).join('  ')));
+    side.lastChild.innerHTML = LV.slice(1).map(([l, c]) => `<span style="color:${c}">●</span> ${l}`).join(' &nbsp; ');
+    const W = res.info.Wt / 1e3; const pill = (ok, t) => h('span', { class: 'pill ' + (ok ? 'ok' : 'bad') }, t);
+    const rows = [{ k: '종료 사유', v: o.why || '-' }, { k: '초기 강성 / 항복 (이선형)', v: `${fmt(o.Ki, 1)} kN/mm · Vy ${fmt(o.Vy)} kN (Vy/W ${(o.Vy / W).toFixed(3)}) · δy ${fmt(o.dy, 1)} mm` }, { k: '최대 밑면전단', v: `${fmt(o.Vmax)} kN · 힌지 ${o.nH}개 · ${o.pts.length - 1}단계 · ${(o.ms / 1000).toFixed(1)}초` }];
+    side.append(sec(`역량곡선 — ${st.dir}${st.sign > 0 ? '+' : '−'}`), h('div', { class: 'tbl' }, table([{ label: '항목', key: 'k' }, { label: '값', key: 'v' }], rows)));
+    if (o.tgt) {
+      const lim = sp.driftLim; const ev = (k, dl, maxLv, nm) => { const t = o.tgt[k], a = t.at; const ok = a?.reached && a.drift <= dl && a.cnt[maxLv] === 0 && (maxLv >= 3 || a.cnt[3] === 0); return { k: nm, v: a?.reached ? `δt ${fmt(t.dt, 1)} mm · V ${fmt(a.V)} kN · 층간변위 ${(a.drift * 100).toFixed(2)}% (≤ ${(dl * 100).toFixed(1)}%) · 힌지 IO ${a.cnt[0]} / LS ${a.cnt[1]} / CP ${a.cnt[2]} / 초과 ${a.cnt[3]}` : `δt ${fmt(t.dt, 1)} mm — 도달 전 ${o.brittle ? '전단 파괴' : '붕괴'}`, r: pill(ok, ok ? '만족' : '불만족') }; };
+      const DE = o.tgt.DE, MC = o.tgt.MCE;
+      side.append(sec('성능점 (변위계수법)'), h('div', { class: 'tbl' }, table([{ label: '수준', key: 'k' }, { label: '결과', key: 'v' }, { label: '', key: 'r' }], [
+        { k: '계수', v: `Te ${o.tgt.Te.toFixed(2)} s · C0 ${DE.C0.toFixed(2)} · C1 ${DE.C1.toFixed(2)}/${MC.C1.toFixed(2)} · C2 ${DE.C2.toFixed(2)}/${MC.C2.toFixed(2)} · R ${DE.Rs.toFixed(2)}/${MC.Rs.toFixed(2)} · Sa ${DE.Sa.toFixed(3)}/${MC.Sa.toFixed(3)} g`, r: '' },
+        ev('DE', lim, 2, '설계지진 — 인명안전'), ev('MCE', lim * 1.5, 3, 'MCE (×1.5) — 붕괴방지')])));
+      const a = o.tgt.MCE.at; if (a?.reached) { const worst = o.H.map((h2, j) => ({ h: h2, th: a.thp[j], r: a.thp[j] / h2.lim[2] })).filter(x => x.th > 1e-6).sort((p, q) => q.r - p.r).slice(0, 15);
+        if (worst.length) side.append(sec('MCE 시 소성회전각 상위 힌지'), h('div', { class: 'tbl' }, table([{ label: '부재', render: x => { const m = M.members[x.h.mi]; return `${m.r.level.name} ${m.el.tag || ''}`; } }, { label: '종류', render: x => x.h.kind }, { label: '단부·축', render: x => `${x.h.end ? '끝' : '시작'} ${x.h.ax}` }, { label: 'θp (rad)', num: true, render: x => x.th.toFixed(4) }, { label: 'LS / CP', num: true, render: x => `${x.h.lim[1].toFixed(3)} / ${x.h.lim[2].toFixed(3)}` }, { label: '비', num: true, render: x => h('b', { style: { color: x.r > 1 ? '#ff4d4f' : x.th > x.h.lim[1] ? '#ff9f1c' : '' } }, x.r.toFixed(2)) }], worst, { onRow: x => api.select?.(x.h.mi) }))); }
+    } else side.append(h('div', { class: 'note', style: { marginTop: '6px' } }, '지진하중이 꺼져 있어 성능점은 산정하지 않습니다.'));
+    if (o.brittle) side.append(h('div', { class: 'note', style: { color: '#ff9f1c', marginTop: '6px' } }, `취성 파괴: ${o.brittle.tag} 전단강도 ${(o.brittle.Vn / 1e3).toFixed(0)} kN 도달 — 전단 보강 또는 단면 증대 검토`));
+    side.append(row(h('button', { class: 'btn sm', onclick: async () => { const { writeBook } = await import('../js/excel.js'); saveFile(`${api.P.name.replace(/[\\/:*?"<>|]/g, '_')}_푸시오버_${st.dir}.xlsx`, await writeBook([{ name: '역량곡선', rows: [['단계', '밑면전단(kN)', '지붕변위(mm)', '힌지 수'], ...o.pts.map((p, i) => [i, +p.V.toFixed(1), +p.d.toFixed(2), p.nh])] }, { name: '소성힌지', rows: [['층', '부재', '종류', '단부', '축', '발생 단계', '발생 V(kN)', '최종 θp(rad)', 'IO', 'LS', 'CP'], ...o.H.filter(x => x.y).map(x => { const m = M.members[x.mi]; return [m.r.level.name, m.el.tag || '', x.kind, x.end ? '끝' : '시작', x.ax, x.step, +x.V.toFixed(1), +x.thp.toFixed(5), +x.lim[0].toFixed(4), +x.lim[1].toFixed(4), +x.lim[2].toFixed(4)]; })] }])); } }, 'Excel')));
+  }
+  render(); if (st.out) show();
+  return { leave() { if (pts3) { api.G.remove(pts3); pts3.geometry.dispose(); pts3.material.dispose(); } } };
 }

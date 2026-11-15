@@ -1,5 +1,7 @@
 // 빌더 거동 시뮬레이션 계산부 — 풍향, 지진 시간이력(모드중첩), 장기처짐, 시공단계 기둥 축소량(크리프·건조수축)
-import { modal, Ec as EcOf } from './structmodel.js';
+import { modal, Ec as EcOf, spectrum } from './structmodel.js';
+import { analyze, stationForces } from './fem.js';
+import { hingeCaps } from './kds.js';
 
 const G = 9806.65;
 // ---------- 재료 시간 의존 (ACI 209R) ----------
@@ -89,4 +91,68 @@ export function columnShortening(res, S, { cycle = 7, phiU = 2.0, shU = 600e-6, 
     const avg = (a, k) => a.length ? a.reduce((v, x) => v + x[k], 0) / a.length : null, mx = (a, k) => a.length ? Math.max(...a.map(x => x[k])) : null;
     const cT = mx(col, 'Tend'), wT = avg(wal, 'Tend'), cC = mx(col, 'Tc'), wC = avg(wal, 'Tc'); byFloor.push({ s, level: lv[s + 1]?.name || 'RF', colTc: cC, colTend: cT, wallTc: wC, wallTend: wT, diff: cT != null && wT != null ? cT - wT : null, diffTc: cC != null && wC != null ? cC - wC : null }); }
   return { stacks: out, byFloor, Tc, Tend, cycle, years };
+}
+
+// ---------- 비선형 정적 해석 (푸시오버) — 이벤트 단위 순차 선형, 탄성-완전소성 힌지 ----------
+// 중력 1.0D+0.25L 후 등가정적 수직분포 수평력. 힌지 발생 단부는 모멘트 해제(양축). 목표변위는 변위계수법(C0·C1·C2).
+const C0of = (n) => n <= 1 ? 1.0 : n <= 2 ? 1.2 : n <= 3 ? 1.3 : n <= 5 ? 1.3 + 0.05 * (n - 3) : n < 10 ? 1.4 + 0.02 * (n - 5) : 1.5;
+const aSite = { S1: 130, S2: 130, S3: 130, S4: 90, S5: 60 };
+function thpUnit(Rr, c, h) {
+  const E = Rr.E[h.ei]; const e = E.e, L = E.L, R = E.R; const f = c.ef.subarray(h.ei * 12, h.ei * 12 + 12); const d = c.disp;
+  const loc = (n, o) => [0, 1, 2].map(r => R[r][0] * d[n * 6 + o] + R[r][1] * d[n * 6 + o + 1] + R[r][2] * d[n * 6 + o + 2]);
+  const ui = loc(e.n1, 0), uj = loc(e.n2, 0), ri = loc(e.n1, 3), rj = loc(e.n2, 3);
+  if (h.ax === 'My') { const k = 2 * e.EIy / L, psi = -(uj[2] - ui[2]) / L; const ti = (2 * f[4] - f[10]) / (3 * k) + psi, tj = (2 * f[10] - f[4]) / (3 * k) + psi; return h.end ? rj[1] - tj : ri[1] - ti; }
+  const k = 2 * e.EIz / L, psi = (uj[1] - ui[1]) / L; const ti = (2 * f[5] - f[11]) / (3 * k) + psi, tj = (2 * f[11] - f[5]) / (3 * k) + psi; return h.end ? rj[2] - tj : ri[2] - ti;
+}
+export async function pushover(res, S, D, { dir = 'X', sign = 1, maxSteps, roofLim = 0.04, onProgress, tick = () => Promise.resolve() } = {}) {
+  const { M, R } = res; const N = M.nodes; const story = res.story; if (!story.length) return null; const sp = res.info.seis; const k = dir === 'X' ? 0 : 1;
+  const nE = M.elems.length; const gD = R.cases.D, gL = R.cases.L; const efG = new Float64Array(nE * 12); for (let i = 0; i < efG.length; i++) efG[i] = gD.ef[i] + 0.25 * gL.ef[i];
+  const eloG = [...gD.eloads, ...gL.eloads.map(([e, xi, gx, gy, gz]) => [e, xi, 0.25 * gx, 0.25 * gy, 0.25 * gz])];
+  const T1 = sp?.T?.[dir] || sp?.Tray?.[dir] || 1; const kx = T1 <= 0.5 ? 1 : T1 >= 2.5 ? 2 : 1 + (T1 - 0.5) / 2; const w = story.map(f => f.W * Math.pow(Math.max(1, f.z - M.zmin) / 1000, kx)); const sw = w.reduce((a, b) => a + b, 0);
+  const pat = { dia: story.map((f, i) => k === 0 ? [f.dia, sign * 1000 * w[i] / sw, 0, 0] : [f.dia, 0, sign * 1000 * w[i] / sw, 0]) }; // 밑면전단 1 kN
+  const elems = M.elems.map(e => ({ ...e, rel: e.rel ? [...e.rel] : undefined })); if (res.info.pdelta) elems.forEach((e, i) => { if (!e.rigid && e.vert) e.Ng = -efG[i * 12]; });
+  // 힌지 후보 (부재 양단)
+  const H = [], SH = []; const grav = { ef: efG, eloads: eloG };
+  M.members.forEach((m, mi) => { const s0 = m.segs[0], s1 = m.segs[m.segs.length - 1]; const Pg = Math.max(0, efG[s0 * 12]); const cap = hingeCaps(res, mi, D?.[mi], S, Pg); const axes = Object.keys(cap.ax);
+    for (const [ei, end] of [[s0, 0], [s1, 1]]) { const g = stationForces(R, grav, ei, [end])[0]; for (const [key, Vn] of Object.entries(cap.shear || {})) SH.push({ mi, ei, end, key, Vn, V: g[key] });
+      if (elems[ei].rel?.[end]) continue; for (const ax of axes) H.push({ mi, ei, end, ax, cap: cap.ax[ax], lim: cap.lim, kind: cap.kind, M: g[ax], y: false, step: -1, thp: 0, V: 0, d: 0 }); } });
+  const model = { nodes: N, elems, dias: res.model.dias, cases: ['P'], loads: { P: pat } }; const top = story[story.length - 1]; const hn = top.z - M.zmin;
+  // 해석 범위: 탄성 추정 MCE 목표변위의 2.5배 (최소 높이의 0.5%, 최대 roofLim)
+  const est = sp ? C0of(story.length) * spectrum(T1, sp) * 1.5 * T1 * T1 * 9806.65 / (4 * Math.PI ** 2) : Infinity; const dLim = Math.min(roofLim * hn, Math.max(2.5 * est, 0.005 * hn));
+  const big = M.members.length > 1500; const tol = big ? 0.05 : 0.02; const nMax = maxSteps || (big ? 40 : 80);
+  let lam = 0, roof = 0, mech = false, du0 = 0, baseWeak = null, why = '', brittle = null; const pts = [{ V: 0, d: 0, nh: 0 }]; const lat = new Float64Array(N.length * 3); const sd = new Float64Array(story.length);
+  const frames = [{ disp: new Float32Array(lat), sd: Float64Array.from(sd), thp: new Float32Array(H.length) }];
+  for (let step = 0; step < nMax; step++) {
+    const Rr = analyze(model); const c = Rr.cases.P; if (baseWeak == null) baseWeak = Rr.weak.length; const du = sign * c.dia[top.dia][k]; if (!du0) du0 = du;
+    if (Rr.weak.length > baseWeak || !(du > 0) || du > 200 * du0) { mech = true; why = '붕괴 메커니즘 (강성 소실)'; break; }
+    const mu = H.map(h => h.y ? 0 : stationForces(Rr, c, h.ei, [h.end])[0][h.ax]); let best = Infinity;
+    const need = H.map((h, i) => { if (h.y) return Infinity; const m = mu[i]; if (Math.abs(m) < 1e-9 * (h.cap[0] + h.cap[1] + 1)) return Infinity; const l = m > 0 ? (h.cap[0] - h.M) / m : (-h.cap[1] - h.M) / m; return Math.max(0, l); });
+    for (const l of need) if (l < best) best = l; let last = false; const lRoof = (dLim - roof) / du; if (lRoof <= best) { best = lRoof; last = true; }
+    const vu = SH.map(q => stationForces(Rr, c, q.ei, [q.end])[0][q.key]); let shear = null; SH.forEach((q, i) => { const v = vu[i]; if (Math.abs(v) < 1e-9) return; const l = v > 0 ? (q.Vn - q.V) / v : (-q.Vn - q.V) / v; if (l >= 0 && l < best) { best = l; shear = q; last = true; } });
+    const tp = H.map(h => h.y ? thpUnit(Rr, c, h) : 0);
+    lam += best; roof += best * du; H.forEach((h, i) => { if (h.y) h.thp += best * tp[i]; else h.M += best * mu[i]; });
+    for (let i = 0; i < N.length; i++) for (let j = 0; j < 3; j++) lat[i * 3 + j] += best * c.disp[i * 6 + j];
+    story.forEach((f, i) => { const b = i ? story[i - 1] : null; sd[i] += best * (c.dia[f.dia][k] - (b ? c.dia[b.dia][k] : 0)) * sign / f.h; });
+    let nh = 0; if (!last) H.forEach((h, i) => { if (!h.y && need[i] <= best * (1 + tol) + 1e-9) { h.y = true; h.step = step; h.V = lam; h.d = roof; const e = elems[h.ei]; e.rel = e.rel ? [...e.rel] : [0, 0]; e.rel[h.end] = 1; nh++; } });
+    pts.push({ V: lam, d: roof, nh: H.filter(h => h.y).length }); frames.push({ disp: new Float32Array(lat), sd: Float64Array.from(sd), thp: Float32Array.from(H.map(h => h.thp)) });
+    onProgress?.(`푸시오버 ${step + 1}단계 · 힌지 ${pts[pts.length - 1].nh} · 지붕 ${roof.toFixed(0)} mm`); await tick();
+    SH.forEach((q, i) => { q.V += best * vu[i]; });
+    if (shear) { const mm = M.members[shear.mi]; brittle = { mi: shear.mi, tag: `${mm.r.level.name} ${mm.el.tag || ''}`.trim(), kind: mm.kind, Vn: shear.Vn }; why = `전단 파괴 — ${brittle.tag} (Vn ${(shear.Vn / 1e3).toFixed(0)} kN)`; break; }
+    if (last) { why = dLim < roofLim * hn ? `목표변위 범위 도달 (MCE 추정값의 2.5배)` : `지붕 변위 한계 (높이의 ${(roofLim * 100).toFixed(0)}%)`; break; }
+    if (step === nMax - 1) why = `해석 단계 한도 ${nMax}`;
+  }
+  // 이선형화 (등면적) · 목표변위 (변위계수법)
+  const Ki = pts[1] ? pts[1].V / pts[1].d : 0; const last = pts[pts.length - 1]; let A = 0; for (let i = 1; i < pts.length; i++) A += (pts[i].V + pts[i - 1].V) / 2 * (pts[i].d - pts[i - 1].d);
+  const Vmax = Math.max(...pts.map(p => p.V)); let Vy = Ki && last.d > last.V / Ki * 1.001 ? (2 * A - last.V * last.d) / (last.d - last.V / Ki) : Vmax; Vy = Math.min(Vmax, Math.max(0.3 * Vmax, Vy || Vmax)); const dy = Ki ? Vy / Ki : 0;
+  let tgt = null;
+  if (sp && Ki) { const Te = sp.Tray?.[dir] || T1; const W = res.info.Wt; const a = aSite[S.seis?.site] || 90;
+    const calc = (scale) => { const Sa = spectrum(Te, sp) * scale; const Rs = Math.max(1, Sa * (W / 1000) / Vy); const C1 = Te >= 1 ? 1 : Math.min(1.5, 1 + (Rs - 1) / (a * Math.max(Te, 0.2) ** 2)); const C2 = Te > 0.7 ? 1 : 1 + ((Rs - 1) / Te) ** 2 / 800; const C0 = C0of(story.length); return { Sa, Rs, C0, C1, C2, dt: C0 * C1 * C2 * Sa * Te * Te * 9806.65 / (4 * Math.PI ** 2) }; };
+    tgt = { Te, DE: calc(1), MCE: calc(1.5) }; }
+  // 목표변위 시점 상태 (단계 보간)
+  const at = (dt) => { if (!(dt > 0)) return null; let i = pts.findIndex(p => p.d >= dt); if (i < 0) return { reached: false }; if (i === 0) i = 1; const p0 = pts[i - 1], p1 = pts[i]; const t = p1.d > p0.d ? (dt - p0.d) / (p1.d - p0.d) : 1; const f0 = frames[i - 1], f1 = frames[i];
+    const thp = H.map((h, j) => Math.abs(f0.thp[j] + (f1.thp[j] - f0.thp[j]) * t)); const sdr = story.map((_, j) => Math.abs(f0.sd[j] + (f1.sd[j] - f0.sd[j]) * t));
+    const lv = H.map((h, j) => thp[j] <= 1e-9 && !(h.y && h.step < i - 1 + t) ? 0 : thp[j] <= h.lim[0] ? 1 : thp[j] <= h.lim[1] ? 2 : thp[j] <= h.lim[2] ? 3 : 4);
+    return { reached: true, i, t, V: p0.V + (p1.V - p0.V) * t, thp, sdr, drift: Math.max(...sdr), lv, cnt: [1, 2, 3, 4].map(q => lv.filter(x => x === q).length) }; };
+  if (tgt) { tgt.DE.at = at(tgt.DE.dt); tgt.MCE.at = at(tgt.MCE.dt); }
+  return { dir, sign, pts, frames, H, mech, brittle, why, Ki, Vy, dy, Vmax, tgt, hn, story: story.map(f => ({ z: f.z, h: f.h })), nH: H.filter(h => h.y).length };
 }

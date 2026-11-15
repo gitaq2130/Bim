@@ -6,7 +6,7 @@ import { esc } from '../js/util.js';
 import { runStructure, settingsOf, seismicParams, USES, SYSTEMS, GRADES, memberForces, combine, DEFAULTS } from '../js/structmodel.js';
 import { designMember, designFoundations, designConnections } from '../js/kds.js';
 import { FIELDS as RB_FIELDS, specOf } from '../js/rebar.js';
-import { simUI, slabUI, shortUI, csUI, heat } from './structsim.js';
+import { simUI, slabUI, shortUI, csUI, pushUI, heat } from './structsim.js';
 import { schemeUI } from './structscheme.js';
 import { autoRun, baseSettings, REGIONS, USE_INFO, SITE_DEFAULT } from '../js/structauto.js';
 
@@ -45,7 +45,7 @@ export function mount(root, ctx) {
     tb.innerHTML = '';
     tb.append(h('b', { style: { marginRight: '6px' } }, '구조해석'), h('button', { class: 'btn', onclick: settings }, '현장·용도 조건'), h('button', { class: 'btn primary', onclick: run }, C ? '다시 해석' : '해석 실행'), h('button', { class: 'btn' + (st.page === 'scheme' ? ' primary' : ''), onclick: () => setPage(st.page === 'scheme' ? 'res' : 'scheme') }, '구조 형식 비교·추천'));
     if (!C) return;
-    tb.append(h('span', { class: 'note', style: { margin: '0 4px' } }, '|'), ...[['res', '해석 결과'], ['sim', '거동 시뮬레이션'], ['slab', '슬래브'], ['cs', '시공단계'], ['short', '기둥 축소량']].map(([k, l]) => h('button', { class: 'btn' + (st.page === k ? ' primary' : ''), onclick: () => setPage(k) }, l)));
+    tb.append(h('span', { class: 'note', style: { margin: '0 4px' } }, '|'), ...[['res', '해석 결과'], ['sim', '거동 시뮬레이션'], ['slab', '슬래브'], ['cs', '시공단계'], ['push', '푸시오버'], ['short', '기둥 축소량']].map(([k, l]) => h('button', { class: 'btn' + (st.page === k ? ' primary' : ''), onclick: () => setPage(k) }, l)));
     if (st.page !== 'res') return;
     tb.append(h('span', { class: 'note', style: { margin: '0 4px' } }, '|'),
       sel([['ratio', '검토비'], ['model', '모델'], ['defo', '변형'], ...(C.res.info.modal ? [['mode', '모드 형상']] : []), ['My', '모멘트 My(강축)'], ['Mz', '모멘트 Mz(약축·면내)'], ['N', '축력 N'], ['V', '전단 V']], st.view, v => { st.view = v; draw(); }),
@@ -84,7 +84,7 @@ export function mount(root, ctx) {
       C = { res, D, S, at: Date.now(), F: designFoundations(res, S), J, auto: A.rows }; CACHE.set(P, C); P.struct.auto = { at: Date.now(), rows: A.rows };
       const sp = res.info.seis; const drift = sp ? maxDrift(res) : null;
       P.struct.last = { at: Date.now(), members: n, ng: D.filter(d => d.ratio > 1).length, max: Math.max(...D.map(d => d.ratio)), drift, driftLim: sp?.driftLim, T: sp?.T?.X, V: sp?.X?.V }; ctx.touch('meta');
-      st.view = 'ratio'; st.lc = 'env'; st.tab = 'sum'; sub?.leave?.(); sub = null; st.page = 'res'; api.simState = api.slabState = api.shortState = api.csState = null;
+      st.view = 'ratio'; st.lc = 'env'; st.tab = 'sum'; sub?.leave?.(); sub = null; st.page = 'res'; api.simState = api.slabState = api.shortState = api.csState = api.pushState = null;
     } catch (e) { console.error(e); toast('해석 실패: ' + (e.message || e), 'err', 6000); }
     busy.style.display = 'none'; renderTB(); renderSide(); draw(true);
   }
@@ -177,7 +177,7 @@ export function mount(root, ctx) {
     if (p === 'res') { renderSide(); draw(); return; }
     if (p !== 'scheme' && !C) { st.page = 'res'; renderTB(); renderSide(); return; }
     legend.innerHTML = ''; side.innerHTML = '';
-    sub = (p === 'sim' ? simUI : p === 'slab' ? slabUI : p === 'scheme' ? schemeUI : p === 'cs' ? csUI : shortUI)(api);
+    sub = (p === 'sim' ? simUI : p === 'slab' ? slabUI : p === 'scheme' ? schemeUI : p === 'cs' ? csUI : p === 'push' ? pushUI : shortUI)(api);
   }
   Object.defineProperty(api, 'C', { get: () => C });
   Object.assign(api, { P, ctx, side, G, holderEl: holder, markDirty: () => { dirty = true; }, select: (mi) => { setPage('res'); select(mi); },
@@ -381,7 +381,9 @@ ${I.modal ? `<h2>7. 고유치·응답스펙트럼</h2>${T(['모드', 'T (s)', 'X
 <h2>8. 기초</h2>${(C.F || []).length ? T(['종류', '부재', '크기', 'Ps (kN)', 'q / qa (kPa)', '펀칭', '1방향 전단', '휨(실배근)', '판정'], C.F.map(x => [x.kind, esc(x.tag || ''), x.size, kN(x.Ps), x.q ? (x.qa == null ? `필요 ≥ ${(x.q * 1e3).toFixed(0)}` : `${(x.q * 1e3).toFixed(0)} / ${(x.qa * 1e3).toFixed(0)}`) : '-', x.rp != null ? x.rp.toFixed(3) : '-', x.rv ? x.rv.toFixed(3) : '-', x.rm != null ? x.rm.toFixed(3) : '-', x.ratio == null ? '기초 없음' : `<span class="${x.ratio > 1 ? 'ng' : 'ok'}">${x.ratio.toFixed(3)}</span>`])) : '<p>기초 객체 없음</p>'}
 ${(C.J || []).length ? (() => { const J = C.J; const by = {}; for (const j of J) { const k = `${j.kind} — ${j.type}`; (by[k] ||= { n: 0, ng: 0, max: 0 }); by[k].n++; if (j.ratio > 1) by[k].ng++; by[k].max = Math.max(by[k].max, j.ratio); } const top = [...J].sort((a, b) => b.ratio - a.ratio).slice(0, 8);
   return `<h2>9. 철골 접합부</h2><p class="n">F10T 고력볼트 마찰접합(미끄럼계수 0.5, 표준구멍), 연결판 SM355, 용접봉 E49. 전단판은 탄성법으로 볼트군 편심을 고려하고, 강접은 플랜지력 Ff = Mu/(d−tf)로 기둥 플랜지 휨·웨브 항복·크리플링과 패널존 전단을 검토합니다.</p>${T(['지지 — 형식', '개수', 'NG', '최대 검토비'], Object.entries(by).map(([k, v]) => [esc(k), v.n, v.ng ? `<span class="ng">${v.ng}</span>` : '-', v.max.toFixed(3)]))}${top.map(j => `<h3>${j.level} ${esc(j.tag)} (${j.end ? '끝단' : '시작단'}) — ${esc(j.type)} 검토비 ${j.ratio.toFixed(3)}</h3>${T(['항목', '값', ''], j.rows.map(r => [esc(r[0]), esc(r[1]), typeof r[2] === 'number' ? r[2].toFixed(3) : '']))}`).join('')}`; })() : ''}
-<h2>${(C.J || []).length ? 10 : 9}. 한계</h2><p class="n">본 계산서는 모델 기반 약식 검토로, 등가정적 지진하중·약식 풍하중을 사용한 선형정적 해석입니다. 철골 보의 횡비틀림좌굴(슬래브 구속·모멘트도 기반 Lb·Cb)과 기둥 세장효과(층 안정지수 Q, ψ 기반 k, δns·δs / B1·B2)는 부재 검토에 반영했습니다. 철골 보 접합부(전단판·플랜지 용접·스티프너·패널존)를 자동 설계했으며, RC 매입 철판의 콘크리트 파괴와 철골 기둥 이음·주각은 포함하지 않습니다. ${I.cs ? '' : '시공단계 해석은 15층·50 m 미만이라 적용하지 않았고, '}비선형 해석, 균열폭, 패턴 활하중, 시공 중 콘크리트 재령에 따른 강성 변화는 포함하지 않습니다(슬래브는 별도 판 해석 화면). 배근 미입력 부재는 필요 철근량(가정 철근비) 기준이며, 최종 설계는 구조기술사의 검토가 필요합니다.</p>
+${C.push?.tgt ? (() => { const o = C.push; const r = (k) => { const t = o.tgt[k], a = t.at; return [k === 'DE' ? '설계지진 (인명안전)' : 'MCE ×1.5 (붕괴방지)', `${t.dt.toFixed(1)} mm`, a?.reached ? `${a.V.toFixed(0)} kN` : '-', a?.reached ? `${(a.drift * 100).toFixed(2)}%` : '도달 전 파괴', a?.reached ? a.cnt.join(' / ') : '-']; };
+  return `<h2>${(C.J || []).length ? 10 : 9}. 비선형 정적해석 (푸시오버, ${o.dir}${o.sign > 0 ? '+' : '−'})</h2><p class="n">중력 1.0D+0.25L 후 등가정적 분포 수평력, 부재 양단 소성힌지(기대강도 — 철근 1.2fy·콘크리트 1.1fck·강재 1.1Fy, 탄성-완전소성), 전단강도 도달 시 취성 파괴로 종료. 목표변위는 변위계수법, 회전 한계는 ASCE 41 대표값(단순화). 종료: ${esc(o.why || '')}</p>${T(['항목', '값'], [['초기 강성', `${o.Ki.toFixed(1)} kN/mm`], ['항복 밑면전단 Vy (이선형)', `${o.Vy.toFixed(0)} kN (Vy/W ${(o.Vy / (I.Wt / 1e3)).toFixed(3)})`], ['최대 밑면전단', `${o.Vmax.toFixed(0)} kN`], ['유효주기 Te', `${o.tgt.Te.toFixed(2)} s`]])}${T(['수준', '목표변위', '밑면전단', '최대 층간변위', '힌지 IO / LS / CP / 초과'], [r('DE'), r('MCE')])}`; })() : ''}
+<h2>${(C.J || []).length ? (C.push?.tgt ? 11 : 10) : (C.push?.tgt ? 10 : 9)}. 한계</h2><p class="n">본 계산서는 모델 기반 약식 검토로, 등가정적 지진하중·약식 풍하중을 사용한 선형정적 해석입니다. 철골 보의 횡비틀림좌굴(슬래브 구속·모멘트도 기반 Lb·Cb)과 기둥 세장효과(층 안정지수 Q, ψ 기반 k, δns·δs / B1·B2)는 부재 검토에 반영했습니다. 철골 보 접합부(전단판·플랜지 용접·스티프너·패널존)를 자동 설계했으며, RC 매입 철판의 콘크리트 파괴와 철골 기둥 이음·주각은 포함하지 않습니다. ${I.cs ? '' : '시공단계 해석은 15층·50 m 미만이라 적용하지 않았고, '}${C.push ? '' : '비선형 정적해석(푸시오버)은 해당 화면에서 실행 시 포함되며, '}비선형 동적해석, 균열폭, 패턴 활하중, 시공 중 콘크리트 재령에 따른 강성 변화는 포함하지 않습니다(슬래브는 별도 판 해석 화면). 배근 미입력 부재는 필요 철근량(가정 철근비) 기준이며, 최종 설계는 구조기술사의 검토가 필요합니다.</p>
 </body></html>`;
     saveFile(`${P.name.replace(/[\\/:*?"<>|]/g, '_')}_구조계산서.html`, html);
   }
