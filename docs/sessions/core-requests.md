@@ -13,7 +13,17 @@
 
 ## 대기
 
-(없음)
+### [field] 말뚝 객체(pile) 신설과 공법·부지 계획 데이터 등록 — 2026-11-15
+- 변경:
+  1. `js/model.js` KINDS에 `pile`(공종 S, geom point) 추가 — 속성 `D`(직경 mm), `L`(길이 mm), `type`(PHC·RCD·PRD), `cap`(연결 기초 id). `elBoxes`는 기초 하단(E − 기초 두께)에서 아래로 L만큼 원형 근사 박스, `qtyOf`는 본수·길이(m) 코드 `PIL`. 말뚝 배치는 field의 `planBasis(P,cond).found.piles`(위치·연결 기초)를 struct/cad가 객체로 만들 때 쓰면 됩니다.
+  2. CORE.md 5장 `sched` 행에 field 내부 구조 등록: `P.sched.method`, `P.sched.cond`, `P.sched.site.items[]` (docs/tools/field.md 데이터 절 참조). 6장 공개 함수에 field `planBasis`, `autoLayout`, `siteChecks`, `craneReach`, `LOGI`, `METHODS` 추가. `autoGenerate(P,start)`는 세 번째 인자 `plan`(선택)만 추가 — 기존 호출 그대로 동작.
+- 이유: 사용자 요청 — 시뮬레이션에 기초·말뚝이 보이지 않고, 공정에 탑다운·업업·세미탑다운 공법과 부지 동선(차량·보행 분리, 크레인·하역·야적 구역)이 반영되어야 함. field v4가 공정·산정·배치를 만들었지만 3D 표시와 시공 시뮬레이션 반영은 다른 트랙 파일임.
+- 영향 트랙:
+  - core: pile KIND·elBoxes·qtyOf, CORE.md 등록
+  - view3d: 4D 재생 때 `P.sched.site.items`(단계 phase별)와 흙막이 선(`planBasis().fpb` + 1 m) 표시, pile 객체 3D 표시
+  - csim: `P.sched.method`(공법)로 작업 순서(역타 하향 굴착·지상 동시 시공), `planBasis().found`로 말뚝 작업, `P.sched.site`로 크레인·하역 위치를 반영
+  - struct: 선시공 기둥 축력(탑다운 지상 동시 시공 한도 `upLimit`)과 말뚝 지지력 검토 연계
+
 
 ## 처리됨
 
