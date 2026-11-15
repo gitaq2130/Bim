@@ -11,6 +11,8 @@ export const DISC = {
   P: { name: '배관(위생)', color: '#7dcfff' },
   F: { name: '소방', color: '#ff7a45' },
   I: { name: '인테리어', color: '#d4a5ff' },
+  C: { name: '토목', color: '#c9a36a' },
+  L: { name: '조경', color: '#6cc070' },
 };
 
 // 객체 종류 정의

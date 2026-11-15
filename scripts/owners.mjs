@@ -8,7 +8,7 @@ export const TRACKS = {
       'app/index.html', 'app/js/app.js', 'app/js/model.js', 'app/js/store.js', 'app/js/ui.js', 'app/js/util.js',
       'app/js/rev.js', 'app/js/rebar.js', 'app/js/excel.js', 'app/js/zip.js',
       'app/js/dxf.js', 'app/js/blocks.js', 'app/js/icons.js', 'app/js/ifc.js', 'app/js/ifcout.js',
-      'app/js/house.js', 'app/js/tower.js', 'app/lib/', 'docs/CORE.md', 'CORE_VERSION', 'CLAUDE.md',
+      'app/js/house.js', 'app/js/tower.js', 'app/js/sitegeo.js', 'app/lib/', 'docs/CORE.md', 'CORE_VERSION', 'CLAUDE.md',
       'scripts/', '.github/', 'package.json',
     ],
   },
@@ -44,6 +44,14 @@ export const TRACKS = {
   interior: {
     name: '인테리어·조명', branch: 'builder/interior',
     files: ['app/tools/interior.js', 'app/js/furn.js', 'app/tools/furn3d.js', 'docs/tools/interior.md'],
+  },
+  civil: {
+    name: '토목', branch: 'builder/civil',
+    files: ['app/tools/civil.js', 'docs/tools/civil.md'],
+  },
+  landscape: {
+    name: '조경', branch: 'builder/landscape',
+    files: ['app/tools/landscape.js', 'docs/tools/landscape.md'],
   },
   admin: {
     name: '이슈·법규', branch: 'builder/admin',
