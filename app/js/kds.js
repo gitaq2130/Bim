@@ -424,3 +424,86 @@ function hingeFlex(res, mi, d, S, Pg = 0) {
   const CY = pmCurve(b, h, LY.sort((p, q) => p.y - q.y), fck, true), CZ = pmCurve(h, b, LZ.sort((p, q) => p.y - q.y), fck, true); const my = Math.max(capAt(CY, Pg), 1), mz = Math.max(capAt(CZ, Pg), 1);
   return { kind: m.sh ? 'SRC 기둥' : 'RC 기둥', ax: { My: [my, my], Mz: [mz, mz] }, lim: HINGE_LIM[m.sh ? 'SRC 기둥' : 'RC 기둥'] };
 }
+
+// ---------- 시공 중 검토 (KDS 14 20 52 정착·이음, KDS 21 50 00 거푸집·동바리, 철골 합성 전 처짐) ----------
+// 결과: [{lv:'위험'|'경고'|'확인', cat, mi, title, detail, act}] — 위험: 시공 불가·설계 변경 필요 / 경고: 시공 조치 필요 / 확인: 시공 시 반영할 값
+const DB = (s) => { const p = parseN(s) || parseS(s); return p ? +p.d.slice(1) : null; };
+export function devLen(db, fck, fy, { top = false, coated = false } = {}) {
+  const sq = Math.min(Math.sqrt(fck), 8.4), a = top ? 1.3 : 1.0, b = coated ? 1.2 : 1.0;
+  const ldb = 0.6 * db * fy / sq; const ld = Math.max(300, ldb * a * b * (db <= 19 ? 0.8 : 1.0));
+  const ldh = Math.max(8 * db, 150, 0.24 * b * db * fy / sq); const ldt = Math.max(8 * db, 150, 0.22 * b * db * fy / sq);
+  const ldc = Math.max(200, 0.25 * db * fy / sq, 0.043 * db * fy); const lap = Math.max(300, 1.3 * ld); const lapc = Math.max(300, fy <= 400 ? 0.072 * fy * db : (0.13 * fy - 24) * db);
+  return { ld, ldh, ldt, ldc, lap, lapc, a };
+}
+const r10 = (v) => Math.ceil(v / 10) * 10;
+export function constructionChecks(res, D, S) {
+  const { M, R } = res; const N = M.nodes; const fr = frameOf(res); const out = []; const add = (lv, cat, mi, title, detail, act) => out.push({ lv, cat, mi, title, detail, act });
+  const fy = S.fy || 400, cov = 40, tie = 10; const name = (m) => `${m.r.level.name} ${m.el.tag || ''}`.trim();
+  const lapTable = new Map(), okAnc = new Map();
+  M.members.forEach((m, mi) => {
+    m.P = res.P; const d = D?.[mi]; if (!d) return; const sp = specOf(res.P, m.el); const fck = m.fck || (m.kind === 'beam' ? S.fck : S.fckV || S.fck);
+    if (m.mat === 'STEEL') return;
+    if (m.kind === 'beam') {
+      const top = sp?.top || d.auto?.top, bot = sp?.bot || d.auto?.bot; const pt = parseN(top), pb = parseN(bot); if (!pt || !pb) return;
+      const dt = +pt.d.slice(1), dbb = +pb.d.slice(1); const LT = devLen(dt, fck, fy, { top: m.hz >= 300 + 2 * cov }), LB = devLen(dbb, fck, fy);
+      // 철근 순간격 (한 단 배근 가능 여부)
+      for (const [p, nm] of [[pt, '상부근'], [pb, '하부근']]) { const db = +p.d.slice(1); const sMin = Math.max(25, db, 33); const s = p.n > 1 ? (m.by - 2 * (cov + tie) - p.n * db) / (p.n - 1) : Infinity;
+        if (s < sMin) { const per = Math.max(2, Math.floor((m.by - 2 * (cov + tie) + sMin) / (db + sMin))); add('경고', '철근 배치', mi, `${name(m)} ${nm} ${p.n}-${p.d} 한 단 배치 불가`, `보 폭 ${m.by} mm에서 순간격 ${Math.max(0, s).toFixed(0)} mm < 최소 ${sMin} mm (한 단 최대 ${per}개)`, `2단 배근(${per}+${p.n - per}) 또는 굵은 철근으로 개수 축소 — 단면 검토 시 d 감소 반영`); } }
+      // 단부 정착 (외단부: 연속 보가 없는 단부)
+      for (const end of [0, 1]) {
+        const E = R.E[end ? m.segs[m.segs.length - 1] : m.segs[0]]; const n = end ? E.e.n2 : E.e.n1; const dir = E.R[0];
+        let cont = false, col = null, wall = false; for (const ej of fr.at.get(n) || []) { const e2 = R.E[ej]; const mm = M.members[e2.e.mem]; if (!mm || e2.e.mem === mi) continue; if (mm.kind === 'beam' && Math.abs(e2.R[0][0] * dir[0] + e2.R[0][1] * dir[1]) > 0.95) cont = true; if (mm.kind === 'column') col = { mm, C: e2 }; if (mm.kind === 'wall') wall = mm; }
+        if (!col && !wall && R.E.some(x => x.e.rigid && (x.e.n1 === n || x.e.n2 === n))) wall = true;
+        if (cont) continue; let avail, sup;
+        if (col) { if (col.mm.mat === 'STEEL') continue; const zc = col.C.R[2]; const along = Math.abs(dir[0] * zc[0] + dir[1] * zc[1]) >= 0.7 ? col.mm.hz : col.mm.by; avail = along - cov - tie; sup = `기둥 ${col.mm.el.tag || ''} 춤 ${along}`; if (col.mm.sh) { add('경고', '정착', mi, `${name(m)} ${end ? '끝단' : '시작단'} 철근 — SRC 기둥 관통`, `기둥 내부 철골(${col.mm.el.sec})로 직선 관통·갈고리 정착이 간섭`, '철골 웨브 관통공(보강) 또는 커플러·브래킷 용접 상세 — 시공상세도에 명기'); continue; } }
+        else if (wall) { const t = wall.hz || 200; avail = t - cov - tie; sup = `벽 두께 ${t}`; } else continue;
+        for (const [p, L, nm] of [[pt, LT, '상부근'], [pb, LB, '하부근']]) { const db = +p.d.slice(1);
+          if (L.ldh <= avail) { const k = `${nm} ${p.d} → ${col ? '기둥' : '벽'}`; const g = okAnc.get(k) || okAnc.set(k, { n: 0, min: Infinity, ldh: L.ldh, ld: L.ld, db }).get(k); g.n++; g.min = Math.min(g.min, avail); }
+          else if (L.ldt <= avail) add('경고', '정착', mi, `${name(m)} ${end ? '끝단' : '시작단'} ${nm} ${p.n}-${p.d} 갈고리 정착 길이 부족`, `${sup} → 확보 ${avail.toFixed(0)} mm < ldh ${r10(L.ldh)} mm, 확대머리 ldt ${r10(L.ldt)} mm 이내`, '확대머리(헤드) 철근 정착으로 변경 — 자재 승인 필요');
+          else { let alt = null; for (const D2 of [25, 22, 19, 16]) { if (D2 >= db) continue; const L2 = devLen(D2, fck, fy, { top: nm === '상부근' && m.hz >= 380 }); if (L2.ldh <= avail) { const n2 = Math.ceil(p.n * (AREA['D' + db] || 1) / AREA['D' + D2]); alt = `${n2}-D${D2}`; break; } }
+            add('위험', '정착', mi, `${name(m)} ${end ? '끝단' : '시작단'} ${nm} ${p.n}-${p.d} 정착 불가`, `${sup} → 확보 ${avail.toFixed(0)} mm < 확대머리 ldt ${r10(L.ldt)} mm`, alt ? `가는 철근 ${alt}로 변경(같은 단면적) 또는 기둥 단면 증대·기계적 정착 상세` : '기둥 단면 증대 또는 기계적 정착 상세 — 설계 변경'); } }
+      }
+      const key = `보 ${pt.d}/${pb.d}`; if (!lapTable.has(key)) lapTable.set(key, `상부근 ${pt.d}: 이음 ${r10(LT.lap)} mm (B급, α=${LT.a}) — 중앙부 L/3 구간 / 하부근 ${pb.d}: 이음 ${r10(LB.lap)} mm — 단부 L/4 구간`);
+    } else if (m.kind === 'column') {
+      const main = sp?.main || d.auto?.main; const p = parseN(main); if (!p) return; const db = +p.d.slice(1); const L = devLen(db, fck, fy);
+      const per = 2 * (m.by + m.hz) - 8 * (cov + tie); const s = per / p.n - db; const sMin = Math.max(40, 1.5 * db);
+      if (s < sMin) add('경고', '철근 배치', mi, `${name(m)} 주근 ${main} 순간격 부족`, `둘레 배치 시 순간격 ${s.toFixed(0)} mm < ${sMin.toFixed(0)} mm`, '다발철근 또는 굵은 철근으로 개수 축소, 단면 증대');
+      const ruling = Math.max(L.lap, L.lapc); const key = `기둥 ${p.d}`; if (!lapTable.has(key)) lapTable.set(key, `주근 ${p.d}: 겹침이음 ${r10(ruling)} mm (인장 B급 기준) — 층 하단 이음 시 띠철근 이음 구간 @100 이하. 이음이 집중되면 기계적 이음(커플러) 50% 엇갈림`);
+      // 최상층 기둥 주근 정착 (지붕보 안으로)
+      const nt = R.E[m.segs[m.segs.length - 1]].e.n2; const above = (fr.at.get(nt) || []).some(ej => { const e2 = R.E[ej].e; return e2.vert && M.members[e2.mem]?.kind === 'column' && e2.mem !== mi; });
+      if (!above) { let hb = 0; for (const ej of fr.at.get(nt) || []) { const mm = M.members[R.E[ej].e.mem]; if (mm?.kind === 'beam' && mm.mat !== 'STEEL') hb = Math.max(hb, mm.hz); } if (hb) { const av = hb - cov - tie; if (L.ldh <= av) { const k = `최상층 기둥 주근 ${p.d} → 지붕보`; const g = okAnc.get(k) || okAnc.set(k, { n: 0, min: Infinity, ldh: L.ldh, ld: L.ld, db }).get(k); g.n++; g.min = Math.min(g.min, av); } else add('경고', '정착', mi, `${name(m)} 최상층 기둥 주근 정착`, `지붕보 춤 ${hb} → 확보 ${av} mm ${L.ldh <= av ? '≥' : '<'} ldh ${r10(L.ldh)} mm`, L.ldh <= av ? `주근 상단 90° 갈고리를 보 안쪽으로 정착 (12db = ${12 * db} mm)` : '확대머리 정착 또는 보 춤 증대'); } }
+    } else if (m.kind === 'wall') { const v = parseS(sp?.v || d.auto?.v); if (v) { const L = devLen(+v.d.slice(1), fck, fy); const key = `벽 ${v.d}`; if (!lapTable.has(key)) lapTable.set(key, `수직근 ${v.d}: 겹침이음 ${r10(L.lap)} mm — 층 하단, 단부 경계요소 주근은 엇갈림 이음`); } }
+  });
+  for (const [k, g] of okAnc) add('확인', '정착', null, `${k.startsWith('최상층') ? '' : '보 외단부 '}${k} 표준갈고리 정착 ${g.n}곳`, `최소 확보 ${g.min.toFixed(0)} mm ≥ ldh ${r10(g.ldh)} mm (직선 ld ${r10(g.ld)} mm)`, `90° 표준갈고리, 연장 12db = ${12 * g.db} mm, 기둥 반대편 주근 안쪽까지`);
+  for (const [k, v] of lapTable) add('확인', '이음', null, `이음 길이 — ${k}`, v, 'KDS 14 20 52 · 피복·간격 조건 충족 가정 (조건 불충족 시 1/0.8배)');
+  // 철골 보 — 합성 전(콘크리트 타설 중) 처짐·강도
+  const qc = 1.5e-3; // 시공 활하중 1.5 kN/m² (작업·장비)
+  const sb = { n: 0, max: 0, at: null, L: 0 };
+  M.members.forEach((m, mi) => {
+    if (m.kind !== 'beam' || m.mat !== 'STEEL' || !m.sh) return; const sh = m.sh; const z = N[R.E[m.segs[0]].e.n1].z; const mx = (m.el.a[0] + m.el.b[0]) / 2, my = (m.el.a[1] + m.el.b[1]) / 2;
+    const sl = M.slabs.find(s => s.z === z && pointInPoly([mx, my], s.pts)) || M.slabs.find(s => s.z === z); if (!sl) return;
+    let wD = 0; for (const ei of m.segs) for (const [e2, , gx, gy, gz] of R.cases.D.eloads) if (e2 === ei) wD += -gz; wD /= m.L; // 고정하중 선하중 (N/mm)
+    const qD = sl.t * 24e-6 + (S.SDL || 1.5) * 1e-3; const trib = Math.max(0, wD - 77e-6 * sh.A) / qD; const wWet = trib * (sl.t * 24e-6 + 0.3e-3) + 77e-6 * sh.A, wC = trib * qc; // 데크 0.3 kN/m²
+    const L = m.L, EI = ES_S * sh.Ix; const cant = !!m.defl?.cant; const dW = cant ? wWet * L ** 4 / (8 * EI) : 5 * wWet * L ** 4 / (384 * EI);
+    const Mu = (1.2 * wWet + 1.6 * wC) * L * L / (cant ? 2 : 8); const fl = steelFlexure(sh, S.Fy, 0); const rM = Mu / (0.9 * fl.Mn); const flU = steelFlexure(sh, S.Fy, L, 1.14); const rU = Mu / (0.9 * flU.Mn);
+    sb.n++; if (dW > sb.max) { sb.max = dW; sb.at = mi; sb.L = L; }
+    const lim = Math.min(L / 360, 20); const camber = dW > lim && L >= 7000 && !cant ? Math.round(0.8 * dW / 5) * 5 : 0;
+    const detail = `콘크리트 타설 시(강재 단독, 단순지지) 처짐 ${dW.toFixed(1)} mm (L/${Math.round(L / Math.max(dW, 0.01))}) · 부담폭 ${(trib / 1000).toFixed(2)} m · 슬래브 t${sl.t} · 휨 ${rM.toFixed(2)} (데크 고정 전 Lb=L 시 ${rU.toFixed(2)})`;
+    if (rM > 1) add('위험', '철골 시공', mi, `${name(m)} 타설 중 강재 휨 초과`, detail, '타설 전 임시 동바리 설치 또는 단면 증대');
+    else if (rU > 1) add('경고', '철골 시공', mi, `${name(m)} 데크 고정 전 횡좌굴 위험`, detail, '데크 용접(횡지지) 완료 후 타설, 또는 타설 중 임시 횡지지');
+    if (camber) add('경고', '철골 시공', mi, `${name(m)} 캠버 ${camber} mm 권장`, detail, `제작 시 상향 캠버 ${camber} mm (타설 처짐의 80%) — 미적용 시 슬래브 레벨 차이·콘크리트 추가 타설(폰딩) ${(dW * 0.5).toFixed(0)} mm 내외`);
+    else if (dW > lim) add('경고', '철골 시공', mi, `${name(m)} 타설 처짐 ${dW.toFixed(0)} mm`, detail, '타설 중 레벨 관리(폰딩 고려 슬래브 두께 확보) 또는 임시 동바리');
+  });
+  if (sb.n) add('확인', '철골 시공', sb.at, `철골 보 ${sb.n}개 콘크리트 타설 중 검토`, `강재 단독(합성 전) 최대 처짐 ${sb.max.toFixed(1)} mm (L/${Math.round(sb.L / Math.max(sb.max, 0.01))}) — 시공 활하중 1.5 kN/m², 데크 0.3 kN/m²`, '데크 용접 완료 후 타설, 경고 항목 외 캠버 불요');
+  // 거푸집·동바리 (KDS 21 50 00)
+  const fckH = S.fck, tSlab = M.slabs.length ? Math.max(...M.slabs.map(s => s.t)) : 0;
+  const days = (T) => { const k = (20 + 10) / (Math.max(T, 0) + 10); const t20 = (2 / 3) * 4 / (1 - (2 / 3) * 0.85); const need14 = 14 / (fckH * 1.0); const t14 = need14 < 1 ? need14 * 4 / (1 - need14 * 0.85) : Infinity; return Math.ceil(Math.max(t20, t14) * k); };
+  if (tSlab) { const wf = tSlab * 24e-3 + 0.4 + 2.5; add('확인', '거푸집·동바리', null, `슬래브·보 밑면 거푸집 해체 시기 (fck ${fckH} MPa)`, `해체 조건: 압축강도 ≥ 2/3·fck (${(fckH * 2 / 3).toFixed(1)} MPa) 및 ≥ 14 MPa — 보통 포틀랜드 시멘트 추정 일평균 20℃ ${days(20)}일 · 10℃ ${days(10)}일 · 5℃ ${days(5)}일`, '공시체(현장 양생) 압축강도 시험으로 확인 후 해체, 해체 후 되받이 동바리');
+    add('확인', '거푸집·동바리', null, `동바리 설계하중 (슬래브 최대 t${tSlab})`, `고정하중 ${(tSlab * 24e-3 + 0.4).toFixed(2)} kN/m² (콘크리트+거푸집 0.4) + 작업하중 2.5 kN/m² = ${Math.max(5, wf).toFixed(2)} kN/m² (최소 5.0)`, '동바리 구조검토서 확인, 수평력 = 고정하중의 2% 이상');
+    const cyc = res.story.length >= 10; if (cyc) add('확인', '거푸집·동바리', null, '연속 타설 시 되받이 동바리', `${res.story.length}개 층 연속 시공 — 직하 2개 층 이상 되받이 동바리 유지 권장`, '층당 공정 주기와 슬래브 재령 강도로 존치 층수 확정'); }
+  // 기둥-슬래브 강도차, 레벨 보정
+  if (S.fckV && S.fckV / S.fck > 1.4) add('경고', '콘크리트 타설', null, `기둥(${S.fckV} MPa)과 바닥(${S.fck} MPa) 강도비 ${(S.fckV / S.fck).toFixed(1)} > 1.4`, '기둥-슬래브 접합부 유효강도 저하 (KDS 14 20 20)', '기둥 주변 슬래브를 기둥 강도 콘크리트로 먼저 타설(퍼들링, 기둥면에서 600 mm 이상)');
+  if (res.info.cs && R.cases.D0) { let mx = 0, at = 0; for (const f of res.story) { let a = 0, b = 0; N.forEach((n, i) => { if (n.z !== f.z || !n.vert) return; a = Math.min(a, R.cases.D.disp[i * 6 + 2]); b = Math.max(b, R.cases.D.disp[i * 6 + 2]); }); if (b - a > mx) { mx = b - a; at = f.z; } }
+    if (mx > 10) add('경고', '레벨 보정', null, `층 내 수직부재 부등 축소 최대 ${mx.toFixed(0)} mm`, `시공단계 해석(고정하중) 기준, 높이 ${(at / 1000).toFixed(1)} m 층`, '기둥 축소량 화면의 층별 보정값으로 설치 레벨 상향(철골 기둥 제작 길이·거푸집 레벨)'); }
+  const ord = { 위험: 0, 경고: 1, 확인: 2 }; return out.sort((a, b) => ord[a.lv] - ord[b.lv]);
+}

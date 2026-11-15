@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { h, toast, dialog, saveFile, table } from '../js/ui.js';
 import { esc } from '../js/util.js';
 import { runStructure, settingsOf, seismicParams, USES, SYSTEMS, GRADES, memberForces, combine, DEFAULTS } from '../js/structmodel.js';
-import { designMember, designFoundations, designConnections } from '../js/kds.js';
+import { designMember, designFoundations, designConnections, constructionChecks } from '../js/kds.js';
 import { FIELDS as RB_FIELDS, specOf } from '../js/rebar.js';
 import { simUI, slabUI, shortUI, csUI, pushUI, heat } from './structsim.js';
 import { schemeUI } from './structscheme.js';
@@ -81,7 +81,7 @@ export function mount(root, ctx) {
       for (let i = 0; i < n; i++) { D.push(designMember(res, i, S)); if (i % 150 === 149) { busy.textContent = `부재 검토 ${i + 1}/${n}`; await tick(); } }
       res.info.tDesign = performance.now() - t0;
       busy.textContent = '접합부 설계 중…'; await tick(); const J = res.M.members.some(m => m.kind === 'beam' && m.mat === 'STEEL' && m.sh) ? designConnections(res, S) : [];
-      C = { res, D, S, at: Date.now(), F: designFoundations(res, S), J, auto: A.rows }; CACHE.set(P, C); P.struct.auto = { at: Date.now(), rows: A.rows };
+      C = { res, D, S, at: Date.now(), F: designFoundations(res, S), J, X: constructionChecks(res, D, S), auto: A.rows }; CACHE.set(P, C); P.struct.auto = { at: Date.now(), rows: A.rows };
       const sp = res.info.seis; const drift = sp ? maxDrift(res) : null;
       P.struct.last = { at: Date.now(), members: n, ng: D.filter(d => d.ratio > 1).length, max: Math.max(...D.map(d => d.ratio)), drift, driftLim: sp?.driftLim, T: sp?.T?.X, V: sp?.X?.V }; ctx.touch('meta');
       st.view = 'ratio'; st.lc = 'env'; st.tab = 'sum'; sub?.leave?.(); sub = null; st.page = 'res'; api.simState = api.slabState = api.shortState = api.csState = api.pushState = null;
@@ -214,9 +214,9 @@ export function mount(root, ctx) {
         h('div', { class: 'row', style: { gap: '6px', marginTop: '10px' } }, h('button', { class: 'btn', onclick: settings }, '현장·용도 조건'), h('button', { class: 'btn primary', onclick: run }, '해석 실행')));
       return;
     }
-    const tabs = [['sum', '요약'], ['story', '층'], ...(C.res.info.modal ? [['modal', '모드']] : []), ['found', '기초'], ...(C.J?.length ? [['conn', '접합부']] : []), ['mem', '부재'], ['list', '목록']];
+    const tabs = [['sum', '요약'], ['story', '층'], ...(C.res.info.modal ? [['modal', '모드']] : []), ['found', '기초'], ...(C.J?.length ? [['conn', '접합부']] : []), ['site', '시공 체크'], ['mem', '부재'], ['list', '목록']];
     side.append(h('div', { class: 'row', style: { gap: '4px', marginBottom: '10px' } }, tabs.map(([k, l]) => h('button', { class: 'btn sm' + (st.tab === k ? ' primary' : ''), onclick: () => { st.tab = k; renderSide(); } }, l))));
-    ({ sum: sideSum, story: sideStory, mem: sideMem, list: sideList, modal: sideModal, found: sideFound, conn: sideConn })[st.tab]?.();
+    ({ sum: sideSum, story: sideStory, mem: sideMem, list: sideList, modal: sideModal, found: sideFound, conn: sideConn, site: sideSite })[st.tab]?.();
   }
   const pill = (ok, t) => h('span', { class: 'pill ' + (ok ? 'ok' : 'bad') }, t);
   function sideSum() {
@@ -293,6 +293,7 @@ export function mount(root, ctx) {
       h('button', { class: 'btn sm', onclick: () => { ctx.state.hi = { ids: [el.id], label: `구조 ${d.ratio.toFixed(2)} ${d.gov}` }; ctx.go('view3d'); } }, '3D에서 보기'),
       d.ratio > 1 ? h('button', { class: 'btn sm', onclick: () => raiseIssue(d, m) }, '이슈 등록') : null));
     const kind = m.kind === 'wall' ? 'wall' : m.kind; if (m.mat !== 'STEEL' && RB_FIELDS[kind]) side.append(h('div', { class: 'row', style: { gap: '6px', marginTop: '8px' } }, h('button', { class: 'btn sm primary', onclick: () => editRebar(st.sel) }, d.provided ? '배근 수정' : '배근 입력'), d.auto ? h('button', { class: 'btn sm', onclick: () => applyAuto([st.sel]) }, '필요 철근으로 배근') : null));
+    const xs = (C.X || []).filter(x => x.mi === st.sel && x.lv !== '확인'); if (xs.length) side.append(h('h4', { style: { margin: '12px 0 4px' } }, '시공 체크'), ...xs.map(siteCard));
     const js = (C.J || []).filter(j => j.mi === st.sel); for (const j of js) side.append(h('h4', { style: { margin: '12px 0 4px' } }, `접합부 — ${j.end ? '끝단' : '시작단'} · ${j.type} `, pill(j.ratio <= 1, j.ratio.toFixed(2))), connTable(j));
     if (m.kind === 'beam') side.append(h('div', { class: 'row', style: { gap: '6px', marginTop: '8px', alignItems: 'center' } }, h('span', { class: 'note' }, '단부 접합'), sel([['', '강접 (모멘트)'], ['both', '양단 핀'], ['i', '시작단 핀'], ['j', '끝단 핀']], el.rel || '', v => { if (v) el.rel = v; else delete el.rel; ctx.touch(m.r.sheet.id); toast('단부 조건을 바꿨습니다 — 다시 해석하세요'); })));
   }
@@ -310,7 +311,7 @@ export function mount(root, ctx) {
     P.issues.push({ id: 'i' + Date.now().toString(36), no, type: '구조', title: `${m.r.level.name} ${m.el.tag || d.type} 검토비 ${d.ratio.toFixed(2)} (${d.gov})`, desc: `${d.type} · ${d.combo}\n` + d.rows.map(r => `${r[0]}: ${r[1]}`).join('\n'), status: '열림', assignee: '', due: '', created: Date.now(), refs: [m.el.id], comments: [] });
     ctx.touch('meta'); toast(`이슈 #${no} 등록`, 'ok');
   }
-  function redesign(list) { const S = C.S; for (const mi of list) C.D[mi] = designMember(C.res, mi, S); C.F = designFoundations(C.res, S); P.struct.last = { ...P.struct.last, ng: C.D.filter(d => d.ratio > 1).length, max: Math.max(...C.D.map(d => d.ratio)) }; ctx.touch('meta'); renderSide(); draw(); }
+  function redesign(list) { const S = C.S; for (const mi of list) C.D[mi] = designMember(C.res, mi, S); C.F = designFoundations(C.res, S); C.X = constructionChecks(C.res, C.D, S); P.struct.last = { ...P.struct.last, ng: C.D.filter(d => d.ratio > 1).length, max: Math.max(...C.D.map(d => d.ratio)) }; ctx.touch('meta'); renderSide(); draw(); }
   async function editRebar(mi) {
     const m = C.res.M.members[mi], el = m.el; const kind = m.kind; const cur = specOf(P, el) || {}; const F = RB_FIELDS[kind];
     const v = await dialog({ title: `배근 — ${m.r.level.name} ${el.tag || ''}`, body: '<div class="note">이 부재에만 적용됩니다 (물량 산출의 철근 가공표에도 반영). 비우면 일람표·철근비 기준으로 돌아갑니다.</div>', fields: F.map(([k, l, t]) => ({ key: k, label: l, type: t === 'num' ? 'number' : 'text', value: cur[k] ?? '' })) });
@@ -345,6 +346,27 @@ export function mount(root, ctx) {
     const list = [...J].sort((a, b) => b.ratio - a.ratio).slice(0, 300);
     side.append(h('h4', { style: { margin: '14px 0 4px' } }, `접합부 목록 (검토비 순, ${J.length}개)`), h('div', { class: 'tbl' }, table([{ label: '층', key: 'level' }, { label: '보', render: j => `${j.tag}`.slice(0, 14) + (j.end ? ' (끝)' : ' (시작)') }, { label: '지지', key: 'kind' }, { label: '구성', render: j => h('span', { style: { fontSize: '11.5px' } }, j.items.join(' · ')) }, { label: '비', num: true, render: j => h('b', { style: { color: css(ratioColor(j.ratio)) } }, j.ratio.toFixed(2)) }], list, { onRow: j => select(j.mi) })));
   }
+  const LVC = { 위험: '#ff4d4f', 경고: '#ff9f1c', 확인: '#4cc38a' };
+  function siteCard(x) {
+    return h('div', { class: 'card', style: { marginBottom: '6px', borderLeft: `3px solid ${LVC[x.lv]}`, cursor: x.mi != null ? 'pointer' : 'default' }, onclick: () => { if (x.mi != null && st.tab !== 'mem') select(x.mi); } },
+      h('div', { class: 'row', style: { gap: '6px', alignItems: 'center' } }, h('span', { class: 'pill', style: { background: LVC[x.lv] + '33', color: LVC[x.lv] } }, x.lv), h('span', { class: 'note' }, x.cat), h('b', { style: { fontSize: '12.5px' } }, x.title)),
+      h('div', { class: 'note', style: { fontSize: '12px', marginTop: '3px' } }, x.detail), h('div', { style: { fontSize: '12px', marginTop: '2px' } }, '→ ' + x.act));
+  }
+  function sideSite() {
+    const X = C.X || []; const cnt = (lv) => X.filter(x => x.lv === lv).length; const f = st.siteLv || 'all';
+    side.append(h('div', { class: 'note', style: { marginBottom: '6px', lineHeight: 1.6 } }, '해석·설계 결과에서 시공 중 문제가 될 항목을 자동으로 찾습니다 — 철근 정착·이음·배치(KDS 14 20 52), 철골 보 콘크리트 타설 중 처짐·강도·캠버, 거푸집·동바리(KDS 21 50 00), 강도차 타설, 레벨 보정. 위험: 설계 변경 필요 · 경고: 시공 조치 필요 · 확인: 시공 시 반영할 값.'),
+      h('div', { class: 'row', style: { gap: '4px', marginBottom: '8px', flexWrap: 'wrap' } }, ...[['all', `전체 ${X.length}`], ['위험', `위험 ${cnt('위험')}`], ['경고', `경고 ${cnt('경고')}`], ['확인', `확인 ${cnt('확인')}`]].map(([k, l]) => h('button', { class: 'btn sm' + (f === k ? ' primary' : ''), onclick: () => { st.siteLv = k; renderSide(); } }, l)),
+        h('span', { style: { flex: 1 } }), h('button', { class: 'btn sm', title: '위험·경고 항목을 이슈(품질·안전)로 등록 — 이미 등록된 항목은 건너뜀', onclick: siteIssues }, '이슈로 등록'), h('button', { class: 'btn sm', onclick: siteXLSX }, 'Excel')));
+    const list = X.filter(x => f === 'all' || x.lv === f); if (!list.length) side.append(h('div', { class: 'note' }, '항목이 없습니다.'));
+    for (const x of list.slice(0, 300)) side.append(siteCard(x));
+  }
+  function siteIssues() {
+    P.issues ||= []; let n = 0; const M = C.res.M.members;
+    for (const x of (C.X || []).filter(x => x.lv !== '확인')) { const src = `struct-site:${x.cat}:${x.title}`; if (P.issues.some(i => i.src === src)) continue; const no = P.issues.reduce((a, i) => Math.max(a, i.no || 0), 0) + 1; const m = x.mi != null ? M[x.mi] : null;
+      P.issues.push({ id: 'i' + Date.now().toString(36) + n, no, type: /철골|거푸집|타설/.test(x.cat) ? '안전' : '품질', title: `[${x.lv}] ${x.title}`, desc: `${x.cat}\n${x.detail}\n조치: ${x.act}`, status: '열림', assignee: '', due: '', created: Date.now(), refs: m ? [m.el.id] : null, src, comments: [] }); n++; }
+    if (n) ctx.touch('meta'); toast(n ? `이슈 ${n}건 등록` : '새로 등록할 항목이 없습니다', n ? 'ok' : undefined);
+  }
+  async function siteXLSX() { const { writeBook } = await import('../js/excel.js'); const M = C.res.M.members; saveFile(`${P.name.replace(/[\\/:*?"<>|]/g, '_')}_시공체크.xlsx`, await writeBook([{ name: '시공 체크', rows: [['등급', '분류', '층', '부재', '항목', '내용', '조치'], ...(C.X || []).map(x => { const m = x.mi != null ? M[x.mi] : null; return [x.lv, x.cat, m?.r.level.name || '', m?.el.tag || '', x.title, x.detail, x.act]; })], widths: [6, 10, 6, 12, 40, 70, 60] }])); }
   function sideFound() {
     const F = C.F || []; const S = C.S;
     side.append(h('div', { class: 'note', style: { marginBottom: '6px', lineHeight: 1.6 } }, `지점 반력(D+L 사용하중)으로 지내력, 1.2D+1.6L로 펀칭·1방향 전단·휨을 검토합니다. ${S.qa ? `qa = ${S.qa} kPa (입력)` : '허용지내력 미입력 — 기초별 필요 지내력을 표시합니다. 지반조사 값을 현장·용도 조건에 입력하세요.'} · 기초 fck ${S.fckF} MPa`));
