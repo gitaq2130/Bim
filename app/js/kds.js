@@ -308,3 +308,90 @@ export function minFckVertical(res, mi, S, cands, env = envOf(res, mi, S)) {
 }
 export function beamOk(res, mi, S, fck, env = envOf(res, mi, S)) { const m = res.M.members[mi]; m.P = res.P; const d = rcBeam({ ...m, defl: null, P: { rebarSchedule: {} }, el: { ...m.el, rebar: null } }, env, { ...S, fck }); return d.rows.find(r => r[0].startsWith('ρ'))[2] <= 1 && d.rows.find(r => r[0] === 'φ(Vc+Vs,max)')[2] <= 1; }
 export function steelOk(res, mi, S, Fy, env = envOf(res, mi, S)) { const m = res.M.members[mi]; const e1 = m.kind === 'column' ? envFull(res, mi, S).env1 : env; return steel({ ...m, defl: null }, env, { ...S, Fy }, e1, res).ratio <= 1; }
+
+// ---------- 철골 접합부 (KDS 14 31 25 — F10T 마찰접합 볼트, 필릿·완전용입 용접) ----------
+// 툴이 볼트 지름·개수, 연결판 두께, 용접 치수, 스티프너·패널존 보강판을 자동 산정 (판재 SM355, 용접봉 E49)
+const BOLT = { M20: { d: 20, T0: 165e3, p: 70, e: 40, hole: 22, Ab: 314 }, M22: { d: 22, T0: 205e3, p: 75, e: 45, hole: 24, Ab: 380 }, M24: { d: 24, T0: 238e3, p: 80, e: 50, hole: 27, Ab: 452 } };
+const PL = [9, 12, 16, 19, 22, 25, 28, 32, 36, 40]; const FyP = 355, FuP = 490, FEXX = 490, ECC = 65;
+const minFillet = (t) => t <= 6 ? 3 : t <= 13 ? 5 : t <= 19 ? 6 : 8;
+const boltCap = (B, t, Fu, planes = 1) => { const slip = 1.0 * 0.5 * B.T0 * planes, shr = 0.75 * 0.4 * 1000 * B.Ab * planes, lc = B.e - B.hole / 2, brg = 0.75 * Math.min(1.2 * lc * t * Fu, 2.4 * B.d * t * Fu); return { cap: Math.min(slip, shr, brg), slip, shr, brg }; };
+// 전단판 (단일 판, 볼트 1열) — V, 축력 N, 웨브 두께 tw(보), 지지면 두께 tsup
+function shearTab(V, N, beam, Fyb, tsup) {
+  const sh = beam; const usable = sh.h - 2 * sh.tf - 60; const sizes = sh.h >= 700 ? ['M24'] : sh.h >= 400 ? ['M22', 'M24'] : ['M20', 'M22', 'M24']; let best = null;
+  for (const cols of [1, 2]) for (const bk of sizes) { const B = BOLT[bk]; const nmax = Math.max(2, Math.floor((usable - 2 * B.e) / B.p) + 1); const gx = B.p;
+    for (let n = 2; n <= nmax; n++) for (const tp of PL.slice(0, 6)) {
+      if (tp > B.d / 2 + 6 && tp > sh.tw && cols === 1) continue; // 회전 연성 (1열: 판 두께 ≤ d/2+6 또는 웨브 이하)
+      const hp = (n - 1) * B.p + 2 * B.e, nb = n * cols, e = ECC + (cols - 1) * gx / 2; const ys = Array.from({ length: n }, (_, i) => (i - (n - 1) / 2) * B.p); const xs = cols === 2 ? [-gx / 2, gx / 2] : [0];
+      let Ip = 0; for (const x of xs) for (const y of ys) Ip += x * x + y * y; Ip = Ip || 1; const xm = xs[xs.length - 1], ym = ys[n - 1];
+      const Rv = V / nb + V * e * xm / Ip, Rh = V * e * ym / Ip + Math.abs(N) / nb; const Rb = Math.hypot(Rv, Rh);
+      const bc = boltCap(B, Math.min(tp, sh.tw), FuP); const r1 = Rb / bc.cap;
+      const ry = V / (1.0 * 0.6 * FyP * hp * tp), rr = V / (0.75 * 0.6 * FuP * (hp - n * B.hole) * tp);
+      const Anv = (hp - B.e - (n - 0.5) * B.hole) * tp, Agv = (hp - B.e) * tp, Ant = (40 + (cols - 1) * gx - (cols - 0.5) * B.hole) * tp; const rbs = V / (0.75 * Math.min(0.6 * FuP * Anv + FuP * Ant, 0.6 * FyP * Agv + FuP * Ant));
+      const rm = V * e / (0.9 * FyP * tp * hp * hp / 4); const ra = Math.abs(N) / (0.9 * FyP * hp * tp);
+      const s1 = Math.hypot(V / (2 * 0.707 * hp), 6 * V * e / (2 * 0.707 * hp * hp), Math.abs(N) / (2 * 0.707 * hp)) / (0.75 * 0.6 * FEXX); // 필요 목두께 기준 용접 치수
+      const s = Math.max(minFillet(Math.max(tp, tsup || tp)), Math.ceil(s1), Math.ceil(5 / 8 * tp)); if (s > tp) continue; const r = Math.max(r1, ry, rr, rbs, rm, ra);
+      const cand = { bk, B, n, cols, nb, e, tp, hp, s, r, r1, ry, rr, rbs, rm, ra, Rb, bc };
+      if (r <= 1) return cand; if (!best || r < best.r) best = cand;
+    } }
+  return best;
+}
+function supportOf(res, mi, end) {
+  const { M, R } = res; const fr = frameOf(res); const m = M.members[mi]; const ei = end ? m.segs[m.segs.length - 1] : m.segs[0]; const E = R.E[ei]; const n = end ? E.e.n2 : E.e.n1;
+  let col = null, girder = null; for (const ej of fr.at.get(n) || []) { if (ej === ei) continue; const e = R.E[ej].e; const mm = M.members[e.mem]; if (!mm || e.mem === mi) continue; if (mm.kind === 'column' && !col) col = { mm, ej }; else if (mm.kind === 'beam' && !girder) girder = { mm, ej }; else if (mm.kind === 'wall') col = { mm, ej, wall: true }; }
+  const rigidWall = R.E.some(x => x.e.rigid && (x.e.n1 === n || x.e.n2 === n));
+  const rel = !!E.e.rel?.[end ? 1 : 0]; const dir = E.R[0];
+  if (col && !col.wall) { const cm = col.mm; const C = R.E[col.ej]; const zc = C.R[2]; const strong = Math.abs(dir[0] * zc[0] + dir[1] * zc[1]) >= 0.7; return { n, rel, kind: cm.mat === 'STEEL' && cm.sh ? '철골 기둥' : cm.sh ? 'SRC 기둥' : 'RC 기둥', sup: cm, strong, steel: !!cm.sh }; }
+  if (girder) return { n, rel, kind: girder.mm.mat === 'STEEL' && girder.mm.sh ? '철골 큰보' : 'RC 보', sup: girder.mm, steel: girder.mm.mat === 'STEEL' && !!girder.mm.sh };
+  if (rigidWall || col?.wall) return { n, rel, kind: 'RC 벽', sup: col?.mm || null, steel: false };
+  return null; // 자유단
+}
+export function designConnections(res, S) {
+  const { M } = res; const out = []; const pz = new Map(); const Fy = S.Fy || 355, E = ES_S;
+  for (let mi = 0; mi < M.members.length; mi++) {
+    const m = M.members[mi]; if (m.kind !== 'beam' || m.mat !== 'STEEL' || !m.sh) continue; const sh = m.sh; const mf = memberForces(res, mi);
+    for (const end of [0, 1]) {
+      const sp = supportOf(res, mi, end); if (!sp) continue; let V = 0, Mu = 0, N = 0, cV = '', cM = '';
+      for (const c of res.combos) { const st = combine(mf, c); const s = end ? st[st.length - 1] : st[0]; if (Math.abs(s.Vz) > V) { V = Math.abs(s.Vz); cV = c.name; } if (Math.abs(s.My) > Mu) { Mu = Math.abs(s.My); cM = c.name; } N = Math.max(N, Math.abs(s.N)); }
+      const rigid = !sp.rel && Mu > 1e6; const tsup = sp.sup?.sh ? (sp.strong === false ? sp.sup.sh.tw : sp.sup.sh.tf) : sp.sup?.sh ? sp.sup.sh.tw : 20;
+      const tab = shearTab(V, N, sh, Fy, sp.kind === '철골 큰보' ? sp.sup.sh.tw : tsup); const rows = []; let ratio = tab.r; const items = []; const notes = [];
+      rows.push(['지지', `${sp.kind}${sp.strong != null ? (sp.strong ? ' (강축·플랜지면)' : ' (약축·웨브면)') : ''} — ${sp.sup?.el?.tag || ''}`], ['설계력', `Vu ${kN(V)} (${cV}) · Mu ${kNm(rigid ? Mu : 0)}${rigid ? ` (${cM})` : ''} · Nu ${kN(N)}`]);
+      rows.push(['전단판', `PL-${tab.tp}×${Math.round(tab.hp)} (SM355) · ${tab.bk} F10T ${tab.nb}개 (${tab.n}×${tab.cols}열) @${tab.B.p}`, tab.r]);
+      rows.push(['볼트 1개', `작용 ${kN(tab.Rb)} / φRn ${kN(tab.bc.cap)} (미끄럼 ${kN(tab.bc.slip)} · 전단 ${kN(tab.bc.shr)} · 지압 ${kN(tab.bc.brg)}) · 편심 ${tab.e} mm`, tab.r1]);
+      rows.push(['전단판 검토', `항복 ${tab.ry.toFixed(2)} · 파단 ${tab.rr.toFixed(2)} · 블록전단 ${tab.rbs.toFixed(2)} · 휨 ${tab.rm.toFixed(2)}`, Math.max(tab.ry, tab.rr, tab.rbs, tab.rm)]);
+      rows.push(['용접 (전단판→지지면)', `양면 필릿 ${tab.s} mm × ${Math.round(tab.hp)} (E49)`]);
+      items.push(`${tab.bk}×${tab.nb}`, `PL-${tab.tp}`);
+      let type = sp.rel || !rigid ? '전단 접합' : '';
+      if (!type) {
+        const Ff = Mu / (sh.h - sh.tf) + N * sh.b * sh.tf / sh.A;
+        if (sp.kind === '철골 기둥' || sp.kind === 'SRC 기둥') {
+          const c = sp.sup.sh; const Fyc = S.Fy || 355;
+          if (sp.strong) {
+            type = '강접 — 플랜지 완전용입 + 웨브 전단판'; const rf = Ff / (0.9 * Fy * sh.b * sh.tf); ratio = Math.max(ratio, rf);
+            rows.push(['플랜지 용접', `완전용입(CJP) · 플랜지력 Ff ${kN(Ff)} / φFy·bf·tf ${kN(0.9 * Fy * sh.b * sh.tf)} · 스캘럽 R35`, rf]);
+            const k = c.tf + 15; const flb = 0.9 * 6.25 * Fyc * c.tf ** 2, wly = 1.0 * (5 * k + sh.tf) * Fyc * c.tw, wc = 0.75 * 0.8 * c.tw ** 2 * (1 + 3 * (sh.tf / c.h) * (c.tw / c.tf) ** 1.5) * Math.sqrt(E * Fyc * c.tf / c.tw); const Rmin = Math.min(flb, wly, wc);
+            if (Rmin < Ff) { const As = (Ff - Rmin) / (0.9 * FyP); const bs = (c.b - c.tw) / 2 - 15; const ts = PL.find(t => 2 * bs * t >= As && t >= sh.tf / 2) || PL[PL.length - 1]; rows.push(['기둥 국부 (플랜지휨·웨브항복·크리플링)', `${kN(flb)} · ${kN(wly)} · ${kN(wc)} < Ff → 수평 스티프너 2-PL-${ts}×${Math.round(bs)} (상·하 플랜지 위치)`]); items.push(`스티프너 PL-${ts}`); }
+            else rows.push(['기둥 국부 (플랜지휨·웨브항복·크리플링)', `${kN(flb)} · ${kN(wly)} · ${kN(wc)} ≥ Ff → 스티프너 불요`, Ff / Rmin]);
+            const key = sp.n; const z = pz.get(key) || pz.set(key, { c, Fyc, F: 0, list: [], tag: sp.sup.el.tag }).get(key); z.F += Ff; z.list.push(out.length);
+          } else {
+            type = '강접 — 약축 (웨브면 수평 연결판)'; const tpl = PL.find(t => t >= sh.tf && 0.9 * FyP * sh.b * t >= Ff) || PL[PL.length - 1]; const r2 = Ff / (0.9 * FyP * sh.b * tpl); ratio = Math.max(ratio, r2);
+            rows.push(['수평 연결판', `기둥 웨브·플랜지 끝에 PL-${tpl}×${sh.b} 완전용입, 보 플랜지와 완전용입 (Ff ${kN(Ff)})`, r2]); items.push(`연결판 PL-${tpl}`);
+          }
+        } else if (sp.kind === '철골 큰보') {
+          type = '강접 — 플랜지 볼트 연결판'; const B = BOLT[sh.h >= 400 ? 'M22' : 'M20']; const tpl = PL.find(t => t >= sh.tf && 0.9 * FyP * sh.b * t >= Ff && 0.75 * FuP * (sh.b - 2 * B.hole) * t >= Ff) || PL[PL.length - 1];
+          const bc = boltCap(B, Math.min(tpl, sh.tf), FuP); let nf = Math.ceil(Ff / bc.cap); nf = Math.max(4, nf + (nf % 2)); const r2 = Math.max(Ff / (0.9 * FyP * sh.b * tpl), Ff / (nf * bc.cap)); ratio = Math.max(ratio, r2);
+          rows.push(['플랜지 연결판', `상·하 PL-${tpl}×${sh.b} · ${Object.keys(BOLT).find(k => BOLT[k] === B)} ${nf}개 (2열) · Ff ${kN(Ff)}`, r2]); items.push(`플랜지판 PL-${tpl}`);
+        } else {
+          type = '강접 — RC 매입 철판 (인장·전단 스터드)'; const studT = 0.75 * 283 * 400, studV = 0.65 * 283 * 400; const nt = Math.ceil(Ff / studT), nv = Math.ceil(V / studV); ratio = Math.max(ratio, 1e-3);
+          rows.push(['매입 철판', `인장측 스터드 ${nt}개 · 전단 스터드 ${nv}개 (φ19, 강재 강도 기준)`]); notes.push('콘크리트 파괴(KDS 14 20 54) 별도 검토 — 핀 접합 전환 권장'); items.push(`스터드 ${nt + nv}`);
+        }
+      } else if (sp.kind === 'RC 벽' || sp.kind === 'RC 기둥' || sp.kind === 'RC 보') { const nv = Math.ceil(V / (0.65 * 283 * 400)); rows.push(['매입 철판', `전단 스터드 φ19 ${Math.max(4, nv)}개 · 철판 PL-16×${Math.round(tab.hp + 80)}`]); notes.push('콘크리트 파괴(KDS 14 20 54) 별도 검토'); items.push(`매입판+스터드 ${Math.max(4, nv)}`); }
+      if (sp.rel && Mu > 1e6) notes.push('모델은 핀 — 해석 단부 모멘트 무시');
+      if (notes.length) rows.push(['비고', notes.join(' · ')]);
+      out.push({ mi, end, n: sp.n, kind: sp.kind, type, V, Mu: rigid ? Mu : 0, N, ratio, rows, items, tag: m.el.tag || '', level: m.r.level.name });
+    }
+  }
+  // 패널존 (강축 강접 보가 모이는 철골·SRC 기둥 절점)
+  for (const [, z] of pz) { const c = z.c; const phiRv = 0.9 * 0.6 * z.Fyc * c.h * c.tw; const r = z.F / phiRv; let txt = `ΣFf ${kN(z.F)} / φRv ${kN(phiRv)}`; if (r > 1) { const td = PL.find(t => 0.9 * 0.6 * z.Fyc * c.h * (c.tw + t) >= z.F) || PL[PL.length - 1]; txt += ` → 웨브 보강판 PL-${td} (패널존)`; } else txt += ' → 보강 불요';
+    for (const i of z.list) { out[i].rows.splice(out[i].rows.length - (out[i].rows[out[i].rows.length - 1][0] === '비고' ? 1 : 0), 0, ['패널존 전단', txt, Math.min(r, 1)]); if (r > 1) out[i].items.push('패널존 보강판'); } }
+  return out;
+}
