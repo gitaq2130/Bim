@@ -3,7 +3,7 @@
 import { h, toast, saveFile, table, approvalCell, approvalBadge, confirmBox, dialog } from '../js/ui.js';
 import { esc, fmt0 } from '../js/util.js';
 import { toD, toS, addDays, daysBetween, plannedPct } from './sched.js';
-import { photoData } from './site.js';
+import { photoData, progressReport } from './site.js';
 import { writeBook } from '../js/excel.js';
 
 export const WEATHER = ['맑음', '구름많음', '흐림', '비', '눈', '비/눈', '강풍', '황사'];
@@ -60,7 +60,8 @@ export function progressOf(P, date, d, memo) {
   const total = daysBetween(start, end) + 1, el = Math.max(0, daysBetween(start, date) + 1);
   let plan = memo?.get(date); if (plan === undefined) { try { plan = (P.boq || []).length ? plannedPct(P, date) : null; } catch (e) { console.error(e); plan = null; } memo?.set(date, plan); }
   const ws = (d?.work || []).filter(w => w.pct != null); const avg = ws.length ? ws.reduce((s, w) => s + +w.pct, 0) / ws.length : null;
-  return { start, end, total, elapsed: Math.min(el, total), timePct: Math.min(100, el / total * 100), plan, avg, acts: worksOn(P, date).length };
+  let ph = null; try { ph = (P.photos || []).some(p => p.el && p.pct != null && p.date <= date) ? progressReport(P, date) : null; } catch (e) { console.error(e); }
+  return { start, end, total, elapsed: Math.min(el, total), timePct: Math.min(100, el / total * 100), plan, avg, acts: worksOn(P, date).length, ph };
 }
 
 export function mount(root, ctx) {
@@ -132,7 +133,9 @@ export function mount(root, ctx) {
         return sec(SECS.prog, h('div', {}, h('div', { class: 'row', style: { gap: '8px', flexWrap: 'wrap' } },
           kv('공기', `${g.start} ~ ${g.end}`, '공정표 시작일 ~ 마지막 활동 종료일'), kv('경과', `${g.elapsed} / ${g.total}일 (${g.timePct.toFixed(1)}%)`),
           kv('계획 공정률', g.plan == null ? '-' : g.plan.toFixed(1) + '%', '공정표 활동 진척 × 내역 단가 × 객체 물량 (금액 가중)'),
-          kv('금일 작업 평균 진척', g.avg == null ? '-' : g.avg.toFixed(0) + '%'), kv('진행 중 활동', g.acts + '건')),
+          kv('금일 작업 평균 진척', g.avg == null ? '-' : g.avg.toFixed(0) + '%'), kv('진행 중 활동', g.acts + '건'),
+          g.ph?.sum.shot ? h('div', { class: 'card click', title: '현장 사진으로 판정한 부재의 평균 진척(같은 부재의 계획 대비). 눌러서 진척 판정 현황으로 이동', style: { padding: '6px 10px', minWidth: '120px' }, onclick: () => { ctx.state.siteView = 'report'; ctx.state.siteDate = date; ctx.go('site'); } },
+            h('div', { class: 'note' }, '사진 판정 실적'), h('div', { class: 't' }, `${g.ph.sum.act.toFixed(0)}% (계획 ${g.ph.sum.plan.toFixed(0)}%)`), h('div', { class: 'note', style: { fontSize: '11px' } }, `부재 ${g.ph.sum.shot} · 지연 ${g.ph.lag.length}${g.ph.unchecked.length ? ' · 확인 필요 ' + g.ph.unchecked.length : ''}`)) : null),
           h('div', { class: 'note', style: { marginTop: '4px' } }, g.plan == null ? '계획 공정률은 내역(단가)이 있어야 계산됩니다.' : '계획 공정률 근거: 공정표 일정에 따른 객체별 진척률을 내역 금액으로 가중 평균했습니다.')));
       }
       case 'crew': {
@@ -226,7 +229,7 @@ export function mount(root, ctx) {
   function outSecs(d, iss) {
     const F = formOf(d); const out = {};
     const g = progressOf(P, date, d, memo);
-    out.prog = { head: ['공기', '경과일', '시간 경과율', '계획 공정률', '금일 작업 평균 진척'], rows: g ? [[`${g.start} ~ ${g.end}`, `${g.elapsed} / ${g.total}일`, g.timePct.toFixed(1) + '%', g.plan == null ? '-' : g.plan.toFixed(1) + '%', g.avg == null ? '-' : g.avg.toFixed(0) + '%']] : [] };
+    out.prog = { head: ['공기', '경과일', '시간 경과율', '계획 공정률', '금일 작업 평균 진척', '사진 판정 실적(계획)'], rows: g ? [[`${g.start} ~ ${g.end}`, `${g.elapsed} / ${g.total}일`, g.timePct.toFixed(1) + '%', g.plan == null ? '-' : g.plan.toFixed(1) + '%', g.avg == null ? '-' : g.avg.toFixed(0) + '%', g.ph?.sum.shot ? `${g.ph.sum.act.toFixed(0)}% (${g.ph.sum.plan.toFixed(0)}%) · 부재 ${g.ph.sum.shot} · 지연 ${g.ph.lag.length}` : '-']] : [] };
     const cr = crewRows(d, F.crew); out.crew = { ...cr, title: `${SECS.crew} — 금일 ${crewTotal(d)}명 · 누계 ${fmt0(cumCrew(P, date))}명` };
     out.equip = equipRows(d, F.crew === 'cum' ? 'cum' : 'detail');
     out.work = { head: ['작업 내용', '위치', '진척'], rows: d.work.map(c => [c.text, c.loc || '', c.pct != null ? c.pct + '%' : '']) };
