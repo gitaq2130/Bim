@@ -25,6 +25,7 @@ export const ICONS = {
   interior: I('<path d="M9 2h6l2 6H7z"/><path d="M12 8v3"/><path d="M8 15l-2 6M16 15l2 6"/><path d="M5 15h14"/>'),
   civil: I('<path d="M2 20h20"/><path d="M2 20l6-8 4 4 3-5 7 9"/><path d="M8 12v8M15 11v9" stroke-dasharray="2 2"/>'),
   landscape: I('<path d="M12 22v-7"/><path d="M12 15c-4 0-6-3-6-6a6 6 0 0112 0c0 3-2 6-6 6z"/><path d="M4 22h16"/><path d="M5 22c0-2 1-3 2.5-3S10 20 10 22"/>'),
+  csim: I('<path d="M3 21h18"/><path d="M6 21V11h4v10"/><path d="M10 21V6h4v15"/><path d="M14 21v-7h4v7"/><path d="M4 4l3 2 3-2 3 2 3-2 3 2"/>'),
   site: I('<path d="M3 8a2 2 0 012-2h2l2-2h6l2 2h2a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><circle cx="12" cy="13" r="3.5"/>'),
 };
 export const PHASES = [{ id: 'plan', name: '기획·대지' }, { id: 'design', name: '설계' }, { id: 'review', name: '설계검토' }, { id: 'est', name: '적산·공정' }, { id: 'build', name: '시공·관리' }];
@@ -46,6 +47,7 @@ export const TOOLS = [
   // 적산·공정
   { id: 'qto', phase: 'est', name: '물량', full: '물량산출', color: '#3fbf7f', desc: '객체에서 콘크리트·거푸집·철근·철골·마감 물량을 자동 산출하고 내역 단가를 연결합니다.', load: () => import('../tools/qto.js') },
   { id: 'sched', phase: 'est', name: '공정', full: '공정(4D)', color: '#9ece6a', desc: '공정표를 모델 객체에 연결해 3D로 시공 순서를 재생하고, 기성 계획률을 자동 계산합니다.', load: () => import('../tools/sched.js') },
+  { id: 'csim', phase: 'est', name: '시공시뮬', full: '시공 시뮬레이션', color: '#ffb454', desc: '착공부터 준공까지 하루 단위로 3D 시공 과정(골조 사이클·매립·가설·장비·외장·MEP·마감)을 재생하고, 부재별 선행·체크리스트·후행을 확인합니다. 실적·역순 시공·우천·협력사 지연을 넣으면 후행 공정을 다시 짭니다.', load: () => import('../tools/csim.js') },
   // 시공·관리
   { id: 'site', phase: 'build', name: '현장', full: '현장 사진', color: '#e6b450', desc: '현장 사진을 도면 위치·부재에 붙이고, 사진 기준(AI 보조)으로 시공 단계와 기성 진척을 판정합니다.', load: () => import('../tools/site.js') },
   { id: 'daily', phase: 'build', name: '일보', full: '작업일보', color: '#e0af68', desc: '날씨·인원·장비와 공정표 연동 금일/명일 작업, 그날의 이슈·사진으로 작업일보를 작성하고 출력합니다.', load: () => import('../tools/daily.js') },
@@ -239,6 +241,7 @@ function toolStats(P, id, cache) {
     case 'daily': { const ks = Object.keys(P.daily || {}).sort(); if (!ks.length) return [['작성', 0]]; const k = ks[ks.length - 1]; const n = (P.daily[k].crew || []).reduce((s, c) => s + (+c.n || 0), 0); return [['작성', ks.length + '일'], ['최근', k.slice(5)], ['인원', n + '명']]; }
     case 'check': { const l = P.check.last; return l ? [['지적', l.count], ['미해결', l.open], ['검토일', new Date(l.at).toLocaleDateString('ko-KR')]] : [['지적', '미실행']]; }
     case 'mep': { const n = (k) => els.filter(r => r.el.k === k).length; return [['덕트·배관·트레이', n('duct') + n('pipe') + n('tray')], ['헤드', n('sprinkler')], ['분전반', n('panel')]]; }
+    case 'csim': { const l = P.csim?.last; return l ? [['준공', l.fin.slice(2)], ['지연', (l.delay > 0 ? '+' : '') + l.delay + '일'], ['작업', l.tasks]] : [['시뮬레이션', '미실행']]; }
     case 'civil': { const l = P.civil?.last; return l ? [['절토', fmt(l.cut, 0) + 'm³'], ['성토', fmt(l.fill, 0) + 'm³'], ['우수관', 'Ø' + l.D]] : [['측점', (P.civil?.pts || []).length]]; }
     case 'landscape': { const l = P.landscape?.last; return l ? [['조경', fmt(l.credit, 0) + '/' + fmt(l.need, 0) + '㎡'], ['교목', l.trees], ['기준', l.ok ? '적합' : '부족']] : [['검토', '미실행']]; }
     case 'interior': { const n = (k) => els.filter(r => r.el.k === k).length; return [['실', n('room')], ['조명', n('light')], ['천장', n('ceiling')]]; }
