@@ -23,7 +23,7 @@ export const TRACKS = {
   struct: {
     name: '구조해석·설계', branch: 'builder/struct',
     files: ['app/tools/struct.js', 'app/tools/structsim.js', 'app/js/kds.js', 'app/js/structauto.js', 'app/js/structmodel.js',
-      'app/js/fem.js', 'app/js/plate.js', 'app/js/simcore.js', 'docs/tools/struct.md'],
+      'app/js/fem.js', 'app/js/plate.js', 'app/js/simcore.js', 'app/js/schemes.js', 'app/tools/structscheme.js', 'docs/tools/struct.md'],
   },
   cost: {
     name: '물량·기성', branch: 'builder/cost',
