@@ -57,7 +57,7 @@ export const TOOLS = [
 
 const store = createStore();
 const bus = createBus();
-const state = { P: null, sheet: null, sel: new Set(), hi: null, tool: null, mounted: null, projects: [] };
+const state = { P: null, sheet: null, sel: new Set(), hi: null, tool: null, mounted: null, projects: [], tabs: [] };
 window.__builder = { store, state, bus }; // 디버그용
 
 const ctx = {
@@ -67,14 +67,74 @@ const ctx = {
   tools: TOOLS,
 };
 
-// ---------- 헤더 ----------
-function renderNav() {
-  const nav = $('#nav'); nav.innerHTML = '';
-  const add = (id, name, icon) => nav.append(h('a', { href: '#' + id, class: state.tool === id ? 'on' : '', html: icon + `<span>${name}</span>`, title: name }));
-  add('hub', '통합', ICONS.hub);
-  if (state.P) { let ph = null; for (const t of TOOLS) { if (t.phase !== ph) { ph = t.phase; nav.append(h('span', { class: 'ph', title: PHASES.find(x => x.id === ph)?.name }, PHASES.find(x => x.id === ph)?.name)); } add(t.id, t.name, ICONS[t.id]); } }
+// ---------- 헤더: 툴 메뉴 + 열린 툴 탭 (문서 탭처럼 열고·닫고·끌어서 순서 변경) ----------
+const tabKey = () => state.P ? 'bld:tabs:' + state.P.id : null;
+function loadTabs() { state.tabs = []; try { const k = tabKey(); if (k) state.tabs = (JSON.parse(localStorage.getItem(k) || '[]') || []).filter(id => TOOLS.some(t => t.id === id)); } catch { } }
+function saveTabs() { try { const k = tabKey(); if (k) localStorage.setItem(k, JSON.stringify(state.tabs)); } catch { } }
+function openTab(id) { if (!TOOLS.some(t => t.id === id)) return; state.tabs ||= []; if (!state.tabs.includes(id)) { state.tabs.push(id); saveTabs(); } }
+function closeTab(id) {
+  const i = state.tabs.indexOf(id); if (i < 0) return; state.tabs.splice(i, 1); saveTabs();
+  if (state.tool === id) go(state.tabs[Math.min(i, state.tabs.length - 1)] || 'hub'); else renderNav();
 }
-function refreshHeader() { $('#projName').textContent = state.P ? '/ ' + state.P.name : ''; renderNav(); }
+function renderNav() {
+  const nav = $('#nav'); nav.innerHTML = ''; $('#toolBtn').style.display = state.P ? '' : 'none';
+  const tab = (id, name, icon, pin) => {
+    const a = h('a', { href: '#' + id, class: (state.tool === id ? 'on' : '') + (pin ? ' pin' : ''), title: pin ? name : `${name} — 끌어서 순서 변경, 가운데 클릭으로 닫기`, 'data-id': id, html: icon + `<span>${name}</span>` });
+    if (!pin) { const x = h('i', { class: 'x', title: '닫기', html: '×' }); x.addEventListener('pointerdown', e => e.stopPropagation()); x.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); closeTab(id); }); a.append(x);
+      a.addEventListener('auxclick', e => { if (e.button === 1) { e.preventDefault(); closeTab(id); } }); dragTab(a, id); }
+    nav.append(a); return a;
+  };
+  tab('hub', state.P ? '통합' : '홈', ICONS.hub, true);
+  if (state.P) for (const id of state.tabs || []) { const t = TOOLS.find(x => x.id === id); if (t) tab(t.id, t.name, ICONS[t.id]); }
+  nav.querySelector('a.on')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+}
+// 탭 끌기 (마우스·터치 공용 포인터 드래그)
+function dragTab(a, id) {
+  a.addEventListener('dragstart', e => e.preventDefault());
+  a.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return; const sx = e.clientX, sy = e.clientY; let ghost = null, mark = null, target = null, pid = e.pointerId;
+    const nav = $('#nav');
+    const move = (ev) => {
+      if (ev.pointerId !== pid) return;
+      if (!ghost) { if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 6) return; ghost = h('div', { class: 'tab-ghost', html: a.innerHTML }); ghost.querySelector('.x')?.remove(); document.body.append(ghost); a.classList.add('drag'); mark = h('div', { class: 'drop-mark' }); nav.append(mark); try { a.setPointerCapture(pid); } catch { } }
+      ev.preventDefault(); ghost.style.left = ev.clientX + 8 + 'px'; ghost.style.top = ev.clientY + 8 + 'px';
+      const tabs = [...nav.querySelectorAll('a:not(.pin)')]; const nr = nav.getBoundingClientRect(); let idx = tabs.length;
+      for (let i = 0; i < tabs.length; i++) { const r = tabs[i].getBoundingClientRect(); if (ev.clientX < r.left + r.width / 2) { idx = i; break; } }
+      target = idx; const ref = tabs[idx] || tabs[tabs.length - 1]; const r = ref.getBoundingClientRect(); mark.style.left = (idx < tabs.length ? r.left : r.right) - nr.left + nav.scrollLeft - 1 + 'px';
+      if (ev.clientX > nr.right - 30) nav.scrollLeft += 12; else if (ev.clientX < nr.left + 30) nav.scrollLeft -= 12;
+    };
+    const up = (ev) => {
+      if (ev.pointerId !== pid) return; window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
+      if (!ghost) return; ghost.remove(); mark.remove(); a.classList.remove('drag');
+      const suppress = (c) => { c.preventDefault(); c.stopPropagation(); }; a.addEventListener('click', suppress, { capture: true, once: true }); setTimeout(() => a.removeEventListener('click', suppress, { capture: true }), 50);
+      if (target == null) return; const from = state.tabs.indexOf(id); if (from < 0) return; state.tabs.splice(from, 1); state.tabs.splice(target > from ? target - 1 : target, 0, id); saveTabs(); renderNav();
+    };
+    window.addEventListener('pointermove', move, { passive: false }); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+  });
+}
+// 툴 메뉴: 생애주기 단계별 목록, 검색, 키보드 선택
+let menuEl = null;
+function toggleToolMenu(force) {
+  if (menuEl && force !== true) { menuEl.remove(); menuEl = null; return; } if (!state.P) return; menuEl?.remove();
+  const btn = $('#toolBtn').getBoundingClientRect(); const box = h('div', { class: 'tool-menu' }); menuEl = box;
+  const q = h('input', { placeholder: '툴 검색 (이름·기능)', autocomplete: 'off' }); const list = h('div'); box.append(q, list);
+  let items = [], kb = 0;
+  const draw = () => { list.innerHTML = ''; items = []; const s = q.value.trim();
+    for (const ph of PHASES) { const ts = TOOLS.filter(t => t.phase === ph.id && (!s || (t.name + t.full + t.desc).includes(s))); if (!ts.length) continue;
+      const g = h('div', { class: 'grid' });
+      for (const t of ts) { const it = h('div', { class: 'it', title: t.desc, onclick: () => { toggleToolMenu(); go(t.id); } }, h('div', { class: 'ic', style: { background: t.color + '22', color: t.color }, html: ICONS[t.id] }), h('div', {}, h('b', {}, t.full, state.tabs?.includes(t.id) ? h('i', {}, '● 열림') : ''), h('small', {}, t.desc))); g.append(it); items.push([it, t]); }
+      list.append(h('div', { class: 'ph' }, `${PHASES.indexOf(ph) + 1}. ${ph.name}`), g); }
+    kb = Math.min(kb, Math.max(0, items.length - 1)); items.forEach(([el], i) => el.classList.toggle('kb', !!s && i === kb)); };
+  q.addEventListener('input', () => { kb = 0; draw(); });
+  q.addEventListener('keydown', e => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); kb = (kb + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % Math.max(1, items.length); items.forEach(([el], i) => el.classList.toggle('kb', i === kb)); } else if (e.key === 'Enter' && items[kb]) { toggleToolMenu(); go(items[kb][1].id); } else if (e.key === 'Escape') toggleToolMenu(); });
+  draw(); document.body.append(box);
+  const w = box.offsetWidth; box.style.left = Math.max(8, Math.min(btn.left, innerWidth - w - 8)) + 'px'; box.style.top = btn.bottom + 6 + 'px';
+  if (matchMedia('(pointer:fine)').matches) q.focus();
+  setTimeout(() => { const off = (e) => { if (!menuEl) return document.removeEventListener('pointerdown', off, true); if (!menuEl.contains(e.target) && !e.target.closest('#toolBtn')) { menuEl.remove(); menuEl = null; document.removeEventListener('pointerdown', off, true); } }; document.addEventListener('pointerdown', off, true); }, 0);
+}
+$('#toolBtn').addEventListener('click', () => toggleToolMenu());
+window.addEventListener('keydown', (e) => { if (e.altKey && (e.key === 't' || e.key === 'T' || e.code === 'KeyT')) { e.preventDefault(); toggleToolMenu(); } if (e.key === 'Escape' && menuEl) toggleToolMenu(); });
+function refreshHeader() { $('#projName').textContent = state.P ? '/ ' + state.P.name : ''; if (state.P && state.tabsFor !== state.P.id) { loadTabs(); state.tabsFor = state.P.id; } if (!state.P) { state.tabs = []; state.tabsFor = null; } renderNav(); }
 store.bus.on('status', (s) => {
   const el = $('#saveSt'); el.className = 'save-st ' + s.state;
   const where = store.kind === 'db' ? '계정 저장' : store.kind === 'local' ? '브라우저 저장' : '임시(저장 안 됨)';
@@ -101,6 +161,7 @@ async function mount(route) {
   const tool = TOOLS.find(t => t.id === route);
   if (tool && !state.P) route = 'hub';
   if (state.mounted?.unmount) { try { state.mounted.unmount(); } catch (e) { console.error(e); } }
+  if (tool) openTab(tool.id); menuEl?.remove(); menuEl = null;
   state.mounted = null; state.tool = tool ? tool.id : 'hub'; renderNav();
   const view = $('#view'); view.innerHTML = '';
   if (!tool) { renderHub(view); return; }
