@@ -1,4 +1,4 @@
-# 빌더 코어 규격 (Core v1.2.0)
+# 빌더 코어 규격 (Core v1.3.0)
 
 모든 툴이 공유하는 계약입니다. **이 문서와 코어 파일은 허브·코어 트랙만 수정합니다.**
 툴 트랙은 이 규격을 읽기만 하고, 바꿔야 하면 아래 "코어 변경 요청" 절차를 따릅니다.
@@ -104,9 +104,10 @@ export function mount(root, ctx) {
 | light (1.1.0) | I | point | interior | `watt, lm, z, circuit` — mep가 watt를 읽어 전기 부하 계산 |
 | ceiling (1.1.0) | I | poly | interior | `z, t, fin` |
 | room (1.1.0) | I | poly | interior | `name, use, lux, h` — 공간 정의라 3D 박스·간섭 대상 아님 |
-| furn | A | point | interior | 조경 툴이 L 시트에 `tree`·`shrub`(`landscape:true, sp, cnt`)을 배치 |
+| furn | A | point | interior | 조경 툴이 L 시트에 `tree`·`shrub`(`landscape:true, sp, cnt`)을 배치 → 물량 LTR·LSH(1.3.0) |
 
 - 공종(`DISC`): A 건축, S 구조, M 기계, E 전기, P 배관(위생), F 소방(1.1.0), I 인테리어(1.1.0), C 토목(1.2.0), L 조경(1.2.0). 재질은 `MATS`.
+- 내역 코드(`DEFAULT_BOQ`) 1.3.0 추가: FLR 바닥 마감, WLF 벽 마감, BSE 걸레받이, LTR 교목 식재, LSH 관목 식재 (`BOQ_ADDED` → migrate가 기존 P.boq에 보충)
 - 1.1.0 객체는 `elBoxes`·`elOutline`·`elName`·`qtyOf`(SPK·PNL·LGT·CLG 내역 코드)를 지원합니다. 따라서 물량·간섭에는 자동으로 포함됩니다. 작도 2D 표시와 3D 표시는 각각 cad·view3d 트랙의 후속 작업입니다.
 - 객체 종류·기본 속성 추가는 코어 변경입니다.
 
@@ -136,11 +137,12 @@ export function mount(root, ctx) {
 | mep `tools/mep.js` | `mepRows`, `systemSummary`, `heightBands` | — |
 | interior `js/furn.js` | `FURN`, `FURN_CATS`, `furnName`, `furnPlan`, `furnXf` | model(core), cad, ifcout |
 | interior `tools/furn3d.js` | 가구 3D 형상 | view3d |
-| interior `tools/interior.js` | `roomLighting`, `LUX_BY_USE` | mep(조명 부하) |
+| interior `tools/interior.js` | `roomLighting`, `LUX_BY_USE`, `roomFinishes` | mep(조명 부하), core `takeoff`(1.3.0) |
 | civil `tools/civil.js` | `civilCalc(P)` | — |
 | landscape `tools/landscape.js` | `SPECIES`, `landCalc`, `autoPlant`, `applyToModel`, `legalRatio` | — |
 
-### 툴 간 데이터 연동 (1.2.0)
+### 툴 간 데이터 연동 (1.2.0~)
+- 물량(`takeoff`)은 인테리어 `roomFinishes(P)`로 실별 바닥·벽·걸레받이(FLR·WLF·BSE)를 포함합니다 (1.3.0). 이 함수의 반환 구조(`q.floor·q.wall·q.base`, `fin.*`, `r`)를 바꾸려면 코어 변경 요청이 필요합니다.
 - 토목 우수 계산은 `P.landscape.last.green`(조경 녹지 면적)이 있으면 그 값을 녹지로 씁니다.
 
 공개 함수의 이름·인자·반환을 바꾸려면 코어 변경 요청으로 등록합니다.
