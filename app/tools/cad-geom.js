@@ -69,7 +69,7 @@ export function hitEnt(e, p, tol) {
 }
 export function hitEl(el, p, tol, host) {
   const o = elOutline(el, host); if (!o) return false;
-  if (el.k === 'slab') return distToSegs(p, elSegs(el, host)) <= tol; // 슬래브는 테두리로만 선택
+  if (el.k === 'slab' || el.k === 'ceiling' || el.k === 'room') return distToSegs(p, elSegs(el, host)) <= tol; // 면 객체(슬래브·천장·실)는 테두리로만 선택
   if (pointInPoly(p, o)) return true;
   return distToSegs(p, elSegs(el, host)) <= tol;
 }
@@ -107,7 +107,7 @@ export function transformEl(el, f, angDelta = 0, mirror = false) {
   const n = deep(el);
   ['a', 'b', 'p'].forEach(k => xfPoint(n, k, f));
   if (n.pts) n.pts = n.pts.map(f);
-  if (n.k === 'column' || n.k === 'footing' || n.k === 'furn') n.rot = ((el.rot || 0) + angDelta * 180 / Math.PI) % 360;
+  if (['column', 'footing', 'furn', 'fin', 'panel', 'light'].includes(n.k)) n.rot = ((el.rot || 0) + angDelta * 180 / Math.PI) % 360;
   if (mirror && n.a && n.b && n.k === 'wall') { /* 벽 방향 유지 */ }
   return n;
 }
@@ -304,3 +304,66 @@ export const HATCH = {
 export const HATCH_NAMES = { ANSI31: '사선(철근콘크리트)', ANSI37: '격자 사선', CONC: '콘크리트', BRICK: '벽돌', EARTH: '토사', GRASS: '잔디', SOLID: '채움' };
 
 export const lerpPt = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+
+// ---------- Core 1.1.0 객체 인식 (DXF 레이어 기준) ----------
+// 레이어 이름으로 실·천장·조명·스프링클러·분전반을 찾는다. 빌더 DXF 내보내기 레이어(I-ROOM 등)와 흔한 한글·영문 레이어명 대응
+export const CORE_LAYER_RX = {
+  room: /(^|[-_ ])(ROOM|AREA|SPACE)|실명|^실$|실[-_ ]?구획|면적/i,
+  ceiling: /CEIL|CLG|천장|반자/i,
+  light: /LIGHT|LGT|LITE|LUMIN|조명|등기구/i,
+  sprinkler: /SPRINK|SPK|^F-SP|[-_ ]SP$|헤드|스프링/i,
+  panel: /PANEL|PNL|분전|^E-P$/i,
+};
+export function coreLayerKind(layer) { const n = String(layer || ''); for (const [k, rx] of Object.entries(CORE_LAYER_RX)) if (rx.test(n)) return k; return null; }
+const closedPts = (e) => { if (e.t !== 'pline') return null; let p = e.pts; if (p.length > 3 && dist(p[0], p[p.length - 1]) < 1) p = p.slice(0, -1); return (e.closed || dist(e.pts[0], e.pts[e.pts.length - 1]) < 1) && p.length >= 3 ? p : null; };
+const areaOf = (p) => { let s = 0; for (let i = 0, j = p.length - 1; i < p.length; j = i++) s += (p[j][0] + p[i][0]) * (p[j][1] - p[i][1]); return Math.abs(s / 2); };
+// 회전 사각형 → 중심·폭·깊이·회전(°)
+function rectOf(p) {
+  if (p.length !== 4) { const b = bboxOf(p); return { c: [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2], w: b.x1 - b.x0, d: b.y1 - b.y0, rot: 0 }; }
+  const c = [(p[0][0] + p[2][0]) / 2, (p[0][1] + p[2][1]) / 2]; let a = angOf(p[0], p[1]) * 180 / Math.PI; a = Math.round(((a % 180) + 180) % 180 * 10) / 10;
+  return { c, w: dist(p[0], p[1]), d: dist(p[1], p[2]), rot: a >= 179.95 ? 0 : a };
+}
+// 반환: { rooms, ceilings, lights, sprinklers, panels, used:Set(id) } — 각 항목은 객체 속성 + src(원본 요소 id 목록)
+export function recognizeCore(ents, opt = {}) {
+  const kindOf = opt.kindOf || ((e) => coreLayerKind(e.layer));
+  const out = { rooms: [], ceilings: [], lights: [], sprinklers: [], panels: [], used: new Set() };
+  const texts = ents.filter(e => e.t === 'text' && e.s);
+  const R = (x) => Math.round(x);
+  for (const e of ents) {
+    const k = kindOf(e); if (!k) continue; const p = closedPts(e);
+    if (k === 'room' || k === 'ceiling') {
+      if (!p || areaOf(p) < 1e6) continue; // 1㎡ 미만은 제외
+      const pts = p.map(q => [R(q[0]), R(q[1])]);
+      (k === 'room' ? out.rooms : out.ceilings).push({ k, pts, src: [e.id] });
+    } else if (k === 'sprinkler') {
+      let c = null; if (e.t === 'circle' && e.r <= 200) c = e.c; else if (p && areaOf(p) <= 300 * 300) c = rectOf(p).c;
+      if (!c) continue;
+      const dup = out.sprinklers.find(s => dist(s.p, c) < 60); if (dup) { dup.src.push(e.id); continue; }
+      out.sprinklers.push({ k, p: [R(c[0]), R(c[1])], src: [e.id] });
+    } else if (k === 'light' || k === 'panel') {
+      let r = null; if (p) { const a = areaOf(p); if (a >= 100 * 100 && a <= 3000 * 3000) r = rectOf(p); } else if (e.t === 'circle' && e.r >= 50 && e.r <= 600 && k === 'light') r = { c: e.c, w: e.r * 2, d: e.r * 2, rot: 0 };
+      if (!r) continue;
+      (k === 'light' ? out.lights : out.panels).push({ k, p: [R(r.c[0]), R(r.c[1])], w: R(r.w), d: R(r.d), rot: r.rot, src: [e.id] });
+    }
+  }
+  // 실 안의 문자: 가장 큰 문자 → 실명, 용도 목록과 맞는 단어 → 용도
+  const uses = opt.uses || [];
+  for (const rm of out.rooms) {
+    const inside = texts.filter(t => pointInPoly(t.p, rm.pts) && (kindOf(t) === 'room' || !kindOf(t))).sort((a, b) => (b.h || 0) - (a.h || 0));
+    const useOf = (s) => uses.find(n => s === n || s.startsWith(n + ' ') || s.startsWith(n + '·'));
+    for (const t of inside) {
+      const s = String(t.s).trim();
+      if ((s.includes('·') || uses.includes(s)) && useOf(s)) { rm.use ||= useOf(s); if (kindOf(t) === 'room') rm.src.push(t.id); continue; } // 용도 문자 ("사무실 · 46.8㎡ · 500lx" 또는 "사무실")
+      if (!rm.name && !/^[\d.,\s㎡m²]+$/.test(s)) { rm.name = s; rm.src.push(t.id); }
+    }
+    if (!rm.use && rm.name) rm.use = useOf(rm.name); // 실명에서 용도 추정 ("회의실 2" → 회의실)
+  }
+  // 조명 회로·분전반 계통 문자 (같은 레이어, 가까운 문자)
+  const near = (p, k, max) => texts.filter(t => kindOf(t) === k).map(t => ({ t, d: dist(t.p, p) })).filter(x => x.d <= max).sort((a, b) => a.d - b.d)[0]?.t;
+  for (const l of out.lights) { const t = near(l.p, 'light', Math.max(l.w, l.d) + 400); if (t) { l.circuit = String(t.s).trim(); l.src.push(t.id); } }
+  for (const pn of out.panels) { const t = near(pn.p, 'panel', Math.max(pn.w, pn.d) + 3000); if (t) { const m = String(t.s).match(/전등|전열|동력|비상/); if (m) pn.sys = m[0]; pn.src.push(t.id); } }
+  // 천장 CH 문자
+  for (const cl of out.ceilings) { const t = texts.find(t => kindOf(t) === 'ceiling' && pointInPoly(t.p, cl.pts) && /CH/i.test(t.s)); if (t) { const m = String(t.s).match(/CH\s*([\d,]+)/i); if (m) cl.z = +m[1].replace(/,/g, ''); const f = String(t.s).replace(/CH\s*[\d,]+/i, '').trim(); if (f) cl.fin = f; cl.src.push(t.id); } }
+  for (const g of [out.rooms, out.ceilings, out.lights, out.sprinklers, out.panels]) for (const o of g) o.src.forEach(i => out.used.add(i));
+  return out;
+}

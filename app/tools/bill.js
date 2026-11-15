@@ -30,6 +30,8 @@ export function mount(root, ctx) {
     sub.append(h('button', { class: 'btn', onclick: () => { ctx.state.period3d = st.pi; ctx.go('view3d'); } }, '3D에서 진척 보기'), h('button', { class: 'btn', onclick: () => { ctx.state.progView = st.pi; ctx.go('cad'); } }, '도면에서 영역 마킹'));
     w.append(sub);
     const rows = takeoff(P);
+    const known = new Set(P.boq.map(b => b.code)); const miss = [...new Set(rows.map(r => r.code))].filter(c => !known.has(c));
+    if (miss.length) w.append(h('div', { class: 'card', style: { marginBottom: '12px', borderColor: 'var(--warn)' } }, h('div', { class: 't' }, `내역 미등록 코드 ${miss.length}개 — ${miss.join(', ')}`), h('div', { class: 'd' }, '이 코드의 물량은 기성 검토에서 빠집니다. 물량산출에서 내역을 보충하세요.'), h('button', { class: 'btn sm', style: { marginTop: '6px' }, onclick: () => ctx.go('qto') }, '물량산출로 이동')));
     if (st.tab === 'review') renderReview(rows); else if (st.tab === 'claim') renderClaim(rows); else if (st.tab === 'status') renderStatus(rows); else renderProg(rows);
   }
 
@@ -50,9 +52,9 @@ export function mount(root, ctx) {
       { label: '차이', num: true, render: r => r.diff == null ? '-' : fmt(r.diff, 2), cls: r => r.diff > 0 && r.verdict !== '적정' ? 'bad' : '' },
       { label: '차이율', num: true, render: r => r.diffPct == null ? '-' : isFinite(r.diffPct) ? fmt(r.diffPct, 1) + '%' : '검토량 0' },
       { label: '판정', render: r => h('span', { class: 'pill ' + VCOL[r.verdict] }, r.verdict) },
-      { label: '검토 금액', num: true, render: r => fmt0(amt(r, r.thisQty)) }, { label: '청구 금액', num: true, render: r => r.claim == null ? '-' : fmt0(amt(r, r.claim)) },
+      { label: '검토 금액', key: 'revAmt', num: true, render: r => fmt0(amt(r, r.thisQty)) }, { label: '청구 금액', key: 'claimAmt', num: true, render: r => r.claim == null ? '-' : fmt0(amt(r, r.claim)) },
       { label: '누계율', num: true, render: r => r.contract ? fmt(r.cum / r.contract * 100, 1) + '%' : '-' },
-    ], rv, { foot: { name: '합계', ...{} }, rowClass: r => '' })));
+    ], rv, { foot: { name: '합계', revAmt: fmt0(tot.rev), claimAmt: fmt0(tot.claim) } })));
     if (issues.length) {
       w.append(h('h2', {}, '검토 의견'));
       const ul = h('div', { class: 'card' });
@@ -60,7 +62,7 @@ export function mount(root, ctx) {
       w.append(ul);
     }
     w.append(h('div', { class: 'row', style: { marginTop: '14px' } },
-      h('button', { class: 'btn', onclick: () => exportXLSX(rv, tot, issues) }, '엑셀 내보내기'), h('button', { class: 'btn', onclick: () => exportCSV(rv) }, 'CSV 내보내기'), h('button', { class: 'btn', onclick: () => exportHTML(rv, tot, issues) }, '검토서(HTML) 내보내기')));
+      h('button', { class: 'btn', onclick: () => exportXLSX(rv, tot, issues) }, '엑셀 내보내기'), h('button', { class: 'btn', onclick: () => exportCSV(rv) }, 'CSV 내보내기'), h('button', { class: 'btn', onclick: () => exportHTML(rv, tot, issues) }, '검토서(HTML) 내보내기'), h('button', { class: 'btn primary', onclick: () => claimForm(rows) }, '기성 청구서(갑지·을지)')));
   }
   const card = (t, v, cls) => h('div', { class: 'card' }, h('div', { class: 'note' }, t), h('div', { class: 'mono', style: { fontSize: '18px', fontWeight: 600, color: cls === 'bad' ? 'var(--bad)' : cls === 'ok' ? 'var(--ok)' : 'var(--fg)' } }, v));
 
@@ -196,6 +198,82 @@ export function mount(root, ctx) {
 <table><tr><th>코드</th><th>공종</th><th>단위</th><th>설계물량</th><th>전회누계</th><th>금회검토</th><th>금회청구</th><th>차이</th><th>차이율</th><th>판정</th><th>검토금액</th><th>청구금액</th></tr>${tr}</table>
 <h2 style="font-size:15px">검토 의견</h2><ul>${op}</ul><p style="font-size:11px;color:#666">검토량 = 객체별 누계 진척률 × 빌더 모델 물량(구조 도면 기준). 단가는 프로젝트 내역 단가 적용.</p></body></html>`;
     saveFile(`${P.name}_${p.name}_기성검토서.html`.replace(/[\\/:*?"<>|]/g, '_'), html);
+  }
+  // ---------- 기성 청구서 (기성부분 내역서: 갑지·을지) ----------
+  function claimData(rows, basis) {
+    // 회차별 금회 수량: 검토량 기준 또는 청구량 기준(청구 없는 항목은 검토량). 전회 누계 = 이전 회차 금회의 합.
+    const reviews = P.bill.periods.slice(0, st.pi + 1).map((_, i) => billReview(P, i, rows));
+    const thisOf = (r) => basis === 'claim' && r.claim != null ? r.claim : r.thisQty;
+    const cur = reviews[st.pi];
+    return cur.map(r => {
+      let prev = 0; for (let i = 0; i < st.pi; i++) { const x = reviews[i].find(y => y.code === r.code); if (x) prev += thisOf(x); }
+      const now = thisOf(r), cum = prev + now, rem = r.contract - cum;
+      return { code: r.code, name: r.name, unit: r.unit, price: r.price, q: r.contract, a: r.contract * r.price, pq: prev, pa: prev * r.price, nq: now, na: now * r.price, cq: cum, ca: cum * r.price, rq: rem, ra: rem * r.price, rate: r.contract > 1e-9 ? cum / r.contract * 100 : 0, src: basis === 'claim' && r.claim != null ? '청구' : '검토' };
+    });
+  }
+  function claimTotals(L, f) {
+    const t = L.reduce((s, x) => ({ a: s.a + x.a, pa: s.pa + x.pa, na: s.na + x.na, ca: s.ca + x.ca, ra: s.ra + x.ra }), { a: 0, pa: 0, na: 0, ca: 0, ra: 0 });
+    const contract = f.contract > 0 ? f.contract : t.a;
+    const supply = Math.round(t.na), vat = f.vat ? Math.round(supply * 0.1) : 0, adv = Math.round(supply * (f.advPct || 0) / 100), ret = Math.round(supply * (f.retPct || 0) / 100);
+    return { ...t, contract, supply, vat, adv, ret, pay: supply + vat - adv - ret, rate: contract ? t.ca / contract * 100 : 0, prevRate: contract ? t.pa / contract * 100 : 0 };
+  }
+  async function claimForm(rows) {
+    const p = per(); const f = (P.bill.form ||= { basis: 'review', vat: true, advPct: 0, retPct: 0, contract: 0, contractor: '', owner: '' });
+    const v = await dialog({ title: `${p.name} 기성 청구서`, fields: [
+      { key: 'basis', label: '금회 수량 기준', type: 'select', options: ['검토량(확정)', '협력사 청구량'], value: f.basis === 'claim' ? '협력사 청구량' : '검토량(확정)' },
+      { key: 'contract', label: '계약금액(원, 공급가액) — 0이면 모델 물량×단가 합계', type: 'number', value: f.contract || 0 },
+      { key: 'advPct', label: '선급금 정산 공제율(%)', type: 'number', value: f.advPct || 0 },
+      { key: 'retPct', label: '유보금(%)', type: 'number', value: f.retPct || 0 },
+      { key: 'vat', label: '부가가치세 10% 포함', type: 'select', options: ['포함', '미포함'], value: f.vat ? '포함' : '미포함' },
+      { key: 'contractor', label: '수급인(협력사)', value: f.contractor || '' }, { key: 'owner', label: '발주자', value: f.owner || '' },
+      { key: 'fmt', label: '출력 형식', type: 'select', options: ['엑셀', 'HTML(인쇄용)', '둘 다'], value: f.fmt || '엑셀' },
+    ], ok: '만들기' });
+    if (!v) return;
+    Object.assign(f, { basis: v.basis === '협력사 청구량' ? 'claim' : 'review', contract: +v.contract || 0, advPct: Math.max(0, +v.advPct || 0), retPct: Math.max(0, +v.retPct || 0), vat: v.vat === '포함', contractor: v.contractor || '', owner: v.owner || '', fmt: v.fmt });
+    ctx.touch('meta');
+    const L = claimData(rows, f.basis).filter(x => x.q > 1e-9 || x.cq > 1e-9); const T = claimTotals(L, f);
+    const base = `${P.name}_${p.name}_기성청구서`.replace(/[\\/:*?"<>|]/g, '_');
+    if (f.fmt !== 'HTML(인쇄용)') await claimXLSX(p, f, L, T, base);
+    if (f.fmt !== '엑셀') saveFile(base + '.html', claimHTML(p, f, L, T));
+  }
+  const basisName = (f) => f.basis === 'claim' ? '협력사 청구량(청구 없는 항목은 검토량)' : '검토량(진척률×모델 물량)';
+  async function claimXLSX(p, f, L, T, base) {
+    const R = Math.round, q3 = (x) => +x.toFixed(3);
+    try {
+      const blob = await writeBook([
+        { name: '갑지', widths: [26, 20, 20], rows: [[`기성부분 내역서 (갑지) — ${p.name}`], [], ['공사명', P.name], ['발주자', f.owner], ['수급인', f.contractor], ['회차 / 기준일', `${p.name} / ${p.date || ''}`], ['금회 수량 기준', basisName(f)], [],
+          ['구분', '금액(원)', '기성률(%)'], ['계약금액(공급가액)', R(T.contract), 100], ['전회 기성 누계', R(T.pa), +T.prevRate.toFixed(2)], ['금회 기성', R(T.na), T.contract ? +(T.na / T.contract * 100).toFixed(2) : ''], ['누계 기성', R(T.ca), +T.rate.toFixed(2)], ['잔여', R(T.contract - T.ca), T.contract ? +(100 - T.rate).toFixed(2) : ''], [],
+          ['금회 청구 내역', '금액(원)'], ['금회 기성(공급가액)', T.supply], ['부가가치세', T.vat], [`선급금 정산 공제(${f.advPct}%)`, -T.adv], [`유보금(${f.retPct}%)`, -T.ret], ['금회 청구액', T.pay], [],
+          ['승인 상태', p.approval?.status || '작성'], ['작성일', new Date().toLocaleDateString('ko-KR')], [], ['작성', '검토', '승인']] },
+        { name: '을지', widths: [7, 24, 6, 11, 11, 14, 11, 14, 11, 14, 11, 14, 11, 14, 8, 6], rows: [[`기성부분 내역서 (을지) — ${p.name}`], [],
+          ['코드', '공종', '단위', '단가', '계약 수량', '계약 금액', '전회누계 수량', '전회누계 금액', '금회 수량', '금회 금액', '누계 수량', '누계 금액', '잔여 수량', '잔여 금액', '진도율(%)', '근거'],
+          ...L.map(x => [x.code, x.name, x.unit, x.price, q3(x.q), R(x.a), q3(x.pq), R(x.pa), q3(x.nq), R(x.na), q3(x.cq), R(x.ca), q3(x.rq), R(x.ra), +x.rate.toFixed(1), x.src]),
+          ['합계', '', '', '', '', R(T.a), '', R(T.pa), '', R(T.na), '', R(T.ca), '', R(T.ra), T.a ? +(T.ca / T.a * 100).toFixed(1) : '', '']] },
+      ]);
+      saveFile(base + '.xlsx', blob);
+    } catch (e) { toast('엑셀 만들기 실패: ' + e.message, 'err'); }
+  }
+  function claimHTML(p, f, L, T) {
+    const n = (v, d = 0) => d ? fmt(v, d) : fmt0(v);
+    const rowsH = L.map(x => `<tr><td>${esc(x.code)}</td><td class=l>${esc(x.name)}</td><td>${esc(x.unit)}</td><td>${n(x.price)}</td><td>${n(x.q, 3)}</td><td>${n(x.a)}</td><td>${n(x.pq, 3)}</td><td>${n(x.pa)}</td><td class=b>${n(x.nq, 3)}</td><td class=b>${n(x.na)}</td><td>${n(x.cq, 3)}</td><td>${n(x.ca)}</td><td>${n(x.rq, 3)}</td><td>${n(x.ra)}</td><td>${fmt(x.rate, 1)}%</td></tr>`).join('');
+    const kv = (k, v) => `<tr><th>${k}</th><td class=l>${esc(v ?? '')}</td></tr>`;
+    return `<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>${esc(P.name)} ${esc(p.name)} 기성부분 내역서</title><style>
+@page{size:A4 landscape;margin:12mm}body{font-family:'Malgun Gothic',sans-serif;color:#111;margin:20px}h1{font-size:20px;text-align:center;letter-spacing:6px;margin:0 0 14px}
+table{border-collapse:collapse;width:100%;font-size:11px}td,th{border:1px solid #555;padding:4px 5px;text-align:right}th{background:#eef1f6;text-align:center}td.l{text-align:left}td.b{background:#fff8e1;font-weight:600}
+.g{display:flex;gap:16px;align-items:flex-start}.g>div{flex:1}.sign td{height:56px;width:80px}.pb{page-break-before:always}.note{font-size:10px;color:#555;margin-top:6px}</style></head><body>
+<h1>기 성 부 분 내 역 서 (갑지)</h1>
+<div class=g><div><table>${kv('공사명', P.name)}${kv('발주자', f.owner)}${kv('수급인', f.contractor)}${kv('회차', p.name)}${kv('기준일', p.date)}${kv('금회 수량 기준', basisName(f))}</table></div>
+<div><table class=sign><tr><th>작성</th><th>검토</th><th>승인</th></tr><tr><td></td><td></td><td></td></tr></table><div class=note>승인 상태: ${esc(p.approval?.status || '작성')}${p.approval?.by ? ' (' + esc(p.approval.by) + ')' : ''}</div></div></div>
+<h2 style="font-size:14px">기성 집계</h2><table><tr><th>구분</th><th>금액(원)</th><th>기성률</th></tr>
+<tr><td class=l>계약금액(공급가액)</td><td>${n(T.contract)}</td><td>100.00%</td></tr><tr><td class=l>전회 기성 누계</td><td>${n(T.pa)}</td><td>${fmt(T.prevRate, 2)}%</td></tr>
+<tr><td class=l>금회 기성</td><td class=b>${n(T.na)}</td><td>${T.contract ? fmt(T.na / T.contract * 100, 2) : '-'}%</td></tr><tr><td class=l>누계 기성</td><td>${n(T.ca)}</td><td>${fmt(T.rate, 2)}%</td></tr><tr><td class=l>잔여</td><td>${n(T.contract - T.ca)}</td><td>${fmt(100 - T.rate, 2)}%</td></tr></table>
+<h2 style="font-size:14px">금회 청구액</h2><table><tr><th>금회 기성(공급가액)</th><th>부가가치세</th><th>선급금 정산(${f.advPct}%)</th><th>유보금(${f.retPct}%)</th><th>금회 청구액</th></tr><tr><td>${n(T.supply)}</td><td>${n(T.vat)}</td><td>${T.adv ? '-' + n(T.adv) : '0'}</td><td>${T.ret ? '-' + n(T.ret) : '0'}</td><td class=b>${n(T.pay)}</td></tr></table>
+<div class=note>계약금액 ${f.contract > 0 ? '입력값' : '= 빌더 모델 물량 × 내역 단가 합계'}. 작성 ${new Date().toLocaleDateString('ko-KR')}</div>
+<h1 class=pb>기 성 부 분 내 역 서 (을지)</h1>
+<table><tr><th rowspan=2>코드</th><th rowspan=2>공종</th><th rowspan=2>단위</th><th rowspan=2>단가</th><th colspan=2>계약</th><th colspan=2>전회 누계</th><th colspan=2>금회</th><th colspan=2>누계</th><th colspan=2>잔여</th><th rowspan=2>진도율</th></tr>
+<tr><th>수량</th><th>금액</th><th>수량</th><th>금액</th><th>수량</th><th>금액</th><th>수량</th><th>금액</th><th>수량</th><th>금액</th></tr>${rowsH}
+<tr><th colspan=5>합계</th><th>${n(T.a)}</th><th></th><th>${n(T.pa)}</th><th></th><th>${n(T.na)}</th><th></th><th>${n(T.ca)}</th><th></th><th>${n(T.ra)}</th><th>${T.a ? fmt(T.ca / T.a * 100, 1) : '-'}%</th></tr></table>
+<div class=note>수량 근거: ${basisName(f)}. 계약 수량 = 빌더 모델 물량(현재 기준).</div></body></html>`;
   }
   render();
   const off = ctx.bus.on('model', render);

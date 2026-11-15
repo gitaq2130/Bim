@@ -1,5 +1,5 @@
 // 빌더 구조 설계 — KDS 14 20 (RC 강도설계: 등가직사각형 응력블록), KDS 14 31 (강구조 LRFD 근사), SRC 변형률 적합
-import { memberForces, combine } from './structmodel.js';
+import { memberForces, combine, Ec } from './structmodel.js';
 import { specOf, parseN, parseS } from './rebar.js';
 import { pointInPoly, polyArea } from './util.js';
 const AREA = { D10: 71.33, D13: 126.7, D16: 198.6, D19: 286.5, D22: 387.1, D25: 506.7, D29: 642.4, D32: 794.2, D35: 956.6 };
@@ -100,27 +100,143 @@ function rcWall(m, env, S) {
     rows: [['단면', `L ${L} × t ${t} · hw ${Math.round(hw)} · fck ${fck}`], [pv ? '수직근 (실배근)' : S.rhoAuto ? '수직근비 ρv (제안)' : '수직근비 ρv (가정)', `${pv ? `${sp.v} ${ly}단 · ` : ''}${(rho * 100).toFixed(2)}%`], ['Pu', kN(a.Pu || 0), a.c], ['Mu / φMn (면내)', `${kNm(a.Mu || 0)} / ${kNm(a.cap || 0)}`, r.u], ['필요 수직근비', req == null ? '-' : !isFinite(req) ? '4% 초과 — 벽 두께·길이 증대' : `${(req * 100).toFixed(2)}%`], ['Vu / φVn (αc ' + ac.toFixed(3) + ')', `${kN(Vu)} / ${kN(phiVn)}`, rv]] };
 }
 // ---------- 강구조 ----------
-function steel(m, env, S) {
-  const sh = m.sh, Fy = S.Fy, E = 205000; const A = sh.A, rx = Math.sqrt(sh.Ix / A), ry = Math.sqrt(sh.Iy / A); const KL = m.L;
-  const lam = KL / Math.min(rx, ry); const Fe = Math.PI ** 2 * E / lam ** 2; const Fcr = Fy / Fe <= 2.25 ? Math.pow(0.658, Fy / Fe) * Fy : 0.877 * Fe;
-  const Pc = 0.9 * Fcr * A, Pt = 0.9 * Fy * A, Mcx = 0.9 * Fy * sh.Zx, Mcy = 0.9 * Fy * sh.Zy, Vc = 0.9 * 0.6 * Fy * sh.h * sh.tw;
-  let u = 0, at = null, Vu = 0, cV = '';
-  for (const { c, st } of env) for (const s of st) {
-    const Pr = -s.N, Pa = Pr >= 0 ? Pc : Pt, pr = Math.abs(Pr) / Pa, mx = Math.abs(s.My) / Mcx, my = Math.abs(s.Mz) / Mcy;
-    const v = pr >= 0.2 ? pr + 8 / 9 * (mx + my) : pr / 2 + mx + my; if (v > u) { u = v; at = { c: c.name, Pr, Mx: Math.abs(s.My), My: Math.abs(s.Mz) }; }
-    const vv = Math.max(Math.abs(s.Vz), Math.abs(s.Vy)); if (vv > Vu) { Vu = vv; cV = c.name; }
+const ES_S = 205000;
+// 휨재 공칭강도 (KDS 14 31 10 4.4 — 횡비틀림좌굴 + 플랜지 국부좌굴, 압연 H형강 c=1)
+export function steelFlexure(sh, Fy, Lb, Cb = 1) {
+  const E = ES_S; const Sx = 2 * sh.Ix / sh.h, Zx = sh.Zx, ho = sh.h - sh.tf, ry = Math.sqrt(sh.Iy / sh.A), Cw = sh.Iy * ho * ho / 4, rts = Math.sqrt(Math.sqrt(sh.Iy * Cw) / Sx), J = sh.J;
+  const Mp = Fy * Zx; const jj = J / (Sx * ho);
+  const Lp = 1.76 * ry * Math.sqrt(E / Fy), Lr = 1.95 * rts * E / (0.7 * Fy) * Math.sqrt(jj + Math.sqrt(jj * jj + 6.76 * (0.7 * Fy / E) ** 2));
+  let Mltb, zone;
+  if (Lb <= Lp) { Mltb = Mp; zone = '소성 (Lb ≤ Lp)'; }
+  else if (Lb <= Lr) { Mltb = Math.min(Mp, Cb * (Mp - (Mp - 0.7 * Fy * Sx) * (Lb - Lp) / (Lr - Lp))); zone = '비탄성 횡비틀림 (Lp < Lb ≤ Lr)'; }
+  else { const s2 = (Lb / rts) ** 2; const Fcr = Cb * Math.PI ** 2 * E / s2 * Math.sqrt(1 + 0.078 * jj * s2); Mltb = Math.min(Mp, Fcr * Sx); zone = '탄성 횡비틀림 (Lb > Lr)'; }
+  const lf = sh.b / (2 * sh.tf), lpf = 0.38 * Math.sqrt(E / Fy), lrf = 1.0 * Math.sqrt(E / Fy); let Mflb = Mp, flb = '조밀';
+  if (lf > lrf) { const kc = Math.min(0.76, Math.max(0.35, 4 / Math.sqrt((sh.h - 2 * sh.tf) / sh.tw))); Mflb = 0.9 * E * kc * Sx / (lf * lf); flb = '세장'; }
+  else if (lf > lpf) { Mflb = Mp - (Mp - 0.7 * Fy * Sx) * (lf - lpf) / (lrf - lpf); flb = '비조밀'; }
+  const webOk = (sh.h - 2 * sh.tf) / sh.tw <= 3.76 * Math.sqrt(E / Fy);
+  return { Mn: Math.min(Mltb, Mflb), Mp, Mltb, Mflb, Lp, Lr, zone, flb, lf, lpf, webOk, Sx };
+}
+// 보 상부 플랜지가 슬래브로 연속 구속되는지 (보 중앙 또는 양옆이 같은 레벨 슬래브 안)
+function topBraced(res, m) {
+  if (m._tb != null) return m._tb; const z = res.M.nodes[res.R.E[m.segs[0]].e.n1].z; const el = m.el; if (!el.a || !el.b) return (m._tb = false);
+  const mx = (el.a[0] + el.b[0]) / 2, my = (el.a[1] + el.b[1]) / 2, dx = el.b[0] - el.a[0], dy = el.b[1] - el.a[1], l = Math.hypot(dx, dy) || 1, o = m.by / 2 + 150, nx = -dy / l * o, ny = dx / l * o;
+  return (m._tb = res.M.slabs.some(s => s.z === z && [[mx, my], [mx + nx, my + ny], [mx - nx, my - ny]].some(p => pointInPoly(p, s.pts))));
+}
+// 비지지 구간: [{x0,x1,Lb,Cb,idx:[station 번호]}] — 모멘트도(1차)에서 산정
+function unbraced(st, segL, braced, cant = false) {
+  const out = []; const M = st.map(s => s.My); const X = st.map(s => s.x);
+  const cbOf = (x0, x1) => { const at = (x) => { for (let i = 0; i < X.length - 1; i++) if (x >= X[i] - 1e-6 && x <= X[i + 1] + 1e-6) { const t = X[i + 1] - X[i] ? (x - X[i]) / (X[i + 1] - X[i]) : 0; return Math.abs(M[i] + (M[i + 1] - M[i]) * t); } return Math.abs(M[M.length - 1]); };
+    let mx = 0; for (let i = 0; i < X.length; i++) if (X[i] >= x0 - 1e-6 && X[i] <= x1 + 1e-6) mx = Math.max(mx, Math.abs(M[i])); mx = Math.max(mx, at(x0), at(x1)); if (!mx) return 1;
+    if (cant) return 1; const L = x1 - x0; return Math.min(3, 12.5 * mx / (2.5 * mx + 3 * at(x0 + L / 4) + 4 * at(x0 + L / 2) + 3 * at(x0 + 3 * L / 4))); };
+  if (!braced) { // 골조 절점(부재 분할점) 사이
+    let x0 = 0; for (const [ei, L] of segL) { const idx = st.map((s, i) => i).filter(i => st[i].ei === ei); out.push({ x0, x1: x0 + L, Lb: L, Cb: cbOf(x0, x0 + L), idx, why: '골조 절점 사이' }); x0 += L; }
+    return out;
   }
-  const rv = Vu / Vc; const a = at || {}; const df = m.kind === 'beam' ? m.defl : null; const rdf = df ? df.L / df.limL : 0; const ratio = Math.max(u, rv, rdf);
-  return { type: m.kind === 'beam' ? '철골 보' : '철골 기둥', ratio, gov: rdf >= Math.max(u, rv) ? '처짐' : u >= rv ? '조합(H1-1)' : '전단', combo: u >= rv ? a.c : cV, extra: df ? [['처짐 활하중', `${df.L.toFixed(1)} mm ≤ L/${df.cant ? 180 : 360} = ${df.limL.toFixed(1)}`, rdf]] : [],
-    rows: [['단면', `${m.el.sec} · Fy ${Fy}`], ['A / Zx', `${mm2(A)} / ${(sh.Zx / 1e3).toFixed(0)}×10³mm³`], ['KL/r', lam.toFixed(0)], ['Pr / φPn', `${kN(a.Pr || 0)} / ${kN((a.Pr || 0) >= 0 ? Pc : Pt)}`, a.c], ['Mrx / φMnx', `${kNm(a.Mx || 0)} / ${kNm(Mcx)}`], ['Mry / φMny', `${kNm(a.My || 0)} / ${kNm(Mcy)}`], ['H1-1 검토비', u.toFixed(3), u], ['Vu / φVn', `${kN(Vu)} / ${kN(Vc)}`, rv]] };
+  // 상부 플랜지 구속: 부모멘트(My<0) 구간만 비지지 — 변곡점까지
+  let i = 0; while (i < st.length) {
+    if (M[i] >= 0) { i++; continue; } let j = i; while (j + 1 < st.length && M[j + 1] < 0) j++;
+    const zx = (a, b) => X[a] + (X[b] - X[a]) * M[a] / (M[a] - M[b]); const x0 = i > 0 ? zx(i - 1, i) : X[i], x1 = j < st.length - 1 ? zx(j, j + 1) : X[j];
+    const idx = []; for (let k = i; k <= j; k++) idx.push(k); if (x1 - x0 > 1) out.push({ x0, x1, Lb: x1 - x0, Cb: cbOf(x0, x1), idx, why: cant ? '캔틸레버 (하부 플랜지 압축, Cb = 1)' : '부모멘트 구간 (변곡점까지, 하부 플랜지 압축)' }); i = j + 1;
+  }
+  return out;
+}
+function steel(m, env, S, env1 = env, res = null) {
+  const sh = m.sh, Fy = S.Fy, E = ES_S; const A = sh.A, rx = Math.sqrt(sh.Ix / A), ry = Math.sqrt(sh.Iy / A); const KL = m.L;
+  const lam = KL / Math.min(rx, ry); const Fe = Math.PI ** 2 * E / lam ** 2; const Fcr = Fy / Fe <= 2.25 ? Math.pow(0.658, Fy / Fe) * Fy : 0.877 * Fe;
+  const Pc = 0.9 * Fcr * A, Pt = 0.9 * Fy * A, Mcy = 0.9 * Fy * sh.Zy, Vc = 0.9 * 0.6 * Fy * sh.h * sh.tw;
+  const fl0 = steelFlexure(sh, Fy, 0); const Mcx0 = 0.9 * fl0.Mn; // 횡지지 충분 시 (국부좌굴만)
+  const beam = m.kind === 'beam'; const braced = beam && res ? topBraced(res, m) : false; const segL = res ? m.segs.map(ei => [ei, res.R.E[ei].L]) : [[null, m.L]];
+  let u = 0, at = null, Vu = 0, cV = ''; let ltbMin = null;
+  env.forEach(({ c, st }, ci) => {
+    const s1 = env1[ci].st; const cap = new Float64Array(st.length).fill(Mcx0); const segOf = new Array(st.length).fill(null);
+    const ub = beam ? unbraced(s1, segL, braced, !!m.defl?.cant) : [{ x0: 0, x1: m.L, Lb: m.L, Cb: unbraced(s1, [[s1[0].ei, m.L]], false)[0]?.Cb || 1, idx: st.map((_, i) => i), why: '층고 (기둥 상·하단)' }];
+    for (const g of ub) { const f = steelFlexure(sh, Fy, g.Lb, g.Cb); const cp = 0.9 * f.Mn; g.f = f; g.cap = cp; for (const k of g.idx) if (cp <= cap[k]) { cap[k] = cp; segOf[k] = g; } }
+    st.forEach((s, k) => {
+      const Pr = -s.N, Pa = Pr >= 0 ? Pc : Pt, pr = Math.abs(Pr) / Pa, mx = Math.abs(s.My) / cap[k], my = Math.abs(s.Mz) / Mcy;
+      const v = pr >= 0.2 ? pr + 8 / 9 * (mx + my) : pr / 2 + mx + my; if (v > u) { u = v; at = { c: c.name, Pr, Mx: Math.abs(s.My), My: Math.abs(s.Mz), cap: cap[k], seg: segOf[k] }; }
+      const g = segOf[k]; if (g && Math.abs(s.My) > 0) { const r = Math.abs(s.My) / g.cap; if (!ltbMin || r > ltbMin.r) ltbMin = { r, g, c: c.name, M: Math.abs(s.My) }; }
+      const vv = Math.max(Math.abs(s.Vz), Math.abs(s.Vy)); if (vv > Vu) { Vu = vv; cV = c.name; }
+    });
+  });
+  const rv = Vu / Vc; const a = at || {}; const df = beam ? m.defl : null; const rdf = df ? df.L / df.limL : 0; const ratio = Math.max(u, rv, rdf);
+  const g = a.seg || ltbMin?.g; const ltbGov = !!(a.seg && a.cap < Mcx0 * 0.999);
+  const lrow = g ? [['횡지지 (Lb · Cb)', `${beam ? (braced ? '상부 플랜지 슬래브 구속 · ' : '슬래브 구속 없음 · ') : ''}${g.why} — Lb ${(g.Lb / 1000).toFixed(2)} m · Cb ${g.Cb.toFixed(2)}`], ['Lp / Lr', `${(g.f.Lp / 1000).toFixed(2)} / ${(g.f.Lr / 1000).toFixed(2)} m — ${g.f.zone}`], ['φMn (횡비틀림)', `${kNm(g.cap)} (φMp ${kNm(0.9 * g.f.Mp)})`, ltbMin && ltbMin.g === g ? ltbMin.r : undefined]]
+    : [['횡지지', beam && braced ? '상부 플랜지 슬래브 구속 · 부모멘트 구간 없음 → 횡비틀림 검토 불요' : '-']];
+  const flrow = [['플랜지 국부좌굴', `b/2tf ${fl0.lf.toFixed(1)} (λp ${fl0.lpf.toFixed(1)}) — ${fl0.flb}${fl0.webOk ? '' : ' · 웨브 비조밀 (별도 검토)'}`]];
+  return { type: beam ? '철골 보' : '철골 기둥', ratio, gov: rdf >= Math.max(u, rv) ? '처짐' : u >= rv ? (ltbGov ? '조합(H1-1)·횡비틀림' : '조합(H1-1)') : '전단', combo: u >= rv ? a.c : cV, extra: df ? [['처짐 활하중', `${df.L.toFixed(1)} mm ≤ L/${df.cant ? 180 : 360} = ${df.limL.toFixed(1)}`, rdf]] : [],
+    rows: [['단면', `${m.el.sec} · Fy ${Fy}`], ['A / Zx', `${mm2(A)} / ${(sh.Zx / 1e3).toFixed(0)}×10³mm³`], ['KL/r', lam.toFixed(0)], ['Pr / φPn', `${kN(a.Pr || 0)} / ${kN((a.Pr || 0) >= 0 ? Pc : Pt)}`, a.c], ['Mrx / φMnx', `${kNm(a.Mx || 0)} / ${kNm(a.cap || Mcx0)}`], ...lrow, ...flrow, ['Mry / φMny', `${kNm(a.My || 0)} / ${kNm(Mcy)}`], ['H1-1 검토비', u.toFixed(3), u], ['Vu / φVn', `${kN(Vu)} / ${kN(Vc)}`, rv]] };
+}
+// ---------- 세장효과 (KDS 14 20 20 4.4 모멘트 확대법 · KDS 14 31 10 B1·B2) ----------
+// 층 안정지수 Q = ΣPu·Δo/(Vus·lc), 접합부 강성비 ψ → 유효길이계수 k (조견표 근사식)
+function frameOf(res) {
+  if (res._fr) return res._fr; const { M, R } = res;
+  const at = new Map(); R.E.forEach((E, ei) => { const e = E.e; if (e.rigid || e.mem < 0) return; for (const n of [e.n1, e.n2]) { let a = at.get(n); if (!a) at.set(n, a = []); a.push(ei); } });
+  const st = res.story || []; const ch = res.info?.check; const lr = ch && ch.D.applied ? Math.max(0, ch.L.applied / ch.D.applied) : 0.3;
+  const Q = new Array(st.length).fill(0), Qc = new Array(st.length).fill(''); let Wab = 0;
+  for (let i = st.length - 1; i >= 0; i--) { Wab += st[i].W; const f = st[i]; const Pu = (1.2 + lr) * Wab; for (const c of ['WX', 'WY', 'EX', 'EY']) { if (f['dr' + c] == null) continue; let V = 0; for (let j = i; j < st.length; j++) V += st[j][c] || 0; if (!V) continue; const q = Pu * Math.abs(f['dr' + c]) / Math.abs(V); if (q > Q[i]) { Q[i] = q; Qc[i] = c; } } }
+  return (res._fr = { at, Q, Qc, storyAt: new Map(st.map((f, i) => [f.z, i])) });
+}
+function psiAt(res, fr, n, ci, key) {
+  const N = res.M.nodes; if (N[n].fix) return 1; const dirN = res.R.E[ci].R[key === 'My' ? 2 : 1]; let sc = 0, sb = 0;
+  for (const ei of fr.at.get(n) || []) { const E = res.R.E[ei], e = E.e; const mem = res.M.members[e.mem]; if (!mem) continue;
+    if (e.vert) { if (mem.kind === 'column') sc += (key === 'My' ? e.EIy : e.EIz) / E.L; continue; }
+    if (mem.kind !== 'beam') continue; const end = e.n1 === n ? 0 : 1; if (e.rel?.[end]) continue; const d = E.R[0]; const w = (d[0] * dirN[0] + d[1] * dirN[1] + d[2] * dirN[2]) ** 2; sb += w * (e.rel?.[1 - end] ? 0.5 : 1) * e.EIy / E.L; }
+  return sb > 0 ? Math.min(50, sc / sb) : 50;
+}
+const kBraced = (a, b) => Math.min(1, 0.7 + 0.05 * (a + b), 0.85 + 0.05 * Math.min(a, b));
+const kSway = (a, b) => { const p = (a + b) / 2; return p < 2 ? (20 - p) / 20 * Math.sqrt(1 + p) : 0.9 * Math.sqrt(1 + p); };
+function slender(res, mi, mf, env, S) {
+  const m = res.M.members[mi]; const fr = frameOf(res); const N = res.M.nodes; const ci = m.segs[0]; const nb = res.R.E[ci].e.n1, nt = res.R.E[m.segs[m.segs.length - 1]].e.n2;
+  const stl = m.mat === 'STEEL' && m.sh; const L = m.L; let hb = 0; for (const ei of fr.at.get(nt) || []) { const mm = res.M.members[res.R.E[ei].e.mem]; if (mm?.kind === 'beam') hb = Math.max(hb, mm.hz); }
+  const lu = stl ? L : Math.max(0.6 * L, L - hb); const si = fr.storyAt.get(N[nt].z); const Q = si != null ? fr.Q[si] : 0; const sway = Q > 0.05; const pd = !!res.info?.pdelta;
+  const fck = m.fck || S.fckV || S.fck; const Ecm = Ec(fck); const sh = m.sh;
+  const AX = [{ k: 'My', d: m.hz, r: stl ? Math.sqrt(sh.Ix / sh.A) : 0.3 * m.hz, Ig: m.by * m.hz ** 3 / 12, Is: sh ? sh.Ix : 0, nm: '강축' }, { k: 'Mz', d: m.by, r: stl ? Math.sqrt(sh.Iy / sh.A) : 0.3 * m.by, Ig: m.hz * m.by ** 3 / 12, Is: sh ? sh.Iy : 0, nm: '약축' }];
+  for (const a of AX) { a.pT = psiAt(res, fr, nt, ci, a.k); a.pB = psiAt(res, fr, nb, ci, a.k); a.kn = stl ? 1 : kBraced(a.pT, a.pB); a.ks = kSway(a.pT, a.pB); a.dns = 1; a.ds = 1; a.slen = false; a.lim = 0; a.lr = a.kn * lu / a.r; }
+  const dsRaw = sway && !pd ? 1 / (1 - Math.min(Q, 0.9)) : 1; let unstable = 0;
+  const ND = mf.byCase.D; const nS = ND.length; const ND0 = -ND.reduce((s, x) => s + x.N, 0) / nS;
+  const env2 = env.map(({ c, st }) => {
+    const lk = Object.keys(c.f).filter(k => /^[WER]/.test(k)); const g = combine(mf, { f: Object.fromEntries(Object.entries(c.f).filter(([k]) => !lk.includes(k))) }); const l = lk.length ? combine(mf, { f: Object.fromEntries(lk.map(k => [k, c.f[k]])) }) : null;
+    const st2 = st.map(s => ({ ...s })); const Pu = Math.max(0, -st.reduce((s, x) => s + x.N, 0) / st.length); const bd = Pu > 0 ? Math.min(1, Math.max(0, (c.f.D || 0) * ND0 / Pu)) : 0.6;
+    for (const a of AX) {
+      const ds = l && (stl || a.ks * lu / a.r > 22) ? dsRaw : 1; for (let j = 0; j < nS; j++) st2[j][a.k] = g[j][a.k] + ds * (l ? l[j][a.k] : 0);
+      const e0 = st2[0][a.k], e1 = st2[nS - 1][a.k]; const big = Math.abs(e0) >= Math.abs(e1) ? e0 : e1, small = big === e0 ? e1 : e0; const ratio = big ? small / big : 1;
+      a.ds = Math.max(a.ds, ds); if (Pu <= 0) continue;
+      const lim = Math.min(40, 34 - 12 * ratio); const slen = stl || a.kn * lu / a.r > lim; if (!slen) { a.lim = Math.max(a.lim, lim); continue; }
+      let M2 = Math.abs(big), Cm = Math.max(0.4, 0.6 + 0.4 * ratio); const M2min = stl ? 0 : Pu * (15 + 0.03 * a.d); if (M2 < M2min) { M2 = M2min; Cm = 1; }
+      const EI = stl ? ES_S * a.Is : (sh ? 0.2 * Ecm * a.Ig + ES_S * a.Is : 0.4 * Ecm * a.Ig) / (1 + bd); const Pcr = Math.PI ** 2 * EI / (a.kn * lu) ** 2; const den = 1 - Pu / ((stl ? 1 : 0.75) * Pcr);
+      let dns; if (den <= 0.05) { dns = 20; unstable = Math.max(unstable, Pu / ((stl ? 1 : 0.75) * Pcr)); } else dns = Math.max(1, Cm / den);
+      a.slen = true; a.lim = lim; if (dns > a.dns) { a.dns = dns; a.Cm = Cm; a.Pc = Pcr; a.c = c.name; a.min = M2min && M2 === M2min; }
+      const Mc = dns * M2 * Math.sign(big || 1); for (let j = 1; j < nS - 1; j++) if (Math.abs(st2[j][a.k]) < Math.abs(Mc)) st2[j][a.k] = Mc;
+      if (nS === 1) st2[0][a.k] = Mc;
+    }
+    return { c, st: st2 };
+  });
+  const f2 = (v) => v.toFixed(2); const rows = [];
+  rows.push(['횡이동 판정 (층 안정지수 Q)', si == null ? '층 정보 없음 — 비횡이동 가정' : `Q ${Q.toFixed(3)} ${sway ? '> 0.05 → 횡이동 골조' : '≤ 0.05 → 비횡이동 골조'}${sway && pd ? ' · P-Δ 2차 해석 반영 (δs = 1)' : ''}${fr.Qc[si] ? ` (${fr.Qc[si]})` : ''}`]);
+  rows.push(['접합부 강성비 ψ 상/하', AX.map(a => `${a.nm} ${a.pT >= 50 ? '∞' : f2(a.pT)}/${a.pB >= 50 ? '∞' : f2(a.pB)}`).join(' · ')]);
+  if (stl) rows.push(['B1 (부재) / B2 (층)', AX.map(a => `${a.nm} ${f2(a.dns)} / ${f2(a.ds)}`).join(' · ') + ` · Pe1 강축 ${kN(AX[0].Pc || 0)}`]);
+  else { rows.push(['유효길이 (비횡이동) k·lu/r', AX.map(a => `${a.nm} k ${f2(a.kn)} · ${a.lr.toFixed(1)}${a.slen ? ` > ${a.lim.toFixed(0)} 장주` : ` ≤ ${a.lim.toFixed(0)} 단주`}`).join(' · ') + ` (lu ${(lu / 1000).toFixed(2)} m)`]);
+    if (sway) rows.push(['유효길이 (횡이동) k·lu/r', AX.map(a => `${a.nm} k ${f2(a.ks)} · ${(a.ks * lu / a.r).toFixed(1)}${a.ks * lu / a.r > 22 ? (pd ? ' > 22 → P-Δ 해석 반영' : ' > 22 → δs') : ' ≤ 22 무시'}`).join(' · ')]);
+    rows.push(['모멘트 확대 δns / δs', AX.map(a => `${a.nm} ${f2(a.dns)}${a.min ? '(M2,min)' : ''} / ${f2(a.ds)}`).join(' · ')]); }
+  if (dsRaw > 1.5) rows.push(['횡이동 확대 주의', `δs ${f2(dsRaw)} > 1.5 — 2차(P-Δ) 해석으로 확인 필요`]);
+  if (unstable) rows.push(['좌굴', `Pu / 0.75Pc = ${unstable.toFixed(2)} — 단면 증대 필요`, unstable]);
+  return { env: env2, rows, unstable, mag: Math.max(...AX.map(a => a.dns * a.ds)) };
 }
 const kN = (v) => `${(v / 1e3).toFixed(1)} kN`, kNm = (v) => `${(v / 1e6).toFixed(1)} kN·m`, mm2 = (v) => isFinite(v) ? `${Math.round(v).toLocaleString('ko-KR')} mm²` : '∞';
 
+const stOf = (m) => m.kind === 'beam' ? undefined : m.mat === 'STEEL' && m.sh ? [0, 0.25, 0.5, 0.75, 1] : [0, 0.5, 1];
+// 부재 조합 단면력 (기둥은 세장효과 확대 반영) → { env, env1(1차), sl }
+function envFull(res, mi, S) {
+  const m = res.M.members[mi]; const mf = memberForces(res, mi, stOf(m)); const env1 = res.combos.map(c => ({ c, st: combine(mf, c) }));
+  if (m.kind !== 'column' || !res.R?.E) return { env: env1, env1, sl: null }; const sl = slender(res, mi, mf, env1, S); return { env: sl.env, env1, sl };
+}
 export function designMember(res, mi, S) {
-  const m = res.M.members[mi]; m.P = res.P; if (m.kind === 'beam') m.defl = deflection(res, mi, m.mat === 'STEEL' ? 1 : 2); const st = m.kind === 'beam' ? undefined : [0, 0.5, 1]; const mf = memberForces(res, mi, st);
-  const env = res.combos.map(c => ({ c, st: combine(mf, c) }));
-  const d = m.mat === 'STEEL' && m.sh ? steel(m, env, S) : m.kind === 'beam' ? rcBeam(m, env, S) : m.kind === 'wall' ? rcWall(m, env, S) : rcColumn(m, env, S);
-  if (d.gov2) d.gov = d.gov2; if (d.extra) d.rows.push(...d.extra); d.mi = mi; return d;
+  const m = res.M.members[mi]; m.P = res.P; if (m.kind === 'beam') m.defl = deflection(res, mi, m.mat === 'STEEL' ? 1 : 2);
+  const { env, env1, sl } = envFull(res, mi, S);
+  const d = m.mat === 'STEEL' && m.sh ? steel(m, env, S, env1, res) : m.kind === 'beam' ? rcBeam(m, env, S) : m.kind === 'wall' ? rcWall(m, env, S) : rcColumn(m, env, S);
+  if (d.gov2) d.gov = d.gov2; if (d.extra) d.rows.push(...d.extra);
+  if (sl) { d.rows.push(...sl.rows); d.mag = sl.mag; if (sl.unstable > d.ratio) { d.ratio = sl.unstable; d.gov = '세장(좌굴)'; } else if (sl.mag > 1.05 && /P-M|H1-1/.test(d.gov)) d.gov += ' (세장 확대)'; }
+  d.mi = mi; return d;
 }
 export function designAll(res, S, onProgress) {
   const out = []; const M = res.M.members; for (let i = 0; i < M.length; i++) { out.push(designMember(res, i, S)); if (i % 500 === 499) onProgress?.(`부재 검토 ${i + 1}/${M.length}`); } return out;
@@ -132,7 +248,8 @@ function segDefl(res, cr, ei, xs) { // 국부 z 처짐 at xi
   const E = res.R.E[ei]; const e = E.e, L = E.L, R = E.R, N = res.M.nodes; const d = cr.disp;
   const loc = (n, o) => [0, 1, 2].map(r => R[r][0] * d[n * 6 + o] + R[r][1] * d[n * 6 + o + 1] + R[r][2] * d[n * 6 + o + 2]);
   const u1 = loc(e.n1, 0), t1 = loc(e.n1, 3), u2 = loc(e.n2, 0), t2 = loc(e.n2, 3); const EI = e.EIy;
-  const pl = []; for (const [e2, xi, gx, gy, gz] of cr.eloads) if (e2 === ei) { const p = R[2][0] * gx + R[2][1] * gy + R[2][2] * gz; pl.push([xi * L, p]); }
+  if (!cr._byEl) { cr._byEl = new Map(); for (const l of cr.eloads) { let a = cr._byEl.get(l[0]); if (!a) cr._byEl.set(l[0], a = []); a.push(l); } }
+  const pl = []; for (const [e2, xi, gx, gy, gz] of cr._byEl.get(ei) || []) { const p = R[2][0] * gx + R[2][1] * gy + R[2][2] * gz; pl.push([xi * L, p]); }
   const ss = e.rel?.[0] && e.rel?.[1];
   return xs.map(xi => { const x = xi * L, x2 = xi * xi, x3 = x2 * xi; const H1 = 1 - 3 * x2 + 2 * x3, H2 = L * (xi - 2 * x2 + x3), H3 = 3 * x2 - 2 * x3, H4 = L * (-x2 + x3);
     let w = H1 * u1[2] - H2 * t1[1] + H3 * u2[2] - H4 * t2[1];
@@ -179,9 +296,9 @@ export function designFoundations(res, S) {
 }
 
 // ---------- 재료 자동 산정용 ----------
-export function envOf(res, mi) { const m = res.M.members[mi]; const st = m.kind === 'beam' ? undefined : [0, 0.5, 1]; const mf = memberForces(res, mi, st); return res.combos.map(c => ({ c, st: combine(mf, c) })); }
+export function envOf(res, mi, S = {}) { return envFull(res, mi, S).env; }
 // 수직부재: 주근비 상한(rhoCap) 안에서 성립하는 최소 fck
-export function minFckVertical(res, mi, S, cands, env = envOf(res, mi)) {
+export function minFckVertical(res, mi, S, cands, env = envOf(res, mi, S)) {
   const m = res.M.members[mi]; m.P = res.P;
   for (const fck of cands) {
     if (m.kind === 'wall') { const L = m.by, t = m.hz; const C = pmCurve(t, L, distLayers(L, 0.012 * L * t, S.fy), fck); let ok = true; let Vu = 0; for (const { st } of env) for (const s of st) { const Pu = -s.N, Mu = Math.abs(s.Mz); const cap = capAt(C, Pu); if (Pu > C.phiPmax || (cap <= 0 ? Mu > 0 && Pu > 0 : Mu > cap)) ok = false; Vu = Math.max(Vu, Math.abs(s.Vy)); } const ar = m.L / L, ac = ar <= 1.5 ? 0.25 : ar >= 2 ? 1 / 6 : 0.25 - (ar - 1.5) / 0.5 * (0.25 - 1 / 6); if (Vu > 0.75 * Math.min(L * t * (ac * Math.sqrt(fck) + 0.0025 * S.fyt), 5 / 6 * Math.sqrt(fck) * L * t)) ok = false; if (ok) return { fck, ok: true }; }
@@ -189,5 +306,5 @@ export function minFckVertical(res, mi, S, cands, env = envOf(res, mi)) {
   }
   return { fck: cands[cands.length - 1], ok: false };
 }
-export function beamOk(res, mi, S, fck, env = envOf(res, mi)) { const m = res.M.members[mi]; m.P = res.P; const d = rcBeam({ ...m, defl: null, P: { rebarSchedule: {} }, el: { ...m.el, rebar: null } }, env, { ...S, fck }); return d.rows.find(r => r[0].startsWith('ρ'))[2] <= 1 && d.rows.find(r => r[0] === 'φ(Vc+Vs,max)')[2] <= 1; }
-export function steelOk(res, mi, S, Fy, env = envOf(res, mi)) { const m = res.M.members[mi]; return steel({ ...m, defl: null }, env, { ...S, Fy }).ratio <= 1; }
+export function beamOk(res, mi, S, fck, env = envOf(res, mi, S)) { const m = res.M.members[mi]; m.P = res.P; const d = rcBeam({ ...m, defl: null, P: { rebarSchedule: {} }, el: { ...m.el, rebar: null } }, env, { ...S, fck }); return d.rows.find(r => r[0].startsWith('ρ'))[2] <= 1 && d.rows.find(r => r[0] === 'φ(Vc+Vs,max)')[2] <= 1; }
+export function steelOk(res, mi, S, Fy, env = envOf(res, mi, S)) { const m = res.M.members[mi]; const e1 = m.kind === 'column' ? envFull(res, mi, S).env1 : env; return steel({ ...m, defl: null }, env, { ...S, Fy }, e1, res).ratio <= 1; }

@@ -156,7 +156,8 @@ export function analyze(model, { onProgress } = {}) {
 // 부재 내 단면력 (국부): stations ξ 배열 → [{xi, N, Vy, Vz, T, My, Mz}]  (N 인장+, My 처짐(새깅)+ 는 보 하부 인장)
 export function stationForces(res, cr, ei, stations = [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1]) {
   const ee = res.E[ei], L = ee.L, f = cr.ef.subarray(ei * 12, ei * 12 + 12);
-  const pl = []; for (const [e2, xi, gx, gy, gz] of cr.eloads) if (e2 === ei) { const [px, py, pz] = toLocal(ee.R, [gx, gy, gz]); pl.push([xi * L, px, py, pz]); }
+  if (!cr._byEl) { cr._byEl = new Map(); for (const l of cr.eloads) { let a = cr._byEl.get(l[0]); if (!a) cr._byEl.set(l[0], a = []); a.push(l); } }
+  const pl = []; for (const [e2, xi, gx, gy, gz] of cr._byEl.get(ei) || []) { const [px, py, pz] = toLocal(ee.R, [gx, gy, gz]); pl.push([xi * L, px, py, pz]); }
   return stations.map(xi => {
     const x = xi * L; let sx = f[0], sy = f[1], sz = f[2], my = f[4] + f[2] * x, mz = f[5] - f[1] * x;
     for (const [a, px, py, pz] of pl) if (a < x - 1e-9 || (xi === 1 && a <= x)) { sx += px; sy += py; sz += pz; my += (x - a) * pz; mz -= (x - a) * py; }
