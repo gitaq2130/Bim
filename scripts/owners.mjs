@@ -45,6 +45,10 @@ export const TRACKS = {
     name: '인테리어·조명', branch: 'builder/interior',
     files: ['app/tools/interior.js', 'app/js/furn.js', 'app/tools/furn3d.js', 'docs/tools/interior.md'],
   },
+  csim: {
+    name: '시공 시뮬레이션', branch: 'builder/csim',
+    files: ['app/tools/csim.js', 'app/js/csim.js', 'docs/tools/csim.md'],
+  },
   civil: {
     name: '토목', branch: 'builder/civil',
     files: ['app/tools/civil.js', 'docs/tools/civil.md'],

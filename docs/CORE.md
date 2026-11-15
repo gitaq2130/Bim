@@ -1,4 +1,4 @@
-# 빌더 코어 규격 (Core v1.3.0)
+# 빌더 코어 규격 (Core v1.4.0)
 
 모든 툴이 공유하는 계약입니다. **이 문서와 코어 파일은 허브·코어 트랙만 수정합니다.**
 툴 트랙은 이 규격을 읽기만 하고, 바꿔야 하면 아래 "코어 변경 요청" 절차를 따릅니다.
@@ -25,7 +25,7 @@
 | 1. 기획·대지 | plan | 법규(code), 토목(civil) |
 | 2. 설계 | design | 작도(cad), 3D(view3d), 구조(struct), MEP(mep), 실내(interior), 조경(landscape) |
 | 3. 설계검토 | review | 간섭(clash), 정합(check) |
-| 4. 적산·공정 | est | 물량(qto), 공정(sched) |
+| 4. 적산·공정 | est | 물량(qto), 공정(sched), 시공 시뮬레이션(csim, 1.4.0) |
 | 5. 시공·관리 | build | 현장(site), 일보(daily), 기성(bill), 이슈(issue) |
 
 툴 추가·삭제·순서·단계 변경은 코어 변경입니다.
@@ -85,6 +85,7 @@ export function mount(root, ctx) {
 | `interior {finishes{}, lighting{uf,mf}}` | 마감 기준·조명 계산 조건 | interior |
 | `issues[]`, `code` | 이슈·RFI, 법규 검토 | admin |
 | `civil {pts[[x,y,z]], mode, pad, cell, I, slope, last}` (1.2.0) | 측점(mm, EL m)·정지 계획·강우강도·결과 요약 | civil |
+| `csim {start, week, region, climate, zones, target, actual{taskId:{s,f,pct}}, dataDate, events[], checks{}, baseline, last}` (1.4.0) | 시공 시뮬레이션 설정·실적·지연 상황·체크리스트·기준 공정 | csim |
 | `landscape {areas[], plan[], auto, last}` (1.2.0) | 그린 녹지(지상·옥상)·식재 계획·결과 요약 | landscape |
 
 - 다른 트랙 소유 키는 **읽기만** 합니다.
@@ -139,6 +140,7 @@ export function mount(root, ctx) {
 | interior `tools/furn3d.js` | 가구 3D 형상 | view3d |
 | interior `tools/interior.js` | `roomLighting`, `LUX_BY_USE`, `roomFinishes` | mep(조명 부하), core `takeoff`(1.3.0) |
 | civil `tools/civil.js` | `civilCalc(P)` | — |
+| csim `js/csim.js` | `buildTasks(P)`, `schedule(P,G,opt)`, `stateAt(S,G,day)`, `progressAt`, `recoveryOptions` | — (daily·bill이 계획값으로 쓸 수 있음) |
 | landscape `tools/landscape.js` | `SPECIES`, `landCalc`, `autoPlant`, `applyToModel`, `legalRatio` | — |
 
 ### 툴 간 데이터 연동 (1.2.0~)
