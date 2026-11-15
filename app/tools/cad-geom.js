@@ -69,7 +69,7 @@ export function hitEnt(e, p, tol) {
 }
 export function hitEl(el, p, tol, host) {
   const o = elOutline(el, host); if (!o) return false;
-  if (el.k === 'slab') return distToSegs(p, elSegs(el, host)) <= tol; // 슬래브는 테두리로만 선택
+  if (el.k === 'slab' || el.k === 'ceiling' || el.k === 'room') return distToSegs(p, elSegs(el, host)) <= tol; // 면 객체(슬래브·천장·실)는 테두리로만 선택
   if (pointInPoly(p, o)) return true;
   return distToSegs(p, elSegs(el, host)) <= tol;
 }
@@ -107,7 +107,7 @@ export function transformEl(el, f, angDelta = 0, mirror = false) {
   const n = deep(el);
   ['a', 'b', 'p'].forEach(k => xfPoint(n, k, f));
   if (n.pts) n.pts = n.pts.map(f);
-  if (n.k === 'column' || n.k === 'footing' || n.k === 'furn') n.rot = ((el.rot || 0) + angDelta * 180 / Math.PI) % 360;
+  if (['column', 'footing', 'furn', 'fin', 'panel', 'light'].includes(n.k)) n.rot = ((el.rot || 0) + angDelta * 180 / Math.PI) % 360;
   if (mirror && n.a && n.b && n.k === 'wall') { /* 벽 방향 유지 */ }
   return n;
 }
