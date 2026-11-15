@@ -3,7 +3,7 @@
 | 항목 | 값 |
 |---|---|
 | Rev | v3 |
-| 요구 Core | 1.0.0 |
+| 요구 Core | 1.2.0 |
 | 브랜치 | `builder/field` |
 | 포함 툴 | 공정 4D(sched), 현장 사진(site), 작업일보(daily) |
 | 소유 파일 | `app/tools/sched.js`, `app/tools/site.js`, `app/tools/daily.js` |
