@@ -6,7 +6,7 @@ export const TRACKS = {
     branch: 'builder/core',
     files: [
       'app/index.html', 'app/js/app.js', 'app/js/model.js', 'app/js/store.js', 'app/js/ui.js', 'app/js/util.js',
-      'app/js/rev.js', 'app/js/rebar.js', 'app/js/mep.js', 'app/js/furn.js', 'app/js/excel.js', 'app/js/zip.js',
+      'app/js/rev.js', 'app/js/rebar.js', 'app/js/excel.js', 'app/js/zip.js',
       'app/js/dxf.js', 'app/js/blocks.js', 'app/js/icons.js', 'app/js/ifc.js', 'app/js/ifcout.js',
       'app/js/house.js', 'app/js/tower.js', 'app/lib/', 'docs/CORE.md', 'CORE_VERSION', 'CLAUDE.md',
       'scripts/', '.github/', 'package.json',
@@ -18,7 +18,7 @@ export const TRACKS = {
   },
   view3d: {
     name: '3D 뷰어', branch: 'builder/view3d',
-    files: ['app/tools/view3d.js', 'app/tools/render3d.js', 'app/tools/furn3d.js', 'app/js/sun.js', 'docs/tools/view3d.md'],
+    files: ['app/tools/view3d.js', 'app/tools/render3d.js', 'app/js/sun.js', 'docs/tools/view3d.md'],
   },
   struct: {
     name: '구조해석·설계', branch: 'builder/struct',
@@ -36,6 +36,14 @@ export const TRACKS = {
   field: {
     name: '공정·현장·일보', branch: 'builder/field',
     files: ['app/tools/sched.js', 'app/tools/site.js', 'app/tools/daily.js', 'docs/tools/field.md'],
+  },
+  mep: {
+    name: '설비·전기·소방(MEP)', branch: 'builder/mep',
+    files: ['app/tools/mep.js', 'app/js/mep.js', 'docs/tools/mep.md'],
+  },
+  interior: {
+    name: '인테리어·조명', branch: 'builder/interior',
+    files: ['app/tools/interior.js', 'app/js/furn.js', 'app/tools/furn3d.js', 'docs/tools/interior.md'],
   },
   admin: {
     name: '이슈·법규', branch: 'builder/admin',

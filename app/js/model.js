@@ -8,7 +8,9 @@ export const DISC = {
   S: { name: '구조', color: '#e0af68' },
   M: { name: '기계', color: '#9ece6a' },
   E: { name: '전기', color: '#f7768e' },
-  P: { name: '배관·소방', color: '#7dcfff' },
+  P: { name: '배관(위생)', color: '#7dcfff' },
+  F: { name: '소방', color: '#ff7a45' },
+  I: { name: '인테리어', color: '#d4a5ff' },
 };
 
 // 객체 종류 정의
@@ -25,6 +27,12 @@ export const KINDS = {
   riser:   { name: '수직 샤프트(라이저)', disc: 'M', geom: 'point', def: { w: 150, hh: 150, sys: 'CHWS', form: 'pipe' } },
   fin:     { name: '외장 핀', disc: 'A', geom: 'point', def: { w: 120, d: 500, rot: 0 } },
   furn:    { name: '가구·조경', disc: 'A', geom: 'point', def: { type: 'sofa', w: 2400, d: 950, h: 820, rot: 0 } },
+  // Core 1.1.0 — MEP·인테리어 트랙용
+  sprinkler: { name: '스프링클러 헤드', disc: 'F', geom: 'point', def: { type: 'pendent', kf: 80, z: 2700, w: 80, hh: 60 } },
+  panel:   { name: '분전반', disc: 'E', geom: 'point', def: { w: 600, d: 250, h: 1800, z0: 0, sys: '전등', kw: 0, rot: 0 } },
+  light:   { name: '조명기구', disc: 'I', geom: 'point', def: { type: 'LED 평판', w: 600, d: 600, hh: 50, z: 2700, watt: 40, lm: 4400, circuit: '' } },
+  ceiling: { name: '천장', disc: 'I', geom: 'poly', def: { z: 2700, t: 20, fin: '석고보드+도장' } },
+  room:    { name: '실', disc: 'I', geom: 'poly', def: { name: '실', use: '사무실', lux: 500, h: 2700 } },
 };
 export const MATS = {
   RC: { name: '철근콘크리트', color: '#b9b9b4' },
@@ -68,6 +76,10 @@ export const DEFAULT_BOQ = [
   { code: 'PIP', name: '배관 설치', unit: 'm', price: 42000 },
   { code: 'TRY', name: '케이블트레이 설치', unit: 'm', price: 55000 },
   { code: 'FIN', name: '외장 알루미늄 핀', unit: 'm', price: 120000 },
+  { code: 'SPK', name: '스프링클러 헤드 설치', unit: 'EA', price: 35000 },
+  { code: 'PNL', name: '분전반 설치', unit: 'EA', price: 1200000 },
+  { code: 'LGT', name: '조명기구 설치', unit: 'EA', price: 85000 },
+  { code: 'CLG', name: '천장 마감', unit: 'm²', price: 42000 },
 ];
 
 export function newProject(name = '새 프로젝트') {
@@ -109,6 +121,11 @@ export function elName(el) {
   if (el.k === 'fin') return `외장 핀 ${el.w}×${el.d}`;
   if (el.k === 'furn') return furnName(el) + (el.room ? ` (${el.room})` : '');
   if (el.k === 'manual') return `수동산출 ${el.tag || ''}`;
+  if (el.k === 'sprinkler') return `스프링클러 헤드 ${el.type || ''} K${el.kf ?? ''}`;
+  if (el.k === 'panel') return `분전반 ${el.sys || ''} ${el.w}×${el.h}`;
+  if (el.k === 'light') return `조명 ${el.type || ''} ${el.watt ?? ''}W`;
+  if (el.k === 'ceiling') return `천장 ${el.fin || ''}`;
+  if (el.k === 'room') return `실 ${el.name || ''}${el.use ? ` (${el.use})` : ''}`;
   const k = KINDS[el.k]?.name || el.k;
   if (el.k === 'opening') return (el.kind === 'window' ? '창' : '문') + ` ${el.w}×${el.h}`;
   if (el.sec) return `${k} ${el.sec}`;
@@ -161,6 +178,15 @@ export function elBoxes(el, lv, hostLookup) {
     case 'duct': case 'pipe': case 'tray': {
       const zc = E + (el.z ?? 3000); return [box(el.a, el.b, el.w, zc - el.hh / 2, zc + el.hh / 2)];
     }
+    case 'sprinkler': { const z = E + (el.z ?? 2700); return [{ cx: el.p[0], cy: el.p[1], hl: (el.w || 80) / 2, hw: (el.w || 80) / 2, ang: 0, z0: z - (el.hh || 60), z1: z }]; }
+    case 'light': { const z = E + (el.z ?? 2700); return [{ cx: el.p[0], cy: el.p[1], hl: el.w / 2, hw: el.d / 2, ang: (el.rot || 0) * Math.PI / 180, z0: z - (el.hh || 50), z1: z }]; }
+    case 'panel': return [{ cx: el.p[0], cy: el.p[1], hl: el.w / 2, hw: el.d / 2, ang: (el.rot || 0) * Math.PI / 180, z0: E + (el.z0 || 0), z1: E + (el.z0 || 0) + el.h }];
+    case 'ceiling': {
+      const xs = el.pts.map(p => p[0]), ys = el.pts.map(p => p[1]);
+      const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys); const z = E + (el.z ?? 2700);
+      return [{ cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, hl: (x1 - x0) / 2, hw: (y1 - y0) / 2, ang: 0, z0: z, z1: z + (el.t || 20), poly: el.pts }];
+    }
+    case 'room': return []; // 실은 공간 정의 — 3D 박스·간섭 대상 아님
   }
   return [];
 }
@@ -170,7 +196,7 @@ export function boxCorners(b) {
 }
 // 평면 외곽(2D 표현용)
 export function elOutline(el, hostLookup) {
-  if (el.k === 'slab') return el.pts;
+  if (el.k === 'slab' || el.k === 'ceiling' || el.k === 'room') return el.pts;
   if (el.k === 'opening') { const b = elBoxes(el, { elev: 0, height: 0 }, hostLookup)[0]; return b ? boxCorners(b) : null; }
   const b = elBoxes(el, { elev: 0, height: 4000 }, hostLookup)[0]; return b ? boxCorners(b) : null;
 }
@@ -227,6 +253,10 @@ export function qtyOf(el, lv, ctx = {}) {
     case 'fin': push('FIN', (el.h ?? H) * m, `${el.w}×${el.d}`); break;
     case 'pipe': push('PIP', dist(el.a, el.b) * m, `Ø${el.w}`); break;
     case 'tray': push('TRY', dist(el.a, el.b) * m, `${el.w}×${el.hh}`); break;
+    case 'sprinkler': push('SPK', 1, `${el.type || ''} K${el.kf ?? ''}`); break;
+    case 'panel': push('PNL', 1, `${el.sys || ''}`); break;
+    case 'light': push('LGT', 1, `${el.type || ''} ${el.watt ?? ''}W`); break;
+    case 'ceiling': push('CLG', Math.abs(polyArea(el.pts)) * 1e-6, el.fin || ''); break;
   }
   return out;
 }

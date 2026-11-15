@@ -20,6 +20,8 @@ export const ICONS = {
   code: I('<path d="M3 21h18"/><path d="M5 21V8l7-5 7 5v13"/><path d="M9 21v-6h6v6"/><path d="M3 8h4M17 8h4"/>'),
   struct: I('<path d="M4 20h16"/><path d="M6 20V6h12v14"/><path d="M6 11h12M6 6l12 5M18 6L6 11"/>'),
   daily: I('<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 2h6v4H9z"/><path d="M8 11h8M8 15h5"/>'),
+  mep: I('<path d="M3 7h10a3 3 0 013 3v11"/><path d="M3 12h6a2 2 0 012 2v7"/><circle cx="19" cy="5" r="2"/><path d="M19 7v3"/>'),
+  interior: I('<path d="M9 2h6l2 6H7z"/><path d="M12 8v3"/><path d="M8 15l-2 6M16 15l2 6"/><path d="M5 15h14"/>'),
   site: I('<path d="M3 8a2 2 0 012-2h2l2-2h6l2 2h2a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><circle cx="12" cy="13" r="3.5"/>'),
 };
 export const TOOLS = [
@@ -35,6 +37,8 @@ export const TOOLS = [
   { id: 'struct', name: '구조', full: '구조해석·설계', color: '#ff9e64', desc: '기둥·보·RC벽으로 3D 골조 해석 모델을 만들어 고정·활·풍·지진하중(KDS)으로 해석하고 부재 검토비·층간변위를 확인합니다.', load: () => import('../tools/struct.js') },
   { id: 'daily', name: '일보', full: '작업일보', color: '#e0af68', desc: '날씨·인원·장비와 공정표 연동 금일/명일 작업, 그날의 이슈·사진으로 작업일보를 작성하고 출력합니다.', load: () => import('../tools/daily.js') },
   { id: 'issue', name: '이슈', full: '이슈·RFI', color: '#f7768e', desc: '간섭·정합 결과와 현장 질의를 담당·기한·상태로 관리하고 RFI 문서를 만듭니다.', load: () => import('../tools/issue.js') },
+  { id: 'mep', name: 'MEP', full: '설비·전기·소방', color: '#73daca', desc: '덕트·배관·트레이·스프링클러·분전반을 계통으로 묶어 경로·높이를 배분하고, 공종별 사이즈·부하·헤드 배치를 검토합니다.', load: () => import('../tools/mep.js') },
+  { id: 'interior', name: '실내', full: '인테리어·조명', color: '#d4a5ff', desc: '실(방)별 마감·천장·가구를 정리하고, 조명기구 배치로 평균 조도를 계산해 목표 조도와 비교합니다.', load: () => import('../tools/interior.js') },
 ];
 
 const store = createStore();
@@ -105,7 +109,7 @@ async function openProject(pid) {
   refreshHeader(); bus.emit('project', P);
 }
 function migrate(P) {
-  P.issues ||= []; P.photos ||= []; P.sched ||= { acts: [] }; P.bill ||= { periods: [] }; P.clash ||= { status: {}, tol: 0, clearance: 50 }; P.check ||= { status: {} }; P.view ||= { mats: {} };
+  P.issues ||= []; P.photos ||= []; P.sched ||= { acts: [] }; P.bill ||= { periods: [] }; P.clash ||= { status: {}, tol: 0, clearance: 50 }; P.check ||= { status: {} }; P.view ||= { mats: {} }; P.mep ||= { systems: [], calc: {} }; P.interior ||= { finishes: {}, lighting: { uf: 0.6, mf: 0.8 } };
   P.base ||= { x: 0, y: 0 }; P.site ||= { lat: 37.5665, lng: 126.978, tz: 9, north: 0 }; P.layers ||= [];
   for (const s of P.sheets) P.content[s.id] ||= { ents: [], els: [] };
 }
@@ -221,6 +225,8 @@ function toolStats(P, id, cache) {
     case 'struct': { const l = P.struct?.last; return l ? [['부재', l.members], ['NG', l.ng], ['최대비', fmt(l.max, 2)]] : [['해석', '미실행']]; }
     case 'daily': { const ks = Object.keys(P.daily || {}).sort(); if (!ks.length) return [['작성', 0]]; const k = ks[ks.length - 1]; const n = (P.daily[k].crew || []).reduce((s, c) => s + (+c.n || 0), 0); return [['작성', ks.length + '일'], ['최근', k.slice(5)], ['인원', n + '명']]; }
     case 'check': { const l = P.check.last; return l ? [['지적', l.count], ['미해결', l.open], ['검토일', new Date(l.at).toLocaleDateString('ko-KR')]] : [['지적', '미실행']]; }
+    case 'mep': { const n = (k) => els.filter(r => r.el.k === k).length; return [['덕트·배관·트레이', n('duct') + n('pipe') + n('tray')], ['헤드', n('sprinkler')], ['분전반', n('panel')]]; }
+    case 'interior': { const n = (k) => els.filter(r => r.el.k === k).length; return [['실', n('room')], ['조명', n('light')], ['천장', n('ceiling')]]; }
   }
   return [];
 }

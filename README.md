@@ -1,6 +1,6 @@
 # 빌더 — 건축물 생애주기 통합 플랫폼
 
-작도·3D·구조·물량·기성·간섭·정합·공정·현장·일보·이슈·법규 툴을 하나의 프로젝트 데이터 위에서 연동하는 웹 플랫폼입니다.
+작도·3D·구조·물량·기성·간섭·정합·공정·현장·일보·이슈·법규·MEP·인테리어 툴을 하나의 프로젝트 데이터 위에서 연동하는 웹 플랫폼입니다.
 
 - 실행본(아티팩트): https://claude.ai/artifact/UYzd44TWdduydr5QtkyyLG
 - 코어 규격: [docs/CORE.md](docs/CORE.md)
@@ -28,7 +28,7 @@ CHANGELOG.md
 
 | 트랙 | 툴 | 브랜치 | Rev |
 |---|---|---|---|
-| core 허브·코어 | 통합 대시보드, 데이터 모델, 저장, 입출력 | `builder/core` | Core 1.0.0 |
+| core 허브·코어 | 통합 대시보드, 데이터 모델, 저장, 입출력 | `builder/core` | Core 1.1.0 |
 | cad 작도 | cad | `builder/cad` | v1 |
 | view3d 3D 뷰어 | view3d | `builder/view3d` | v1 |
 | struct 구조 | struct | `builder/struct` | v14 |
@@ -36,6 +36,8 @@ CHANGELOG.md
 | review 간섭·정합 | clash, check | `builder/review` | v1 |
 | field 공정·현장·일보 | sched, site, daily | `builder/field` | v1 |
 | admin 이슈·법규 | issue, code | `builder/admin` | v1 |
+| mep 설비·전기·소방 | mep | `builder/mep` | v1 |
+| interior 인테리어·조명 | interior | `builder/interior` | v1 |
 
 ## 작업 흐름
 
