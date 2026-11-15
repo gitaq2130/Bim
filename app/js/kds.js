@@ -248,7 +248,8 @@ function segDefl(res, cr, ei, xs) { // 국부 z 처짐 at xi
   const E = res.R.E[ei]; const e = E.e, L = E.L, R = E.R, N = res.M.nodes; const d = cr.disp;
   const loc = (n, o) => [0, 1, 2].map(r => R[r][0] * d[n * 6 + o] + R[r][1] * d[n * 6 + o + 1] + R[r][2] * d[n * 6 + o + 2]);
   const u1 = loc(e.n1, 0), t1 = loc(e.n1, 3), u2 = loc(e.n2, 0), t2 = loc(e.n2, 3); const EI = e.EIy;
-  const pl = []; for (const [e2, xi, gx, gy, gz] of cr.eloads) if (e2 === ei) { const p = R[2][0] * gx + R[2][1] * gy + R[2][2] * gz; pl.push([xi * L, p]); }
+  if (!cr._byEl) { cr._byEl = new Map(); for (const l of cr.eloads) { let a = cr._byEl.get(l[0]); if (!a) cr._byEl.set(l[0], a = []); a.push(l); } }
+  const pl = []; for (const [e2, xi, gx, gy, gz] of cr._byEl.get(ei) || []) { const p = R[2][0] * gx + R[2][1] * gy + R[2][2] * gz; pl.push([xi * L, p]); }
   const ss = e.rel?.[0] && e.rel?.[1];
   return xs.map(xi => { const x = xi * L, x2 = xi * xi, x3 = x2 * xi; const H1 = 1 - 3 * x2 + 2 * x3, H2 = L * (xi - 2 * x2 + x3), H3 = 3 * x2 - 2 * x3, H4 = L * (-x2 + x3);
     let w = H1 * u1[2] - H2 * t1[1] + H3 * u2[2] - H4 * t2[1];

@@ -11,6 +11,8 @@ export const DISC = {
   P: { name: '배관(위생)', color: '#7dcfff' },
   F: { name: '소방', color: '#ff7a45' },
   I: { name: '인테리어', color: '#d4a5ff' },
+  C: { name: '토목', color: '#c9a36a' },
+  L: { name: '조경', color: '#6cc070' },
 };
 
 // 객체 종류 정의
@@ -41,6 +43,7 @@ export const MATS = {
   GLASS: { name: '유리커튼월', color: '#8fd3ff' },
   DRY: { name: '경량벽체', color: '#e6e1d6' },
   SRC: { name: 'SRC(철골철근콘크리트)', color: '#a9a49a' },
+  PC: { name: 'PC(프리캐스트 콘크리트)', color: '#c7c2b6' },
 };
 // H형강 단위중량(kg/m) — KS D 3502 대표 규격
 export const SECTIONS = {
@@ -58,6 +61,9 @@ export const SECTIONS = {
   'H-600x200x11x17': { h: 600, b: 200, kgm: 103.4 },
   'H-300x300x10x15': { h: 300, b: 300, kgm: 93.0 },
   'H-400x400x13x21': { h: 400, b: 400, kgm: 168.0 },
+  'H-350x350x12x19': { h: 350, b: 350, kgm: 137 }, 'H-414x405x18x28': { h: 414, b: 405, kgm: 232 }, 'H-428x407x20x35': { h: 428, b: 407, kgm: 283 },
+  'H-458x417x30x50': { h: 458, b: 417, kgm: 415 }, 'H-498x432x45x70': { h: 498, b: 432, kgm: 605 },
+  'H-800x300x14x26': { h: 800, b: 300, kgm: 210 }, 'H-900x300x16x28': { h: 900, b: 300, kgm: 243 },
 };
 // 부재별 철근 비율(kg/m³) 기본값 — 개산용, 객체별 rr 속성으로 덮어씀
 export const REBAR_RATIO = { footing: 100, slab: 110, wall: 90, column: 180, beam: 160 };
