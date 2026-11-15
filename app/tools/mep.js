@@ -1,10 +1,11 @@
 // 빌더 MEP — 설비·전기·소방 계통 관리 (트랙: mep)
 // v1: 계통별 집계와 천장 속 높이 배분 점검.
 // v2: 스프링클러 헤드 자동 배치(NFTC 103), 분전반 배치·조명/전열 부하 집계·간선 산정(KEC).
+// v3: 가동 시뮬레이션 — 시나리오(정상·화재·정전·장비 정지)별 흐름·용량·환기·소방·전력 판정과 동작 순서.
 import { h, table, toast } from '../js/ui.js';
 import { allElements, DISC, KINDS, levelOf, elName } from '../js/model.js';
 import { dist, fmt, fmt0, uid, polyArea, pointInPoly } from '../js/util.js';
-import { FIRE_BLDG, fireExempt, headSpacing, headCoverage, placeHeads, fireDemand, OUTLET_VA, ELEC, circuitVA, panelLoad, panelSpots, snapToWall, feeder } from '../js/mep.js';
+import { FIRE_BLDG, fireExempt, headSpacing, headCoverage, placeHeads, fireDemand, OUTLET_VA, ELEC, circuitVA, panelLoad, panelSpots, snapToWall, feeder, mepSim, SCENARIOS, SIM, SIM_GROUPS, sysColor } from '../js/mep.js';
 import { roomLighting } from './interior.js';
 
 const MEP_KINDS = ['duct', 'pipe', 'tray', 'riser', 'sprinkler', 'panel'];
@@ -109,7 +110,9 @@ export function elecPlan(P) {
   return { levels, kVA, main: feeder(kVA), U, M };
 }
 
-const VIEWS = [['sys', '계통 집계'], ['fire', '스프링클러'], ['elec', '전기 부하']];
+const VIEWS = [['sim', '가동 시뮬레이션'], ['sys', '계통 집계'], ['fire', '스프링클러'], ['elec', '전기 부하']];
+const LVC = { ok: '#3fb27f', warn: '#e0af68', fail: '#e5484d', off: '#4b5260', idle: '#4ea1ff', info: '#6f7a8d' };
+const LVT = { ok: '정상', warn: '주의', fail: '불가', off: '정지', idle: '대기', info: '참고' };
 const SVGNS = 'http://www.w3.org/2000/svg';
 const sv = (tag, a = {}) => { const e = document.createElementNS(SVGNS, tag); for (const k in a) e.setAttribute(k, a[k]); return e; };
 
@@ -128,7 +131,7 @@ function planSvg(rooms, draw) {
 
 export function mount(root, ctx) {
   const P = ctx.P; P.mep ||= { systems: [], calc: {} }; P.mep.calc ||= {};
-  const st = { tab: 'all', view: 'sys', lv: null };
+  const st = { tab: 'all', view: 'sim', lv: null, sim: { type: 'normal', ...(P.mep.calc.sim?.sc || {}) }, simLv: null, groups: new Set(SIM_GROUPS.map(g => g[0])) };
   const page = h('div', { class: 'page' }), w = h('div', { class: 'wrap' }); page.append(w); root.append(page);
   const changed = () => { ctx.touch('meta'); ctx.bus.emit('model'); };
   const card = (k, v, d) => h('div', { class: 'card' }, h('div', { class: 'd' }, k), h('div', { class: 't' }, String(v)), d ? h('div', { class: 'note' }, d) : null);
@@ -265,6 +268,116 @@ export function mount(root, ctx) {
       `최대수요 = 전등/역률${ELEC.pf} × ${ELEC.dfLight} + 전열 × ${ELEC.dfOutlet}. 7kVA 초과는 3상4선 380/220V, 주차단기 ≥ 1.25I, 간선은 F-CV 트레이 포설 허용전류 대략치 — 실시 설계 시 KEC 232.5 허용전류·전압강하로 확정하세요. 분전반 공급 반경 ${ELEC.panelR / 1000}m 초과 층은 분할 배치합니다.`));
   }
 
+  // ---------- 가동 시뮬레이션 (v3) ----------
+  function simView() {
+    const sc = st.sim; let S;
+    try { S = mepSim(P, sc); } catch (e) { console.error(e); w.append(h('div', { class: 'card' }, h('div', { class: 't' }, '시뮬레이션을 실행하지 못했습니다'), h('div', { class: 'd' }, String(e.message || e)))); return; }
+    const setSc = (o) => { st.sim = { ...st.sim, ...o }; st.simLv = null; const R = mepSim(P, st.sim); P.mep.calc.sim = { at: new Date().toISOString(), sc: { type: st.sim.type, level: st.sim.level, equip: st.sim.equip }, verdict: R.verdict, fail: R.checks.filter(c => c.lv === 'fail' && !c.hide).length, warn: R.checks.filter(c => c.lv === 'warn' && !c.hide).length }; ctx.touch('meta'); render(); };
+    const zl = [...S.zones.values()].map(z => z.level);
+    const eqOpts = S.equips.filter(e => !['vav', 'grille', 'pit', 'tank'].includes(e.type));
+    w.append(h('div', { class: 'row', style: { gap: '10px', flexWrap: 'wrap', alignItems: 'center', margin: '4px 0 12px' } },
+      h('label', {}, '시나리오 ', h('select', { onchange: (e) => setSc({ type: e.target.value }) }, ...Object.entries(SCENARIOS).map(([k, v]) => h('option', { value: k, selected: k === sc.type }, v)))),
+      sc.type === 'fire' ? h('label', {}, '화재 층 ', h('select', { onchange: (e) => setSc({ level: e.target.value }) }, ...zl.map(l => h('option', { value: l.id, selected: l.id === (S.fireLv?.id) }, l.name)))) : null,
+      sc.type === 'fault' ? h('label', {}, '정지 장비 ', h('select', { onchange: (e) => setSc({ equip: e.target.value }) }, h('option', { value: '' }, '— 장비 선택 —'), ...eqOpts.map(e => h('option', { value: e.el.id, selected: e.el.id === sc.equip }, `${e.name} (${e.level.name})`)))) : null,
+      h('span', { class: 'note' }, '입력은 시나리오뿐 — 부하·풍량·유량·용량은 툴이 산정합니다.')));
+    // 종합 판정
+    const vis = S.checks.filter(c => !c.hide), nF = vis.filter(c => c.lv === 'fail').length, nW = vis.filter(c => c.lv === 'warn').length;
+    const vt = { ok: ['가동 가능', '모든 항목이 기준 이내입니다.'], warn: ['가동 가능 (주의)', `운전은 되지만 기준을 넘는 항목 ${nW}개가 있습니다.`], fail: ['가동 불가 항목 있음', `설비가 제 기능을 못 하는 항목 ${nF}개, 주의 ${nW}개.`] }[S.verdict];
+    w.append(h('div', { class: 'card', style: { borderLeft: `4px solid ${LVC[S.verdict]}`, marginBottom: '12px' } },
+      h('div', { class: 'd' }, SCENARIOS[sc.type] + (S.fireLv ? ` — ${S.fireLv.name}` : '') + (sc.type === 'fault' && sc.equip ? ` — ${S.equips.find(e => e.el.id === sc.equip)?.name || ''}` : '')),
+      h('div', { class: 't', style: { color: LVC[S.verdict] } }, vt[0]), h('div', { class: 'note' }, vt[1] + (sc.type !== 'normal' ? ' "새로" 표시는 정상 운전에는 없던 문제입니다.' : ''))));
+    const CATS = ['환기·공조', '전력', '소방', '급배수'];
+    w.append(h('div', { class: 'cards', style: { marginBottom: '12px' } }, ...CATS.map(c => { const xs = vis.filter(x => x.cat === c); if (!xs.length) return h('div', { class: 'card' }, h('div', { class: 'd' }, c), h('div', { class: 't', style: { color: LVC.info } }, '해당 없음')); const lv = xs.reduce((a, x) => (x.lv === 'fail' || (x.lv === 'warn' && a !== 'fail')) ? x.lv : a, 'ok'); const n = xs.filter(x => x.lv === 'fail' || x.lv === 'warn').length; return h('div', { class: 'card click', onclick: () => document.getElementById('mep-cat-' + c)?.scrollIntoView({ behavior: 'smooth' }) }, h('div', { class: 'd' }, c), h('div', { class: 't', style: { color: LVC[lv] } }, LVT[lv]), h('div', { class: 'note' }, n ? `확인 필요 ${n}건` : `${xs.length}개 항목 이상 없음`)); })));
+    // 동작 순서
+    const mmss = (t) => `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
+    w.append(h('h2', {}, '동작 순서'), h('div', { class: 'card', style: { padding: '8px 12px' } }, ...S.events.map(e => h('div', { class: 'row', style: { gap: '10px', padding: '4px 0', alignItems: 'baseline' } },
+      h('span', { style: { fontFamily: 'var(--mono)', color: 'var(--fg3)', minWidth: '44px' } }, mmss(e.t)), h('span', { style: { width: '8px', height: '8px', borderRadius: '50%', background: LVC[e.lv] || LVC.info, flex: 'none', transform: 'translateY(-1px)' } }), h('span', {}, e.text)))));
+    // 층 × 계통
+    const fl = [...S.floors].reverse(); const segN = (lid) => { let n = 0; for (const x of S.seg.values()) if (x.it.level.id === lid) n++; return n; };
+    st.simLv = fl.some(f => f.level.id === st.simLv) ? st.simLv : (S.fireLv?.id || S.equips.find(e => e.el.id === sc.equip)?.level.id || [...fl].filter(f => f.zone).sort((a, b) => segN(b.level.id) - segN(a.level.id))[0]?.level.id || fl[0]?.level.id);
+    if (fl.length) {
+      const gs = SIM_GROUPS.filter(g => fl.some(f => f.cell[g[0]]));
+      const tb = h('table', { class: 'grid', style: { fontSize: '12px' } }, h('thead', {}, h('tr', {}, h('th', {}, '층'), ...gs.map(g => h('th', { style: { textAlign: 'center' } }, g[1])), h('th', { class: 'num' }, '면적 m²'), h('th', { class: 'num' }, '재실 인'))),
+        h('tbody', {}, ...fl.map(f => h('tr', { class: 'click' + (f.level.id === st.simLv ? ' sel' : ''), onclick: () => { st.simLv = f.level.id; render(); setTimeout(() => document.getElementById('mep-simplan')?.scrollIntoView({ behavior: 'smooth' }), 30); } },
+          h('td', {}, f.level.name + (f.fire ? ' 🔥' : '')), ...gs.map(g => { const v = f.cell[g[0]]; return h('td', { style: { textAlign: 'center', padding: '3px' } }, v ? h('span', { title: LVT[v], style: { display: 'inline-block', width: '100%', maxWidth: '64px', height: '12px', borderRadius: '3px', background: LVC[v] } }) : ''); }),
+          h('td', { class: 'num' }, f.zone ? fmt0(f.zone.A) : '-'), h('td', { class: 'num' }, f.zone ? fmt0(f.zone.occ) : '-')))));
+      w.append(h('h2', {}, '층별 계통 상태'), h('div', { class: 'note', style: { marginBottom: '6px' } }, ...['ok', 'warn', 'fail', 'idle', 'off'].map(k => h('span', { style: { marginRight: '12px' } }, h('span', { style: { display: 'inline-block', width: '10px', height: '10px', borderRadius: '2px', background: LVC[k], marginRight: '4px' } }), LVT[k])), ' — 행을 누르면 그 층 평면에서 흐름을 봅니다.'),
+        h('div', { style: { maxHeight: '360px', overflow: 'auto', border: '1px solid var(--line)', borderRadius: '8px' } }, tb));
+    }
+    // 층 평면 (흐름 애니메이션)
+    const L = P.levels.find(l => l.id === st.simLv);
+    if (L) {
+      const segs = [...S.seg.values()].filter(x => x.it.level.id === L.id && st.groups.has(SIM_GROUPS.find(g => g[2].includes(x.sys))?.[0]));
+      const eqs = S.equips.filter(e => e.level.id === L.id);
+      const slabs = allElements(P, r => r.level.id === L.id && (r.el.k === 'slab' || r.el.k === 'room'));
+      const pts = [...segs.flatMap(x => x.it.el.a ? [x.it.el.a, x.it.el.b] : [x.it.el.p]), ...slabs.flatMap(r => r.el.pts), ...eqs.map(e => e.el.p)].filter(Boolean);
+      w.append(h('h2', { id: 'mep-simplan' }, `${L.name} 흐름 평면`), h('div', { class: 'row', style: { gap: '6px', flexWrap: 'wrap', marginBottom: '6px' } }, ...SIM_GROUPS.map(g => h('button', { class: 'btn sm' + (st.groups.has(g[0]) ? ' primary' : ''), onclick: () => { st.groups.has(g[0]) ? st.groups.delete(g[0]) : st.groups.add(g[0]); render(); } }, g[1]))));
+      if (pts.length) {
+        const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys), pad = 1500;
+        const W = x1 - x0 + pad * 2, H = y1 - y0 + pad * 2, T = (p) => [p[0] - x0 + pad, y1 - p[1] + pad], k = W / 900;
+        const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, style: 'width:100%;max-height:560px;background:#0b0e13;border:1px solid var(--line);border-radius:8px' });
+        const style = sv('style'); style.textContent = `.mf{animation:mepflow 0.9s linear infinite}@keyframes mepflow{to{stroke-dashoffset:${-16 * k}}}`; svg.append(style);
+        for (const r of slabs) svg.append(sv('polygon', { points: r.el.pts.map(p => T(p).join(',')).join(' '), fill: r.el.k === 'room' ? 'rgba(212,165,255,.04)' : 'rgba(255,255,255,.025)', stroke: '#2a3342', 'stroke-width': k }));
+        const order = { off: 0, idle: 1, run: 2 };
+        for (const x of segs.sort((a, b) => order[a.state] - order[b.state])) {
+          const el = x.it.el, col = x.state === 'off' ? (x.lv === 'fail' ? LVC.fail : LVC.off) : x.lv === 'fail' ? LVC.fail : x.lv === 'warn' ? LVC.warn : (x.sys === 'FP' ? '#ff9f43' : x.sys === 'BUS' ? '#c792ea' : sysColor(x.sys) || LVC.ok);
+          const tip = sv('title'); tip.textContent = `${x.sys} ${x.it.kind === 'riser' ? '입상' : ''} ${el.w || ''}${el.hh && x.it.kind !== 'pipe' ? '×' + el.hh : ''} — ${x.state === 'off' ? '정지/미연결' : x.Q ? `${fmt0(x.Q)}m³/h, ${fmt(x.v, 1)}m/s (한도 ${x.lim[1]})` : '대기'}${x.sug ? ` → 권장 ${x.sug}` : ''}`;
+          if (el.a) {
+            const [a, b] = x.dir > 0 ? [T(el.a), T(el.b)] : [T(el.b), T(el.a)], wd = x.it.kind === 'duct' ? 3.2 * k : x.it.kind === 'tray' ? 1.6 * k : 2.2 * k;
+            const ln = sv('line', { x1: a[0], y1: a[1], x2: b[0], y2: b[1], stroke: col, 'stroke-width': wd, 'stroke-linecap': 'round', opacity: x.state === 'off' ? 0.55 : 1 });
+            if (x.state === 'run' && x.Q > 0) { ln.setAttribute('stroke-dasharray', `${10 * k} ${6 * k}`); ln.setAttribute('class', 'mf'); }
+            ln.append(tip); ln.style.cursor = 'pointer'; ln.addEventListener('click', () => toCad(x.it)); svg.append(ln);
+          } else if (el.p) { const q = T(el.p); const c = sv('circle', { cx: q[0], cy: q[1], r: 5 * k, fill: col, stroke: '#0b0e13', 'stroke-width': k }); c.append(tip); svg.append(c); }
+        }
+        for (const e of eqs) {
+          const q = T(e.el.p), col = e.state === '운전' ? (e.ratio > 1 ? LVC.fail : LVC.ok) : e.state === '대기' ? LVC.idle : ['고장', '미연결', '무전원'].includes(e.state) ? LVC.fail : LVC.off;
+          const g = sv('g', { transform: `rotate(${-(e.el.rot || 0)} ${q[0]} ${q[1]})` }); const tip = sv('title'); tip.textContent = `${e.name} — ${e.state}${e.capTxt && e.capTxt !== '-' ? `, ${e.capTxt}` : ''}${e.ratio ? `, 부하율 ${fmt0(e.ratio * 100)}%` : ''}${e.note ? ` (${e.note})` : ''}`;
+          g.append(sv('rect', { x: q[0] - (e.el.w || 600) / 2, y: q[1] - (e.el.d || 600) / 2, width: e.el.w || 600, height: e.el.d || 600, fill: col, 'fill-opacity': 0.25, stroke: col, 'stroke-width': 1.5 * k }), tip); svg.append(g);
+          if (!['vav', 'grille'].includes(e.type)) { const t = sv('text', { x: q[0], y: q[1] + 4 * k, 'font-size': 10 * k, fill: col, 'text-anchor': 'middle' }); t.textContent = e.name.length > 14 ? e.name.slice(0, 14) + '…' : e.name; svg.append(t); }
+        }
+        w.append(svg, h('div', { class: 'note', style: { margin: '4px 0 12px' } }, '움직이는 점선: 흐르는 방향(급기·공급은 장비에서 말단으로, 환기·환수·배수는 장비 쪽으로). 계통색 = 정상, 노랑 = 유속 주의, 빨강 = 기준 초과·미연결, 회색 = 정지. 선 위에 올리면 풍량·유속·권장 규격, 누르면 작도로 이동.'));
+      } else w.append(h('div', { class: 'note' }, '이 층에는 표시할 설비가 없습니다.'));
+    }
+    // 판정 상세
+    w.append(h('h2', {}, '판정 상세'));
+    for (const c of CATS) {
+      const xs = vis.filter(x => x.cat === c).sort((a, b) => ({ fail: 0, warn: 1, info: 2, ok: 3 }[a.lv] - { fail: 0, warn: 1, info: 2, ok: 3 }[b.lv])); if (!xs.length) continue;
+      w.append(h('h3', { id: 'mep-cat-' + c, style: { margin: '14px 0 6px' } }, c));
+      const tb = h('div', { style: { border: '1px solid var(--line)', borderRadius: '8px', overflow: 'hidden' } });
+      for (const x of xs) {
+        const head = h('div', { class: 'row', style: { gap: '10px', padding: '8px 10px', alignItems: 'flex-start', borderBottom: '1px solid var(--line)' } },
+          h('span', { class: 'pill', style: { color: LVC[x.lv], borderColor: LVC[x.lv], flex: 'none', minWidth: '34px', textAlign: 'center' } }, LVT[x.lv]),
+          h('div', { style: { flex: 1, minWidth: 0 } }, h('div', {}, h('b', {}, x.item), x.isNew ? h('span', { class: 'pill bad', style: { marginLeft: '6px' } }, '새로') : null, ' — ', x.value, h('span', { class: 'note' }, `  (기준: ${x.limit})`)), h('div', { class: 'note', style: { marginTop: '2px', lineHeight: 1.5 } }, x.basis)));
+        if (x.rows?.length || x.floorRows?.length) {
+          const det = h('details', { style: { padding: '0 10px 8px 54px', borderBottom: '1px solid var(--line)' } }, h('summary', { class: 'note', style: { cursor: 'pointer' } }, x.rows ? `구간 ${x.rows.length}개 보기${x.rows.length >= 40 ? ' (상위 40)' : ''}` : `층 ${x.floorRows.length}개 보기`));
+          if (x.rows) det.append(table([
+            { label: '층', render: r => r.it.level.name }, { label: '구간', render: r => `${r.sys} ${r.it.kind === 'riser' ? '입상' : r.branch ? '분기' : '주관'}` },
+            { label: '현 규격', render: r => r.it.kind === 'pipe' || r.it.el.form === 'pipe' ? `${r.it.el.w}A` : `${r.it.el.w}×${r.it.el.hh}` },
+            { label: '유량 m³/h', num: true, render: r => r.Q ? fmt0(r.Q) : '-' }, { label: '유속 m/s', num: true, render: r => r.v ? fmt(r.v, 1) : '-', cls: r => r.lv === 'fail' ? 'bad' : '' },
+            { label: '한도', num: true, render: r => r.v ? `${r.lim[1]}` : '-' }, { label: '권장 규격', render: r => r.sug || (r.state === 'off' ? '연결 확인' : '-') },
+          ], x.rows, { onRow: r => toCad(r.it) }));
+          else det.append(h('div', { class: 'note' }, x.floorRows.map(f => `${P.levels.find(l => l.id === f.level)?.name}: ${f.value}`).join(' · ')));
+          tb.append(head, det);
+        } else tb.append(head);
+      }
+      w.append(tb);
+    }
+    // 장비 운전 상태
+    const plant = S.equips.filter(e => !['vav', 'grille', 'ahu', 'panel'].includes(e.type));
+    const ahus = S.equips.filter(e => e.type === 'ahu'), pnls = S.equips.filter(e => e.type === 'panel');
+    const grp = (arr, label) => arr.length ? [{ name: `${label} ${arr.length}대`, level: { name: [...new Set(arr.map(e => e.level.name))].length > 1 ? `${arr[0].level.name}~${arr.at(-1).level.name}` : arr[0].level.name }, state: `운전 ${arr.filter(e => e.state === '운전').length} / 정지 ${arr.filter(e => e.state !== '운전').length}`, capTxt: arr[0].capTxt, ratio: Math.max(...arr.map(e => e.ratio || 0)), kW: arr.reduce((s, e) => s + (e.kW || 0), 0), note: arr.filter(e => e.state !== '운전').map(e => e.name).slice(0, 4).join(', '), _g: true }] : [];
+    const rows = [...plant, ...grp(ahus, '공조기'), ...grp(pnls, '분전반')];
+    if (rows.length) w.append(h('h2', {}, '장비 운전 상태'), table([
+      { label: '장비', render: e => e.name }, { label: '층', render: e => e.level.name },
+      { label: '상태', render: e => e._g ? e.state : h('span', { class: 'pill', style: { color: LVC[e.state === '운전' ? 'ok' : e.state === '대기' ? 'idle' : ['고장', '미연결', '무전원'].includes(e.state) ? 'fail' : 'off'] } }, e.state) },
+      { label: '용량', render: e => e.capTxt || '-' }, { label: '부하율', num: true, render: e => e.ratio ? `${fmt0(e.ratio * 100)}%` : '-', cls: e => e.ratio > 1 ? 'bad' : '' },
+      { label: '동력 kW', num: true, render: e => e.kW ? fmt(e.kW, 1) : '-' }, { label: '비고', render: e => e.note || '' },
+    ], rows, { onRow: e => e._g ? null : toCad(e) }));
+    w.append(h('div', { class: 'note', style: { marginTop: '10px', lineHeight: 1.6 } },
+      `산정 가정 — 실(room)이 있으면 실 용도, 없으면 층 슬래브 면적을 업무시설로 봅니다. 재실 밀도 사무실 ${SIM.occ.사무실}인/m², 필요 외기 ${SIM.oaPerson}m³/h·인(건축물의 설비기준 등에 관한 규칙 별표 1의6), 냉방부하 사무실 ${SIM.cool.사무실}W/m²·동시부하율 ${SIM.div}, 급기 온도차 ${SIM.dTair}K, 냉수·냉각수 ${SIM.dTw}K, 냉동기 COP ${SIM.cop}, ` +
+      `급수 ${SIM.waterDay}L/인·일(순간최대, 입상관 동시사용률 적용), 소방 기준개수 × 80L/min·Hazen-Williams C=${SIM.C}. 루프(링) 배관·덕트는 한 방향 트리로 흘려 보수적으로(크게) 계산합니다. 장비 용량은 태그(예: 600RT, 1500kVA, 120톤)가 있으면 그 값, 없으면 부하로 자동 산정합니다. 장비는 작도에서 가구·장비(furn)에 계통(sys)·공급(src)·필요(need)를 지정하면 시뮬레이션에 들어갑니다.`));
+  }
+
   // ---------- 계통 집계 (v1) ----------
   function sysView() {
     const all = mepRows(P); const rows = st.tab === 'all' ? all : all.filter(r => r.disc === st.tab);
@@ -298,10 +411,10 @@ export function mount(root, ctx) {
 
   function render() {
     const y = page.scrollTop; w.innerHTML = '';
-    w.append(h('div', {}, h('h1', {}, '설비·전기·소방'), h('div', { class: 'sub' }, '계통별 집계·천장 속 높이 배분, 스프링클러 헤드 자동 배치(NFTC 103), 분전반 배치와 조명·전열 부하 집계(KEC)를 합니다. 사용자는 건물 용도와 구조만 고르면 됩니다.')));
+    w.append(h('div', {}, h('h1', {}, '설비·전기·소방'), h('div', { class: 'sub' }, '시나리오(정상·화재·정전·장비 정지)를 고르면 계통도대로 흘려 보고 환기량·전력·소방이 기준대로 작동하는지 판정합니다. 계통 집계·스프링클러 배치·전기 부하 집계도 여기서 합니다.')));
     w.append(h('div', { class: 'row', style: { margin: '12px 0', gap: '6px', flexWrap: 'wrap' } },
       ...VIEWS.map(([id, nm]) => h('button', { class: 'btn' + (st.view === id ? ' primary' : ''), onclick: () => { st.view = id; render(); } }, nm))));
-    if (st.view === 'fire') fireView(); else if (st.view === 'elec') elecView(); else sysView();
+    if (st.view === 'fire') fireView(); else if (st.view === 'elec') elecView(); else if (st.view === 'sim') simView(); else sysView();
     page.scrollTop = y;
   }
   render();
