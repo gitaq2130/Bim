@@ -9,6 +9,7 @@ import { IC } from '../js/icons.js';
 import { wandRegion } from '../js/wand.js';
 import { FURN, FURN_CATS, furnPlan, furnXf } from '../js/furn.js';
 import { sysColor as sysColorC } from '../js/mep.js';
+import { LUX_BY_USE } from './interior.js';
 import { buildSection, elevationLines } from '../js/section.js';
 import { LIBRARY, expandInsert, blockNames } from '../js/blocks.js';
 import { saveRevision, revisions, diffContent, loadRev, createRev, restoreRev, clusterBoxes, nextRev, revName } from '../js/rev.js';
@@ -19,6 +20,10 @@ const DEF_DEFAULTS = {
   slab: { t: 200, mat: 'RC', dz: 0 }, footing: { w: 2400, d: 2400, t: 800, mat: 'RC' }, door: { w: 900, h: 2100, sill: 0 }, window: { w: 1500, h: 1500, sill: 900 },
   duct: { w: 800, hh: 400, z: 3000, sys: '급기' }, pipe: { w: 150, hh: 150, z: 3200, sys: '급수' }, tray: { w: 600, hh: 100, z: 2900, sys: '동력' }, text: { h: 300 }, grid: { next: '1' },
 };
+// 다각형 도심(면적 가중) — 실 라벨 위치
+function polyCenter(pts) { let A = 0, x = 0, y = 0; for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) { const f = pts[j][0] * pts[i][1] - pts[i][0] * pts[j][1]; A += f; x += (pts[j][0] + pts[i][0]) * f; y += (pts[j][1] + pts[i][1]) * f; } if (Math.abs(A) < 1e-6) return [pts.reduce((s, p) => s + p[0], 0) / pts.length, pts.reduce((s, p) => s + p[1], 0) / pts.length]; return [x / (3 * A), y / (3 * A)]; }
+// 스프링클러 헤드 유형 → K-factor(표준형 기준) — 설계값은 툴이 정함
+const SPK_TYPES = { pendent: ['하향형', 80], upright: ['상향형', 80], sidewall: ['측벽형', 80], concealed: ['은폐형', 80] };
 const EL_STYLE = {
   wall: { RC: ['#4b5059', '#9aa3ad'], CMU: ['#6b5138', '#c9a27e'], DRY: ['#4a4840', '#cfc8b6'], GLASS: ['#24506a', '#8fd3ff'], STEEL: ['#3a4452', '#8fa3ba'] },
   column: { RC: ['#6a717c', '#d6dbe1'], STEEL: ['#3f5168', '#a9c1dc'] },
@@ -119,7 +124,7 @@ export function mount(root, ctx) {
       measure: [group('측정', big('DIST', '거리'), big('AREA', '면적'), big('BASE', '좌표', () => startCmd('IDPT'))), group('PDF 물량', big('UNDERLAY', 'PDF 도면', pdfUnderlay), big('TAKEOFF', '물량 산출', () => takeoffMenu())), group('기성', big('PROGMARK', '영역 마킹'), col(progSel()))],
       view: [group('단면·입면', big('SECTION', '단면 생성', () => startCmd('SECTIONCUT')), big('ELEV', '입면 4면', makeElevations), ...(sheet().kind === 'section' ? [big('REV', '다시 생성', () => { snapshot(); const r = fillSection(sheet()); ctx.touch(sid); dirty = true; log(`모델 기준으로 다시 생성: 절단 ${r.nCut} · 투영 ${r.nBeyond}`); })] : [])), group('창', big('BROWSER', '프로젝트 탐색기', () => { pbOpen = !pbOpen; P.view.pb = pbOpen; renderPB(); buildToolbar(); }, pbOpen), big('PROPS', '속성 팔레트', () => side.classList.toggle('open'))), group('화면', big('ZOOMEXT', '전체 보기', zoomExt), big('VIEW3D', '3D 보기', () => ctx.go('view3d'))), group('표시', col(sm('LAYER', '레이어 관리자', layerManager), sm('UNDERLAY', 'PDF 언더레이', pdfUnderlay), sm('BASE', '객체 스냅 설정', snapSettings))), group('기준', big('BASE', '3D 기준점'))],
       collab: [group('리비전', big('REVISION', cmp ? '비교 끄기' : 'Rev 관리', null, !!cmp), big('REVCLOUD', '리비전 구름'), big('VIEW3D', '3D Rev 비교', () => ctx.go('view3d'))), group('이슈', big('PROGMARK', '선택→이슈', issueFromSel))],
-      output: [group('플롯', big('PLOT', '플롯(PDF)', () => plotDialog()), big('PLOT', '일괄 플롯', () => batchPlot()), big('PDF', space === 'layout' ? '모형으로' : '배치 보기', () => setSpace(space === 'layout' ? 'model' : 'layout'), space === 'layout')), group('파일', big('DXFIN', 'DXF 가져오기', importDXF), big('DXFOUT', 'DXF 내보내기', () => saveFile(sheet().name.replace(/[\\/:*?"<>|]/g, '_') + '.dxf', toDXF(P, [sid]))), col(sm('DXFOUT', '같은 층 합본 DXF', () => saveFile(`${P.name}_${lv().name}_합본.dxf`.replace(/[\\/:*?"<>|]/g, '_'), toDXF(P, P.sheets.filter(s => s.level === sheet().level).map(s => s.id)))), sm('PDF', 'PNG 이미지', exportPNG), sm('PDF', '벡터 PDF(영문)', exportPDF)))],
+      output: [group('플롯', big('PLOT', '플롯(PDF)', () => plotDialog()), big('PLOT', '일괄 플롯', () => batchPlot()), big('PDF', space === 'layout' ? '모형으로' : '배치 보기', () => setSpace(space === 'layout' ? 'model' : 'layout'), space === 'layout')), group('파일', big('DXFIN', 'DXF 가져오기', importDXF), big('DXFOUT', 'DXF 내보내기', () => saveFile(sheet().name.replace(/[\\/:*?"<>|]/g, '_') + '.dxf', dxfOut([sid]))), col(sm('DXFOUT', '같은 층 합본 DXF', () => saveFile(`${P.name}_${lv().name}_합본.dxf`.replace(/[\\/:*?"<>|]/g, '_'), dxfOut(P.sheets.filter(s => s.level === sheet().level).map(s => s.id)))), sm('PDF', 'PNG 이미지', exportPNG), sm('PDF', '벡터 PDF(영문)', exportPDF)))],
     };
     for (const p of panels[cur] || panels.home) body.append(p);
     tb.append(tabRow, body);
@@ -261,12 +266,55 @@ export function mount(root, ctx) {
       }
       return;
     }
+    if (k === 'room' || k === 'ceiling' || k === 'light' || k === 'sprinkler' || k === 'panel') return drawCoreEl(el, o, mode, st, ghost);
     if (k === 'duct' || k === 'pipe' || k === 'tray') {
       const col = sysColorC(el.sys) || { duct: '#9ece6a', pipe: '#7dcfff', tray: '#f7768e' }[k];
       path(o, true); g.strokeStyle = st || (ghost ? '#2c3442' : col); if (!ghost) { g.fillStyle = col + '22'; g.fill(); } g.stroke();
       if (!ghost) { g.setLineDash([14, 4, 3, 4]); path([el.a, el.b]); g.strokeStyle = st || col + 'aa'; g.stroke(); g.setLineDash([]);
         if (V.s > 0.025) { const m = mid(el.a, el.b), a = angOf(el.a, el.b) * 180 / Math.PI; drawText(add(m, mul(perp(norm(sub(el.b, el.a))), el.w / 2 + 80)), 200, `${el.sys || ''} ${k === 'pipe' ? 'Ø' + el.w : el.w + '×' + el.hh} FL+${el.z}`, (a > 90 || a < -90) ? a + 180 : a, col, 'center', 'bottom'); } }
       return;
+    }
+  }
+  // Core 1.1.0 객체(실·천장·조명·스프링클러·분전반) 평면 기호
+  function roomInfo(el) { const A = Math.abs(polyArea(el.pts)) / 1e6; const lux = el.lux || LUX_BY_USE[el.use] || 300; return { A, lux, c: polyCenter(el.pts) }; }
+  function roomLabelBox(el) { const { c } = roomInfo(el); const th = Math.max(250, 11 / V.s); return { x0: c[0] - th * 3, x1: c[0] + th * 3, y0: c[1] - th * 1.6, y1: c[1] + th * 1.3 }; }
+  function drawCoreEl(el, o, mode, st, ghost) {
+    const k = el.k, sel = mode === 'sel';
+    if (k === 'room') {
+      const col = st || (ghost ? '#2c3442' : '#b98ce0');
+      path(o, true); if (!ghost) { g.fillStyle = sel ? '#4ea1ff14' : '#d4a5ff0d'; g.fill(); }
+      g.strokeStyle = col; g.lineWidth = sel || mode === 'hi' ? 2 : 1; g.setLineDash([12, 4, 2, 4]); g.stroke(); g.setLineDash([]);
+      if (!ghost && V.s > 0.008) { const { A, lux, c } = roomInfo(el); const th = Math.max(250, 11 / V.s);
+        drawText([c[0], c[1] + th * 0.2], th, el.name || '실', 0, st || '#e2c8ff', 'center', 'bottom');
+        drawText([c[0], c[1] - th * 0.2], th * 0.7, `${el.use || ''} · ${fmt(A, 1)}㎡ · ${lux}lx`, 0, st || '#a88fc4', 'center', 'top'); }
+      return;
+    }
+    if (k === 'ceiling') {
+      const col = st || (ghost ? '#2c3442' : '#8f78b0');
+      path(o, true); g.strokeStyle = col; g.lineWidth = sel || mode === 'hi' ? 2 : 1; g.setLineDash([3, 4]); g.stroke(); g.setLineDash([]);
+      if (!ghost && V.s > 0.015) { const b = bboxOf(o); drawText([b.x0 + 200, b.y0 + 200], 200, `CH ${fmt0(el.z ?? 2700)} ${el.fin || ''}`, 0, st || '#8f78b0', 'left', 'bottom'); }
+      return;
+    }
+    const q = w2s(el.p);
+    if (k === 'sprinkler') {
+      const col = st || (ghost ? '#2c3442' : DISC.F.color); const r = Math.max(4, (el.w || 80) / 2 * V.s);
+      g.strokeStyle = col; g.lineWidth = sel || mode === 'hi' ? 2 : 1.2; g.beginPath(); g.arc(q[0], q[1], r, 0, Math.PI * 2); g.stroke();
+      if (!ghost) { g.fillStyle = col + (el.type === 'upright' ? '00' : '55'); g.fill(); g.beginPath(); g.moveTo(q[0] - r * 1.5, q[1]); g.lineTo(q[0] + r * 1.5, q[1]); g.moveTo(q[0], q[1] - r * 1.5); g.lineTo(q[0], q[1] + r * 1.5); g.stroke(); }
+      if (!ghost && el.type === 'sidewall') { g.beginPath(); g.moveTo(q[0] - r, q[1] + r * 1.6); g.lineTo(q[0] + r, q[1] + r * 1.6); g.stroke(); }
+      return;
+    }
+    if (k === 'light') {
+      const col = st || (ghost ? '#2c3442' : '#ffd866');
+      path(o, true); if (!ghost) { g.fillStyle = sel ? '#1f4a7a' : '#ffd86622'; g.fill(); } g.strokeStyle = col; g.lineWidth = sel || mode === 'hi' ? 2 : 1; g.stroke();
+      if (!ghost) { path([o[0], o[2]]); g.stroke(); path([o[1], o[3]]); g.stroke();
+        if (el.circuit && V.s > 0.03) drawText([el.p[0], el.p[1] - el.d / 2 - 60], 150, el.circuit, 0, '#c9b35c', 'center', 'top'); }
+      return;
+    }
+    if (k === 'panel') {
+      const col = st || (ghost ? '#2c3442' : DISC.E.color);
+      path(o, true); if (!ghost) { g.fillStyle = sel ? '#1f4a7a' : col + '66'; g.fill(); } g.strokeStyle = col; g.lineWidth = sel || mode === 'hi' ? 2 : 1.2; g.stroke();
+      if (!ghost) { path([o[0], o[2]]); g.stroke();
+        if (V.s > 0.02) drawText([el.p[0] + Math.max(el.w, el.d) / 2 + 80, el.p[1]], 180, el.tag || `${el.sys || ''} 분전반${el.kw ? ' ' + fmt(el.kw, 1) + 'kW' : ''}`, 0, col, 'left', 'middle'); }
     }
   }
   function drawOpening(op, host, mode) {
@@ -299,14 +347,14 @@ export function mount(root, ctx) {
     drawUnderlay();
     const c = C(); if (!c) return;
     if (under && P.content[under]) { const u = P.content[under]; for (const e of u.ents) if (e.t !== 'text') drawEnt(e, '#2c3442', 1, true); for (const el of u.els) drawEl(el, u, 'ghost'); }
-    const order = { slab: 0, footing: 1, beam: 2, wall: 3, opening: 4, column: 5, duct: 6, pipe: 6, tray: 6 };
+    const order = { room: -2, ceiling: -1, slab: 0, footing: 1, beam: 2, wall: 3, opening: 4, column: 5, duct: 6, pipe: 6, tray: 6, panel: 7, light: 7, sprinkler: 8 };
     const els = [...c.els].sort((a, b) => (order[a.k] ?? 9) - (order[b.k] ?? 9));
     const hiIds = new Set(S.hi?.ids || []);
     for (const el of els) if (el.k !== 'opening') drawEl(el, c, sel.has(el.id) ? 'sel' : hiIds.has(el.id) ? 'hi' : hover === el.id ? 'hover' : 'normal');
     for (const el of els) if (el.k === 'opening' && (sel.has(el.id) || hiIds.has(el.id))) drawEl(el, c, sel.has(el.id) ? 'sel' : 'hi');
     if (progView != null && P.bill.periods[progView]) {
       const cp = cumProgress(P, progView); const host = hostOf(c);
-      for (const el of c.els) { if (el.k === 'opening') continue; const o = elOutline(el, host); if (!o) continue; const p = cp[el.id] || 0; path(o, true); g.fillStyle = p >= 100 ? '#3fbf7f88' : p > 0 ? '#e6b45088' : '#9aa0a822'; g.fill(); if (p > 0 && p < 100 && V.s > 0.02) { const b = bboxOf(o); drawText([(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2], 250, p + '%', 0, '#ffe7a8', 'center', 'middle'); } }
+      for (const el of c.els) { if (el.k === 'opening' || el.k === 'room') continue; const o = elOutline(el, host); if (!o) continue; const p = cp[el.id] || 0; path(o, true); g.fillStyle = p >= 100 ? '#3fbf7f88' : p > 0 ? '#e6b45088' : '#9aa0a822'; g.fill(); if (p > 0 && p < 100 && V.s > 0.02) { const b = bboxOf(o); drawText([(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2], 250, p + '%', 0, '#ffe7a8', 'center', 'middle'); } }
       for (const z of (P.bill.periods[progView].zones || []).filter(z => z.sheet === sid)) { path(z.pts, true); g.setLineDash([8, 4]); g.strokeStyle = '#e6b450'; g.lineWidth = 1.5; g.stroke(); g.setLineDash([]); const b = bboxOf(z.pts); drawText([b.x0 + 200, b.y1 - 500], 350, `${z.pct}%${z.name ? ' ' + z.name : ''}`, 0, '#e6b450'); }
       g.fillStyle = '#000a'; g.fillRect(8, H - 34, 300, 24); g.fillStyle = '#e6e9ef'; g.font = '12px sans-serif'; g.fillText(`기성 표시: ${P.bill.periods[progView].name}  ■완료 ■진행 ■미착수`, 14, H - 18);
     }
@@ -377,9 +425,12 @@ export function mount(root, ctx) {
     const c = C(), tol = 6 / V.s;
     for (let i = c.ents.length - 1; i >= 0; i--) { const e = c.ents[i]; if (layerVisible(e.layer) && !layerLocked(e.layer) && G.hitEnt(e, p, tol)) return e.id; }
     // 작은 객체 우선(개구부>기둥>나머지)
-    const pri = { opening: 0, column: 1, duct: 2, pipe: 2, tray: 2, beam: 3, wall: 4, footing: 5, slab: 6 };
+    const pri = { sprinkler: -1, light: 0, panel: 0, opening: 0, column: 1, duct: 2, pipe: 2, tray: 2, beam: 3, wall: 4, footing: 5, slab: 6, ceiling: 7, room: 8 };
     const hits = c.els.filter(el => G.hitEl(el, p, tol, hostOf(c))).sort((a, b) => (pri[a.k] ?? 9) - (pri[b.k] ?? 9));
-    return hits[0]?.id || null;
+    if (hits[0]) return hits[0].id;
+    // 실은 테두리 외에 실명 라벨로도 선택
+    const rm = c.els.find(el => el.k === 'room' && el.pts?.length > 2 && G.bbIn({ x0: p[0], y0: p[1], x1: p[0], y1: p[1] }, roomLabelBox(el)));
+    return rm?.id || null;
   }
   function selectBox(a, b, add) {
     const c = C(); const w = { x0: Math.min(a[0], b[0]), y0: Math.min(a[1], b[1]), x1: Math.max(a[0], b[0]), y1: Math.max(a[1], b[1]) };
@@ -850,16 +901,21 @@ export function mount(root, ctx) {
   // 선 → 객체 변환 / 자동 인식
   async function convertLines() {
     const c = C(); const src = sel.size ? c.ents.filter(e => sel.has(e.id)) : c.ents;
-    const r = G.recognize(src);
-    const total = r.walls.length + r.cols.length + r.slabs.length;
-    if (!total) { endCmd('인식된 객체가 없습니다 (평행선 쌍 80~450mm → 벽, 닫힌 사각형 ≤1500 → 기둥, 큰 닫힌 폴리선 → 슬래브)'); return; }
-    const v = await dialog({ title: '선 → 객체 자동 인식', body: `${sel.size ? '선택한 ' : '도면 전체 '}선에서 <b>벽 ${r.walls.length}</b>개, <b>기둥 ${r.cols.length}</b>개, <b>슬래브 ${r.slabs.length}</b>개를 찾았습니다.`, fields: [{ key: 'mat', label: '벽 재료', type: 'select', options: Object.entries(MATS).map(([k, m]) => [k, m.name]), value: 'RC' }, { key: 'del', label: '원본 선 삭제', type: 'checkbox', value: true }], ok: '변환' });
+    const rc = G.recognizeCore(src, { uses: Object.keys(LUX_BY_USE) });
+    const r = G.recognize(src.filter(e => !G.coreLayerKind(e.layer))); // 실·천장·설비 레이어 선은 벽·슬래브 인식에서 제외
+    const nCore = rc.rooms.length + rc.ceilings.length + rc.lights.length + rc.sprinklers.length + rc.panels.length;
+    const total = r.walls.length + r.cols.length + r.slabs.length + nCore;
+    if (!total) { endCmd('인식된 객체가 없습니다 (평행선 쌍 80~450mm → 벽, 닫힌 사각형 ≤1500 → 기둥, 큰 닫힌 폴리선 → 슬래브, 실·천장·조명·스프링클러·분전반 레이어 → 해당 객체)'); return; }
+    const coreTxt = nCore ? `<br>레이어 기준: <b>실 ${rc.rooms.length}</b> · <b>천장 ${rc.ceilings.length}</b> · <b>조명 ${rc.lights.length}</b> · <b>스프링클러 ${rc.sprinklers.length}</b> · <b>분전반 ${rc.panels.length}</b><div class="note">실 용도는 실 안 문자로 인식하고 목표 조도는 용도 기준으로 자동 지정합니다. 용도를 못 찾은 실은 '사무실'로 둡니다.</div>` : '';
+    const v = await dialog({ title: '선 → 객체 자동 인식', body: `${sel.size ? '선택한 ' : '도면 전체 '}선에서 <b>벽 ${r.walls.length}</b>개, <b>기둥 ${r.cols.length}</b>개, <b>슬래브 ${r.slabs.length}</b>개를 찾았습니다.${coreTxt}`, fields: [{ key: 'mat', label: '벽 재료', type: 'select', options: Object.entries(MATS).map(([k, m]) => [k, m.name]), value: 'RC' }, { key: 'del', label: '원본 선 삭제', type: 'checkbox', value: true }], ok: '변환' });
     if (!v) return endCmd();
     snapshot(); const used = new Set();
     for (const w of r.walls) { addEl({ ...w, mat: v.mat, src: undefined }); w.src.forEach(i => used.add(i)); }
     for (const x of [...r.cols, ...r.slabs]) { addEl({ ...x, src: undefined }); x.src.forEach(i => used.add(i)); }
+    for (const x of [...rc.rooms, ...rc.ceilings, ...rc.lights, ...rc.sprinklers, ...rc.panels]) addEl(coreElFrom(x));
+    rc.used.forEach(i => used.add(i));
     if (v.del) c.ents = c.ents.filter(e => !used.has(e.id));
-    sel.clear(); selChanged(); changed(); endCmd(`변환 완료: 벽 ${r.walls.length}, 기둥 ${r.cols.length}, 슬래브 ${r.slabs.length}`);
+    sel.clear(); selChanged(); changed(); endCmd(`변환 완료: 벽 ${r.walls.length}, 기둥 ${r.cols.length}, 슬래브 ${r.slabs.length}${nCore ? `, 실 ${rc.rooms.length}, 천장 ${rc.ceilings.length}, 조명 ${rc.lights.length}, 스프링클러 ${rc.sprinklers.length}, 분전반 ${rc.panels.length}` : ''}`);
   }
 
   // ---------- AI 작도 ----------
@@ -900,10 +956,36 @@ Steel sections available: ${Object.keys(SECTIONS).join(', ')}. Use defaults when
     if (!v) return;
     const fname = (s) => s.replace(/[\\/:*?"<>|]/g, '_');
     if (v.a === 'dxfin') return importDXF();
-    if (v.a === 'dxfout') return saveFile(fname(sheet().name) + '.dxf', toDXF(P, [sid]));
-    if (v.a === 'dxfall') return saveFile(fname(`${P.name}_${lv().name}_합본`) + '.dxf', toDXF(P, P.sheets.filter(s => s.level === sheet().level).map(s => s.id)));
+    if (v.a === 'dxfout') return saveFile(fname(sheet().name) + '.dxf', dxfOut([sid]));
+    if (v.a === 'dxfall') return saveFile(fname(`${P.name}_${lv().name}_합본`) + '.dxf', dxfOut(P.sheets.filter(s => s.level === sheet().level).map(s => s.id)));
     if (v.a === 'png') return exportPNG();
     if (v.a === 'pdf') return exportPDF();
+  }
+  // 인식 결과 → 객체 (기본값은 KINDS, 설계값은 기준으로 자동 지정)
+  function coreElFrom(x) {
+    const { src, ...a } = x; const el = { ...deep(KINDS[a.k].def), ...a };
+    if (a.k === 'room') { el.name = a.name || '실'; el.use = a.use || el.use; el.lux = LUX_BY_USE[el.use] || el.lux; }
+    if (a.k === 'sprinkler') el.kf = SPK_TYPES[el.type]?.[1] ?? 80;
+    if (a.k === 'light' && !a.rot) delete el.rot;
+    return el;
+  }
+  // DXF 내보내기용 주석 — 코어 toDXF는 객체를 외곽선만 내보내므로 실명·CH·기호·라벨을 같은 레이어 요소로 덧붙인다
+  function coreAnnotations(c) {
+    const out = [], lay = (k) => `${KINDS[k].disc}-${k.toUpperCase()}`;
+    for (const el of c.els) {
+      if (el.k === 'room' && el.pts?.length > 2) { const { A, lux, c: ct } = roomInfo(el); const t1 = el.name || '실', t2 = `${el.use || ''} · ${fmt(A, 1)}㎡ · ${lux}lx`, cx = (s, hh) => ct[0] - s.length * hh * 0.45; // DXF TEXT는 왼쪽 기준 → 대략 가운데 정렬
+        out.push({ t: 'text', p: [cx(t1, 350), ct[1] + 100], h: 350, s: t1, rot: 0, layer: lay('room') }, { t: 'text', p: [cx(t2, 220), ct[1] - 400], h: 220, s: t2, rot: 0, layer: lay('room') }); }
+      if (el.k === 'ceiling' && el.pts?.length > 2) { const b = bboxOf(el.pts); out.push({ t: 'text', p: [b.x0 + 200, b.y0 + 200], h: 200, s: `CH ${Math.round(el.z ?? 2700)} ${el.fin || ''}`.trim(), rot: 0, layer: lay('ceiling') }); }
+      if (el.k === 'sprinkler' && el.p) out.push({ t: 'circle', c: el.p, r: (el.w || 80) / 2, layer: lay('sprinkler') });
+      if (el.k === 'light' && el.p && el.circuit) out.push({ t: 'text', p: [el.p[0], el.p[1] - el.d / 2 - 210], h: 150, s: el.circuit, rot: 0, layer: lay('light') });
+      if (el.k === 'panel' && el.p) out.push({ t: 'text', p: [el.p[0] + Math.max(el.w, el.d) / 2 + 80, el.p[1]], h: 180, s: el.tag || `${el.sys || ''} 분전반`.trim(), rot: 0, layer: lay('panel') });
+    }
+    return out;
+  }
+  function dxfOut(ids) {
+    const content = { ...P.content };
+    for (const id of ids) { const c = P.content[id]; if (c) content[id] = { ...c, ents: [...c.ents, ...coreAnnotations(c)] }; }
+    return toDXF({ ...P, content }, ids);
   }
   async function importDXF() {
     const f = await pickFile('.dxf'); if (!f) return;
@@ -942,7 +1024,7 @@ Steel sections available: ${Object.keys(SECTIONS).join(', ')}. Use defaults when
     const c = C(); const items = [];
     const colorOf = (e) => e.color || layerColor(e.layer);
     for (const e of c.ents) if (layerVisible(e.layer)) items.push({ color: colorOf(e), segs: e.t === 'text' ? [] : e.t === 'hatch' && e.pat !== 'SOLID' ? [...G.entSegs(e), ...G.hatchLines(e)] : G.entSegs(e), text: e.t === 'text' ? e : e.t === 'grid' ? { p: e.a, h: 400, s: e.label || '' } : e.t === 'dim' ? (() => { const d = dimGeom(e); return { p: d.tp, h: D.text.h * 0.85, s: e.ovr || String(Math.round(d.len)), rot: d.ang * 180 / Math.PI, center: true }; })() : null });
-    for (const el of c.els) { const col = el.k === 'wall' ? '#ffffff' : el.k === 'column' ? '#ffff00' : el.k === 'beam' ? '#e0af68' : ['duct', 'pipe', 'tray'].includes(el.k) ? '#00ffff' : '#808080'; items.push({ color: col, segs: G.elSegs(el, hostOf(c)), el: true }); }
+    for (const el of c.els) { const col = el.k === 'wall' ? '#ffffff' : el.k === 'column' ? '#ffff00' : el.k === 'beam' ? '#e0af68' : ['duct', 'pipe', 'tray'].includes(el.k) ? '#00ffff' : el.k === 'sprinkler' ? '#ff0000' : el.k === 'panel' ? '#ff00ff' : el.k === 'light' ? '#ffff80' : ['room', 'ceiling'].includes(el.k) ? '#c080ff' : '#808080'; items.push({ color: col, segs: G.elSegs(el, hostOf(c)), el: true }); }
     const colors = [...new Set(items.map(i => i.color))];
     const defLw = (col) => col === '#ffffff' || col === '#d0d5dd' ? 0.5 : col === '#ffff00' ? 0.4 : col === '#808080' || col === '#5d6b80' ? 0.13 : 0.25;
     const v = await dialog({ title: 'PDF 내보내기 — 색상별 선굵기(mm)', body: '<div class="note">A3 가로에 맞춤. 문자는 영문·숫자만 PDF에 들어가며, 한글 문자는 PNG 내보내기를 쓰세요.</div>', fields: [{ key: 'paper', label: '용지', type: 'select', options: [['A3', 'A3 가로'], ['A1', 'A1 가로'], ['A4', 'A4 가로']], value: 'A3' }, ...colors.map((col, i) => ({ key: 'c' + i, label: `■ ${col}`, type: 'number', value: defLw(col) }))], ok: '내보내기' });
@@ -1034,7 +1116,7 @@ Steel sections available: ${Object.keys(SECTIONS).join(', ')}. Use defaults when
     const b = sheetBBox() || { x0: 0, y0: 0, x1: 10000, y1: 10000 }; const ctr = pl.center || [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2];
     const keep = { ...V }, kb = BG, kh = S.hi; V.cx = ctr[0]; V.cy = ctr[1]; V.s = k / N; V.ox = LV.x + (vx0 + vx1) / 2 * k; V.oy = LV.y + (vy0 + vy1) / 2 * k; BG = '#ffffff'; S.hi = null;
     g.save(); g.beginPath(); const a = P2(vx0, vy0); g.rect(a[0], a[1], (vx1 - vx0) * k, (vy1 - vy0) * k); g.clip();
-    const c = C(); const order = { slab: 0, footing: 1, beam: 2, wall: 3, opening: 4, column: 5, duct: 6, pipe: 6, tray: 6 };
+    const c = C(); const order = { room: -2, ceiling: -1, slab: 0, footing: 1, beam: 2, wall: 3, opening: 4, column: 5, duct: 6, pipe: 6, tray: 6, panel: 7, light: 7, sprinkler: 8 };
     for (const el of [...c.els].sort((x, y) => (order[x.k] ?? 9) - (order[y.k] ?? 9))) if (el.k !== 'opening') drawEl(el, c, 'normal');
     const ink = (col) => { const n = parseInt((col || '#ffffff').slice(1), 16); const l = 0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255); return l > 200 ? '#111111' : col; };
     for (const e of c.ents) if (layerVisible(e.layer)) drawEnt(e, ink(e.color || layerColor(e.layer)), Math.max(0.6, (e.lw ?? layerOf(e.layer)?.lw ?? 0.25) * k * 0.9));
@@ -1215,6 +1297,48 @@ Steel sections available: ${Object.keys(SECTIONS).join(', ')}. Use defaults when
     startCmd('TAKEOFF', { type: v.type, name: v.name || { area: '면적', len: '길이', count: '개수' }[v.type], code: v.code, mult: v.mult || 1, color: v.color });
   }
 
+  // Core 1.1.0 객체 속성 — 사용자 입력(용도·현장 수치·기구 사양)만 편집, 설계값은 자동 산정·근거 표시
+  function coreFields(k, els, fld, kv, sec) {
+    const ro = (label, val) => kv.append(h('label', {}, label), h('span', { class: 'mono' }, val));
+    const note = (s) => sec.append(h('div', { class: 'note', style: { marginTop: '6px' } }, s));
+    const one = els.length === 1 ? els[0] : null;
+    const setAll = (fn) => { snapshot(); els.forEach(fn); changed(); };
+    if (k === 'room') {
+      fld('실명', 'name', 'text');
+      kv.append(h('label', {}, '용도')); const u = h('select'); u.append(h('option', { value: '' }, '—'));
+      const uses = new Set(els.map(e => e.use)); for (const n of Object.keys(LUX_BY_USE)) u.append(h('option', { value: n, selected: uses.size === 1 && uses.has(n) }, `${n} (${LUX_BY_USE[n]}lx)`));
+      u.onchange = () => { if (!u.value) return; setAll(e => { e.use = u.value; e.lux = LUX_BY_USE[u.value]; }); }; kv.append(u);
+      fld('천장고(실 높이)', 'h');
+      const lx = new Set(els.map(e => e.lux || LUX_BY_USE[e.use] || 300)); ro('목표 조도', lx.size === 1 ? `${[...lx][0]} lx` : '(여러 값)');
+      note('목표 조도는 용도에 따라 자동 지정 (KS A 3011 조도기준 대표값). 평균 조도 판정·조명 배치는 인테리어 툴.');
+      if (one) {
+        const { A } = roomInfo(one); note(`면적 ${fmt(A, 2)} m² · 둘레 ${fmt(polyPerim(one.pts, true) / 1000, 2)} m`);
+        const ins = C().els.filter(e => e.k === 'light' && e.p && pointInPolyLocal(e.p, one.pts));
+        if (ins.length) note(`실 안 조명 ${ins.length}개 · ${fmt0(ins.reduce((s, e) => s + (e.watt || 0), 0))} W`);
+      }
+    }
+    if (k === 'ceiling') {
+      fld('천장고 FL+', 'z'); fld('두께', 't'); fld('마감', 'fin', 'text');
+      if (one) note(`면적 ${fmt(Math.abs(polyArea(one.pts)) / 1e6, 2)} m² (내역 CLG)`);
+    }
+    if (k === 'light') {
+      fld('기구 종류', 'type', 'text'); fld('폭 W', 'w'); fld('깊이 D', 'd'); fld('설치 FL+', 'z'); fld('회전(°)', 'rot'); fld('소비전력 W', 'watt'); fld('광속 lm', 'lm'); fld('회로', 'circuit', 'text');
+      const w = els.reduce((s, e) => s + (e.watt || 0), 0); if (w) note(`소비전력 합계 ${fmt0(w)} W — MEP 툴이 회로별 부하에 반영`);
+    }
+    if (k === 'sprinkler') {
+      kv.append(h('label', {}, '헤드 유형')); const t = h('select'); t.append(h('option', { value: '' }, '—'));
+      const ts = new Set(els.map(e => e.type)); for (const [v, [n, kf]] of Object.entries(SPK_TYPES)) t.append(h('option', { value: v, selected: ts.size === 1 && ts.has(v) }, `${n} K${kf}`));
+      t.onchange = () => { if (!t.value) return; setAll(e => { e.type = t.value; e.kf = SPK_TYPES[t.value][1]; }); }; kv.append(t);
+      fld('설치 FL+', 'z');
+      const kf = new Set(els.map(e => e.kf ?? 80)); ro('K-factor', kf.size === 1 ? String([...kf][0]) : '(여러 값)');
+      note('K-factor는 헤드 유형에 따라 자동 지정 (NFTC 103 표준형 K=80). 배치 간격·수원 검토는 MEP 툴.');
+    }
+    if (k === 'panel') {
+      fld('계통', 'sys', 'select', [['전등', '전등'], ['전열', '전열'], ['동력', '동력'], ['비상', '비상']]); fld('폭 W', 'w'); fld('깊이 D', 'd'); fld('높이', 'h'); fld('하단 FL+', 'z0'); fld('회전(°)', 'rot');
+      const kw = new Set(els.map(e => e.kw ?? 0)); ro('연결 부하', kw.size === 1 ? `${fmt([...kw][0], 2)} kW` : '(여러 값)');
+      note('연결 부하(kW)는 MEP 툴이 조명·설비 부하를 합산해 산정합니다.');
+    }
+  }
   // ---------- 속성 패널 ----------
   function renderSide() {
     side.innerHTML = '';
@@ -1258,6 +1382,7 @@ Steel sections available: ${Object.keys(SECTIONS).join(', ')}. Use defaults when
           if (k === 'footing') { fld('W', 'w'); fld('D', 'd'); fld('두께', 't'); fld('철근비 kg/m³', 'rr'); }
           if (k === 'opening') { fld('종류', 'kind', 'select', [['door', '문'], ['window', '창']]); fld('폭', 'w'); fld('높이', 'h'); fld('창대 높이', 'sill'); fld('벽 시작점부터', 's'); }
           if (['duct', 'pipe', 'tray'].includes(k)) { fld('계통', 'sys', 'text'); fld(k === 'pipe' ? '관경' : '폭', 'w'); fld(k === 'pipe' ? '외경 높이' : '높이', 'hh'); fld('중심 FL+', 'z'); }
+          coreFields(k, els, fld, kv, sec);
           if (els.length === 1 && RB_FIELDS[k] && els[0].mat !== 'STEEL') {
             const e = els[0], sch = P.rebarSchedule?.[specKey(e)];
             const rb = h('div', { class: 'kv', style: { marginTop: '10px' } }); sec.append(h('div', { class: 'note', style: { marginTop: '10px' } }, `배근 ${e.rebar ? '(개별 지정)' : sch ? `(부재 리스트 ${e.tag || ''})` : '(미지정 → 철근비)'}`), rb);
