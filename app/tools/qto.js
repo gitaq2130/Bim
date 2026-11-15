@@ -4,6 +4,7 @@ import { loadRev, diffProject, snapshotOf } from '../js/rev.js';
 import { takeoff, KINDS, DISC, levelOf, elName, REBAR_RATIO, isRefElement, allElements, DEFAULT_BOQ } from '../js/model.js';
 import { BAR, FIELDS, defaultSpec, bbs, specKey, specOf, parseN, parseS, LAP, HOOK, STOCK } from '../js/rebar.js';
 import { fmt, fmt0, csv, uid, esc } from '../js/util.js';
+import { writeBook } from '../js/excel.js';
 
 export function mount(root, ctx) {
   const P = ctx.P;
@@ -137,7 +138,9 @@ export function mount(root, ctx) {
     const ea = byEl(A), eb = byEl(B); const d = diffProject(bs, ts); const els = [];
     for (const k of new Set([...ea.keys(), ...eb.keys()])) { const x = ea.get(k), y = eb.get(k); const q0 = x?.qty || 0, q1 = y?.qty || 0; if (Math.abs(q1 - q0) < 1e-6) continue; const r = (y || x).r; const code = k.split('|')[1]; els.push({ r, code, q0, q1, dq: q1 - q0, da: (q1 - q0) * (price[code]?.price || 0), st: d.status[r.el.id] || 'changed' }); }
     els.sort((a, b) => Math.abs(b.da) - Math.abs(a.da));
-    return { items, els, diff: d };
+    const agg = (keyOf) => { const m = new Map(); for (const x of els) { const k = keyOf(x); const g = m.get(k) || { k, add: 0, del: 0, da: 0, n: 0 }; if (x.da >= 0) g.add += x.da; else g.del += x.da; g.da += x.da; g.n++; m.set(k, g); } return [...m.values()].sort((a, b) => Math.abs(b.da) - Math.abs(a.da)); };
+    const discOf = x => KINDS[x.r.el.k]?.disc || x.r.sheet.disc; const byDisc = agg(x => `${discOf(x)} ${DISC[discOf(x)]?.name || ''}`.trim()), byLevel = agg(x => x.r.level.name);
+    return { items, els, diff: d, byDisc, byLevel };
   }
   async function renderChange() {
     const list = P.prevs || []; P.changeOrders ||= [];
@@ -159,29 +162,76 @@ export function mount(root, ctx) {
       { label: '당초 수량', num: true, render: x => fmt(x.q0, 3) }, { label: '변경 수량', num: true, render: x => fmt(x.q1, 3) }, { label: '증감 수량', num: true, render: x => sgn(x.dq, 3), cls: x => x.dq > 1e-9 ? 'bad' : '' },
       { label: '당초 금액', key: 'a0', num: true, render: x => fmt0(x.a0) }, { label: '변경 금액', key: 'a1', num: true, render: x => fmt0(x.a1) }, { label: '증감 금액', key: 'da', num: true, render: x => sgn(x.da), cls: x => x.da > 0.5 ? 'bad' : '' },
     ], D.items, { foot: { name: '합계', a0: fmt0(tot.a0), a1: fmt0(tot.a1), da: sgn(tot.da) } })));
+    const aggTable = (title, rows) => h('div', { style: { flex: '1 1 380px', minWidth: 0 } }, h('h2', {}, title), h('div', { class: 'tbl' }, table([
+      { label: '구분', key: 'k' }, { label: '건수', num: true, key: 'n' }, { label: '증액', num: true, render: g => g.add ? '+' + fmt0(g.add) : '' }, { label: '감액', num: true, render: g => g.del ? fmt0(g.del) : '' }, { label: '증감 금액', num: true, render: g => sgn(g.da), cls: g => g.da > 0.5 ? 'bad' : '' },
+    ], rows)));
+    if (D.els.length) box.append(h('div', { class: 'row', style: { alignItems: 'flex-start', gap: '16px' } }, aggTable('공종별 증감', D.byDisc), aggTable('층별 증감', D.byLevel)));
     const lab = { added: '추가', changed: '변경', removed: '삭제' };
     box.append(h('h2', {}, `부재별 증감 근거 (${D.els.length}건)`), h('div', { class: 'tbl', style: { maxHeight: '420px' } }, table([
       { label: '구분', render: x => h('span', { class: 'pill ' + (x.st === 'added' ? 'ok' : x.st === 'removed' ? 'bad' : 'warn') }, lab[x.st]) }, { label: '도면', render: x => x.r.sheet.name }, { label: '층', render: x => x.r.level.name },
       { label: '객체', render: x => (x.r.el.tag ? x.r.el.tag + ' · ' : '') + elName(x.r.el) }, { label: '코드', key: 'code' }, { label: '당초', num: true, render: x => fmt(x.q0, 3) }, { label: '변경', num: true, render: x => fmt(x.q1, 3) }, { label: '증감', num: true, render: x => sgn(x.dq, 3) }, { label: '증감 금액', num: true, render: x => sgn(x.da) },
     ], D.els.slice(0, 500), { onRow: (x) => { if (x.st === 'removed') return toast('삭제된 객체는 3D Rev 비교에서 빨간색으로 볼 수 있습니다'); ctx.state.hi = { ids: [x.r.el.id], sheet: x.r.sheet.id, pts: [x.r.el.p || x.r.el.a || x.r.el.pts?.[0]], label: `${lab[x.st]} ${x.r.el.tag || elName(x.r.el)}` }; ctx.go('cad'); } })));
     box.append(h('div', { class: 'row', style: { marginTop: '12px' } },
-      h('button', { class: 'btn primary', onclick: async () => { const v = await dialog({ title: '설계변경 등록', fields: [{ key: 'n', label: '변경 차수 이름', value: `설계변경 ${P.changeOrders.length + 1}차` }, { key: 'note', label: '변경 사유', type: 'textarea', rows: 3, value: '' }] }); if (!v) return; P.changeOrders.push({ id: uid('co'), name: v.n, note: v.note, base: st.cb, target: st.ct === 'cur' ? null : st.ct, baseName: nm(st.cb), targetName: nm(st.ct), at: Date.now(), totals: tot, items: D.items.map(({ code, name, unit, price, q0, q1, dq, da }) => ({ code, name, unit, price, q0, q1, dq, da })), approval: { status: '작성' } }); ctx.touch('meta'); toast('설계변경을 등록했습니다', 'ok'); render(); } }, '설계변경으로 등록'),
+      h('button', { class: 'btn primary', onclick: async () => { const v = await dialog({ title: '설계변경 등록', fields: [{ key: 'n', label: '변경 차수 이름', value: `설계변경 ${P.changeOrders.length + 1}차` }, { key: 'note', label: '변경 사유', type: 'textarea', rows: 3, value: '' }] }); if (!v) return; P.changeOrders.push({ id: uid('co'), name: v.n, note: v.note, base: st.cb, target: st.ct === 'cur' ? null : st.ct, baseName: nm(st.cb), targetName: nm(st.ct), at: Date.now(), totals: tot, items: D.items.map(({ code, name, unit, price, q0, q1, dq, da }) => ({ code, name, unit, price, q0, q1, dq, da })), byDisc: D.byDisc, byLevel: D.byLevel, diffCount: { added: D.diff.added, changed: D.diff.changed, removed: D.diff.removed }, approval: { status: '작성' } }); ctx.touch('meta'); toast('설계변경을 등록했습니다', 'ok'); render(); } }, '설계변경으로 등록'),
+      h('button', { class: 'btn', onclick: () => exportChangeXLSX(D, nm(st.cb), nm(st.ct), tot) }, '엑셀'),
       h('button', { class: 'btn', onclick: () => exportChange(D, nm(st.cb), nm(st.ct), tot) }, '내역서(HTML)'),
       h('button', { class: 'btn', onclick: () => saveFile(`${P.name}_설계변경_${nm(st.cb)}-${nm(st.ct)}.csv`.replace(/[\\/:*?"<>|]/g, '_'), csv([['코드', '공종', '단위', '단가', '당초수량', '변경수량', '증감수량', '당초금액', '변경금액', '증감금액'], ...D.items.map(x => [x.code, x.name, x.unit, x.price, x.q0.toFixed(3), x.q1.toFixed(3), x.dq.toFixed(3), Math.round(x.a0), Math.round(x.a1), Math.round(x.da)])])) }, 'CSV')));
-    // 등록된 설계변경
+    // 등록된 설계변경 + 변경 계약금액 누계
     if (P.changeOrders.length) {
-      w.append(h('h2', {}, '등록된 설계변경'), h('div', { class: 'tbl' }, table([
-        { label: '차수', key: 'name' }, { label: '대상', render: c => `${c.baseName} → ${c.targetName}` }, { label: '증감 금액', num: true, render: c => sgn(c.totals.da) }, { label: '사유', render: c => h('span', { class: 'note' }, c.note || '') },
-        { label: '승인', render: c => approvalCell(c, () => { ctx.touch('meta'); render(); }, `${c.name} 승인 상태`) },
-        { label: '', render: c => h('button', { class: 'btn sm', onclick: () => { P.changeOrders = P.changeOrders.filter(x => x !== c); ctx.touch('meta'); render(); } }, '삭제') },
-      ], P.changeOrders)));
+      const cos = P.changeOrders.slice().sort((a, b) => a.at - b.at);
+      const base = cos[0].totals.a0; let appr = 0;
+      const led = cos.map(c => { const s0 = c.approval?.status || '작성'; if (s0 === '승인') appr += c.totals.da; return { c, s0, cum: appr }; });
+      const pend = led.filter(x => x.s0 === '검토중' || x.s0 === '작성').reduce((s, x) => s + x.c.totals.da, 0);
+      w.append(h('h2', {}, '등록된 설계변경 — 변경 계약금액 누계'));
+      w.append(h('div', { class: 'cards', style: { marginBottom: '10px' } },
+        ...[['당초 계약금액(1차 당초 기준)', fmt0(base) + '원'], ['승인 증감 누계', sgn(appr) + '원'], ['변경 계약금액', fmt0(base + appr) + '원'], ['미승인 증감(작성·검토중)', sgn(pend) + '원', pend ? 'var(--warn)' : '']].map(([t, v, c]) => h('div', { class: 'card' }, h('div', { class: 'note' }, t), h('div', { class: 'mono', style: { fontSize: '17px', fontWeight: 600, color: c || 'var(--fg)' } }, v)))));
+      w.append(h('div', { class: 'tbl' }, table([
+        { label: '차수', render: x => x.c.name }, { label: '등록일', render: x => new Date(x.c.at).toLocaleDateString('ko-KR') }, { label: '대상', render: x => `${x.c.baseName} → ${x.c.targetName}` },
+        { label: '증감 금액', num: true, render: x => sgn(x.c.totals.da), cls: x => x.c.totals.da > 0.5 ? 'bad' : '' }, { label: '승인 누계 증감', num: true, render: x => x.s0 === '승인' ? sgn(x.cum) : h('span', { class: 'note' }, '(미반영)') },
+        { label: '사유', render: x => h('span', { class: 'note' }, x.c.note || '') },
+        { label: '승인', render: x => approvalCell(x.c, () => { ctx.touch('meta'); render(); }, `${x.c.name} 승인 상태`) },
+        { label: '', render: x => h('div', { class: 'row', style: { gap: '4px' } }, h('button', { class: 'btn sm', onclick: () => exportOrderXLSX(x.c, base, led) }, '엑셀'),
+          h('button', { class: 'btn sm', onclick: async () => { if (!await confirmBox('설계변경 삭제', `${esc(x.c.name)}을(를) 삭제합니다.`, '삭제', true)) return; P.changeOrders = P.changeOrders.filter(y => y !== x.c); ctx.touch('meta'); render(); } }, '삭제')) },
+      ], led)));
+      w.append(h('div', { class: 'note', style: { marginTop: '6px' } }, '승인 상태가 "승인"인 차수만 변경 계약금액에 누계합니다. 금액은 등록 시점의 단가로 고정됩니다.'));
     }
+  }
+  const sanit = (s) => s.replace(/[\\/:*?"<>|]/g, '_');
+  const itemRows = (items) => [['코드', '공종', '단위', '단가', '당초 수량', '변경 수량', '증감 수량', '당초 금액', '변경 금액', '증감 금액'],
+    ...items.map(x => [x.code, x.name, x.unit, x.price, +x.q0.toFixed(3), +x.q1.toFixed(3), +x.dq.toFixed(3), Math.round(x.q0 * x.price), Math.round(x.q1 * x.price), Math.round(x.da)])];
+  const aggRows = (rows) => [['구분', '건수', '증액', '감액', '증감 금액'], ...(rows || []).map(g => [g.k, g.n, Math.round(g.add), Math.round(g.del), Math.round(g.da)])];
+  async function exportChangeXLSX(D, a, b, tot) {
+    try {
+      const blob = await writeBook([
+        { name: '증감대비표', widths: [8, 26, 6, 12, 12, 12, 12, 14, 14, 14], rows: [[`${P.name} 설계변경 증감 대비표`], [`${a} → ${b}`, '', '', `작성 ${new Date().toLocaleDateString('ko-KR')}`], [], ...itemRows(D.items), ['합계', '', '', '', '', '', '', Math.round(tot.a0), Math.round(tot.a1), Math.round(tot.da)]] },
+        { name: '공종별', widths: [16, 8, 14, 14, 14], rows: aggRows(D.byDisc) },
+        { name: '층별', widths: [16, 8, 14, 14, 14], rows: aggRows(D.byLevel) },
+        { name: '부재별 근거', widths: [6, 24, 8, 30, 6, 12, 12, 12, 14], rows: [['구분', '도면', '층', '객체', '코드', '당초', '변경', '증감', '증감 금액'], ...D.els.map(x => [{ added: '추가', changed: '변경', removed: '삭제' }[x.st], x.r.sheet.name, x.r.level.name, (x.r.el.tag ? x.r.el.tag + ' · ' : '') + elName(x.r.el), x.code, +x.q0.toFixed(3), +x.q1.toFixed(3), +x.dq.toFixed(3), Math.round(x.da)])] },
+      ]);
+      saveFile(sanit(`${P.name}_설계변경_${a}-${b}.xlsx`), blob);
+    } catch (e) { toast('엑셀 만들기 실패: ' + e.message, 'err'); }
+  }
+  async function exportOrderXLSX(c, base, led) {
+    const a = c.approval || {}; const me = led.find(x => x.c === c);
+    const t = c.totals; try {
+      const blob = await writeBook([
+        { name: '갑지', widths: [20, 50], rows: [[`${P.name} ${c.name} 설계변경 내역서`], [], ['변경 차수', c.name], ['대상 Rev', `${c.baseName} → ${c.targetName}`], ['등록일', new Date(c.at).toLocaleDateString('ko-KR')], ['변경 사유', c.note || ''],
+          ['당초 금액', Math.round(t.a0)], ['변경 금액', Math.round(t.a1)], ['증감 금액', Math.round(t.da)], ['증감률(%)', t.a0 ? +(t.da / t.a0 * 100).toFixed(2) : ''],
+          ['객체 변경', c.diffCount ? `추가 ${c.diffCount.added} · 변경 ${c.diffCount.changed} · 삭제 ${c.diffCount.removed}` : ''],
+          [], ['당초 계약금액', Math.round(base)], ['승인 누계 증감(본 차수까지)', a.status === '승인' ? Math.round(me.cum) : '(미승인 — 미반영)'], ['변경 계약금액', a.status === '승인' ? Math.round(base + me.cum) : ''],
+          [], ['승인 상태', a.status || '작성'], ['승인자', a.by || ''], ['승인일', a.date || ''], ['의견', a.note || ''],
+          [], ['승인 이력'], ...(a.log || []).map(l => [new Date(l.at).toLocaleString('ko-KR'), `${l.status} ${l.by || ''} ${l.date || ''} ${l.note || ''}`.trim()])] },
+        { name: '증감내역', widths: [8, 26, 6, 12, 12, 12, 12, 14, 14, 14], rows: [...itemRows(c.items), ['합계', '', '', '', '', '', '', Math.round(t.a0), Math.round(t.a1), Math.round(t.da)]] },
+        ...(c.byDisc ? [{ name: '공종별', widths: [16, 8, 14, 14, 14], rows: aggRows(c.byDisc) }, { name: '층별', widths: [16, 8, 14, 14, 14], rows: aggRows(c.byLevel) }] : []),
+      ]);
+      saveFile(sanit(`${P.name}_${c.name}_설계변경내역서.xlsx`), blob);
+    } catch (e) { toast('엑셀 만들기 실패: ' + e.message, 'err'); }
   }
   function exportChange(D, a, b, tot) {
     const sgn = (v, d = 0) => (v > 0 ? '+' : '') + fmt(v, d);
     const tr = D.items.map(x => `<tr><td>${esc(x.code)}</td><td>${esc(x.name)}</td><td>${esc(x.unit)}</td><td class=n>${fmt0(x.price)}</td><td class=n>${fmt(x.q0, 3)}</td><td class=n>${fmt(x.q1, 3)}</td><td class=n>${sgn(x.dq, 3)}</td><td class=n>${fmt0(x.a0)}</td><td class=n>${fmt0(x.a1)}</td><td class=n style="color:${x.da > 0 ? '#b42318' : x.da < 0 ? '#1e7a4f' : '#111'}">${sgn(x.da)}</td></tr>`).join('');
     const er = D.els.slice(0, 300).map(x => `<tr><td>${{ added: '추가', changed: '변경', removed: '삭제' }[x.st]}</td><td>${esc(x.r.sheet.name)}</td><td>${esc((x.r.el.tag || '') + ' ' + elName(x.r.el))}</td><td>${x.code}</td><td class=n>${sgn(x.dq, 3)}</td><td class=n>${sgn(x.da)}</td></tr>`).join('');
-    saveFile(`${P.name}_설계변경내역서_${a}-${b}.html`.replace(/[\\/:*?"<>|]/g, '_'), `<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>설계변경 내역서</title><style>body{font-family:'Malgun Gothic',sans-serif;margin:24px}table{border-collapse:collapse;width:100%;font-size:12px;margin-bottom:18px}td,th{border:1px solid #999;padding:4px 6px}th{background:#eef}td.n{text-align:right}</style></head><body><h1 style="font-size:20px">${esc(P.name)} 설계변경 내역서</h1><p>${esc(a)} → ${esc(b)} · 작성 ${new Date().toLocaleDateString('ko-KR')} · 증감 ${sgn(tot.da)}원 (${tot.a0 ? sgn(tot.da / tot.a0 * 100, 2) : '-'}%)</p><table><tr><th>코드</th><th>공종</th><th>단위</th><th>단가</th><th>당초 수량</th><th>변경 수량</th><th>증감</th><th>당초 금액</th><th>변경 금액</th><th>증감 금액</th></tr>${tr}<tr><th colspan=7>합계</th><th>${fmt0(tot.a0)}</th><th>${fmt0(tot.a1)}</th><th>${sgn(tot.da)}</th></tr></table><h2 style="font-size:15px">부재별 증감 근거</h2><table><tr><th>구분</th><th>도면</th><th>객체</th><th>코드</th><th>증감 수량</th><th>증감 금액</th></tr>${er}</table><p style="font-size:11px;color:#666">빌더 모델 물량 기준. 단가는 프로젝트 내역 단가 적용.</p></body></html>`);
+    saveFile(`${P.name}_설계변경내역서_${a}-${b}.html`.replace(/[\\/:*?"<>|]/g, '_'), `<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>설계변경 내역서</title><style>body{font-family:'Malgun Gothic',sans-serif;margin:24px}table{border-collapse:collapse;width:100%;font-size:12px;margin-bottom:18px}td,th{border:1px solid #999;padding:4px 6px}th{background:#eef}td.n{text-align:right}</style></head><body><h1 style="font-size:20px">${esc(P.name)} 설계변경 내역서</h1><p>${esc(a)} → ${esc(b)} · 작성 ${new Date().toLocaleDateString('ko-KR')} · 증감 ${sgn(tot.da)}원 (${tot.a0 ? sgn(tot.da / tot.a0 * 100, 2) : '-'}%)</p><table><tr><th>코드</th><th>공종</th><th>단위</th><th>단가</th><th>당초 수량</th><th>변경 수량</th><th>증감</th><th>당초 금액</th><th>변경 금액</th><th>증감 금액</th></tr>${tr}<tr><th colspan=7>합계</th><th>${fmt0(tot.a0)}</th><th>${fmt0(tot.a1)}</th><th>${sgn(tot.da)}</th></tr></table>${['공종별', '층별'].map((t, i) => `<h2 style="font-size:15px">${t} 증감</h2><table><tr><th>구분</th><th>건수</th><th>증액</th><th>감액</th><th>증감 금액</th></tr>${(i ? D.byLevel : D.byDisc).map(g => `<tr><td>${esc(g.k)}</td><td class=n>${g.n}</td><td class=n>${g.add ? '+' + fmt0(g.add) : ''}</td><td class=n>${g.del ? fmt0(g.del) : ''}</td><td class=n>${sgn(g.da)}</td></tr>`).join('')}</table>`).join('')}<h2 style="font-size:15px">부재별 증감 근거</h2><table><tr><th>구분</th><th>도면</th><th>객체</th><th>코드</th><th>증감 수량</th><th>증감 금액</th></tr>${er}</table><p style="font-size:11px;color:#666">빌더 모델 물량 기준. 단가는 프로젝트 내역 단가 적용.</p></body></html>`);
   }
 
   // ---------- 내역 정합: 물량은 있는데 내역(P.boq)에 없거나 단가 0인 코드 ----------
