@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { h, toast, dialog, saveFile, table } from '../js/ui.js';
 import { MATS, DISC, elName, levelOf } from '../js/model.js';
-import { buildTasks, schedule, stateAt, progressAt, recoveryOptions, toD, toS, wdOf, CLIMATE, TRADES, elBoxes } from '../js/csim.js';
+import { buildTasks, schedule, stateAt, progressAt, amountAt, recoveryOptions, toD, toS, wdOf, CLIMATE, TRADES, elBoxes } from '../js/csim.js';
 
 const COL = { steel: 0x5b8fd6, rebar: 0xd9473f, embed: 0xff9b2f, frame: 0xc9c3b4, form: 0x9a6b3f, pouring: 0xf2e08a, poured: 0x9aa6b2, curing: 0x8fb2c8, stripped: 0xbdbdb6, clad: 0xd9cdb4, wp: 0x3d7a58, coping: 0xbdbdb6, done: 0xc8c6c0 };
 const LABEL = { steel: '철골', rebar: '철근 배근', embed: '매립(전선관·접지)', frame: '틀·프레임', form: '거푸집', pouring: '타설 중', poured: '타설 완료', curing: '양생', stripped: '탈형', clad: '외장 바탕', wp: '방수', coping: '두겁석', done: '완료' };
@@ -137,7 +137,7 @@ export function mount(root, ctx) {
   function refresh() {
     if (!S) return; const D = S.s0 + day; st = stateAt(S, G, D); const total = S.fin - S.s0 + 1; slider.max = total + 2; slider.value = day;
     const i = st.info; const base = C.baseline ? toD(C.baseline.fin) : S.fin;
-    dateL.textContent = `${toS(D)} (${wdOf(D)}) · D+${day}`; info.textContent = `${i.off ? '휴무' : i.rain ? '☔ 우천(외부 작업 중지)' : `☀ ${i.temp}℃`} · 공정률 ${progressAt(S, D).toFixed(1)}% · 준공 ${toS(S.fin)}${S.fin !== base ? ` (기준 대비 ${S.fin > base ? '+' : ''}${S.fin - base}일)` : ''}`;
+    dateL.textContent = `${toS(D)} (${wdOf(D)}) · D+${day}`; info.textContent = `${i.off ? '휴무' : i.rain ? '☔ 우천(외부 작업 중지)' : `☀ ${i.temp}℃`} · 공정률 ${progressAt(S, D).toFixed(1)}% (기성 ${(amountAt(S, D).done / 1e6).toFixed(0)}/${(amountAt(S, D).tot / 1e6).toFixed(0)}백만원) · 준공 ${toS(S.fin)}${S.fin !== base ? ` (기준 대비 ${S.fin > base ? '+' : ''}${S.fin - base}일)` : ''}`;
     if (!jump.options.length || jump.dataset.n !== String(S.T.length)) { jump.innerHTML = ''; jump.dataset.n = S.T.length; jump.append(h('option', { value: '' }, '주요 시점으로 이동…'), ...['pre.mob', 'ew.exc', 'fd.pour', 'eq.tc.up', 'ms.topout', 'rf.wp', 'rf.coping', 'ex.plant', 'ms.done'].filter(id => S.R.get(id)).map(id => h('option', { value: id }, `${toS(S.R.get(id).es)} ${S.byId.get(id).name}`))); }
     paint3d(); renderSide(); if (sel) showPop(); renderLegend();
   }
