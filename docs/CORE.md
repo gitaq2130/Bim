@@ -1,4 +1,4 @@
-# 빌더 코어 규격 (Core v1.1.0)
+# 빌더 코어 규격 (Core v1.2.0)
 
 모든 툴이 공유하는 계약입니다. **이 문서와 코어 파일은 허브·코어 트랙만 수정합니다.**
 툴 트랙은 이 규격을 읽기만 하고, 바꿔야 하면 아래 "코어 변경 요청" 절차를 따릅니다.
@@ -16,9 +16,19 @@
 ## 2. 툴 등록 (`app/js/app.js` → `TOOLS`)
 
 ```js
-{ id, name, full, color, desc, load: () => import('../tools/<id>.js') }
+{ id, phase, name, full, color, desc, load: () => import('../tools/<id>.js') }
 ```
-툴 추가·삭제·순서 변경은 코어 변경입니다.
+- `phase`(1.2.0): 빌딩 생애주기 단계 — `PHASES` 순서대로 상단 탭(단계 구분선)과 허브 카드(단계별 묶음)가 그려집니다.
+
+| 단계 | id | 툴 |
+|---|---|---|
+| 1. 기획·대지 | plan | 법규(code), 토목(civil) |
+| 2. 설계 | design | 작도(cad), 3D(view3d), 구조(struct), MEP(mep), 실내(interior), 조경(landscape) |
+| 3. 설계검토 | review | 간섭(clash), 정합(check) |
+| 4. 적산·공정 | est | 물량(qto), 공정(sched) |
+| 5. 시공·관리 | build | 현장(site), 일보(daily), 기성(bill), 이슈(issue) |
+
+툴 추가·삭제·순서·단계 변경은 코어 변경입니다.
 
 ## 3. 툴 모듈 인터페이스
 
@@ -74,6 +84,8 @@ export function mount(root, ctx) {
 | `mep {systems[], calc{}}` | MEP 계통 정의·계산 결과 (덕트 사이즈·전기 부하·헤드 배치) | mep |
 | `interior {finishes{}, lighting{uf,mf}}` | 마감 기준·조명 계산 조건 | interior |
 | `issues[]`, `code` | 이슈·RFI, 법규 검토 | admin |
+| `civil {pts[[x,y,z]], mode, pad, cell, I, slope, last}` (1.2.0) | 측점(mm, EL m)·정지 계획·강우강도·결과 요약 | civil |
+| `landscape {areas[], plan[], auto, last}` (1.2.0) | 그린 녹지(지상·옥상)·식재 계획·결과 요약 | landscape |
 
 - 다른 트랙 소유 키는 **읽기만** 합니다.
 - 새 최상위 키 추가, 기존 키의 구조 변경은 코어 변경입니다 (`app.js`의 `migrate()` 갱신 필요).
@@ -92,9 +104,9 @@ export function mount(root, ctx) {
 | light (1.1.0) | I | point | interior | `watt, lm, z, circuit` — mep가 watt를 읽어 전기 부하 계산 |
 | ceiling (1.1.0) | I | poly | interior | `z, t, fin` |
 | room (1.1.0) | I | poly | interior | `name, use, lux, h` — 공간 정의라 3D 박스·간섭 대상 아님 |
-| furn | A | point | interior | |
+| furn | A | point | interior | 조경 툴이 L 시트에 `tree`·`shrub`(`landscape:true, sp, cnt`)을 배치 |
 
-- 공종(`DISC`): A 건축, S 구조, M 기계, E 전기, P 배관(위생), F 소방(1.1.0), I 인테리어(1.1.0). 재질은 `MATS`.
+- 공종(`DISC`): A 건축, S 구조, M 기계, E 전기, P 배관(위생), F 소방(1.1.0), I 인테리어(1.1.0), C 토목(1.2.0), L 조경(1.2.0). 재질은 `MATS`.
 - 1.1.0 객체는 `elBoxes`·`elOutline`·`elName`·`qtyOf`(SPK·PNL·LGT·CLG 내역 코드)를 지원합니다. 따라서 물량·간섭에는 자동으로 포함됩니다. 작도 2D 표시와 3D 표시는 각각 cad·view3d 트랙의 후속 작업입니다.
 - 객체 종류·기본 속성 추가는 코어 변경입니다.
 
@@ -111,6 +123,7 @@ export function mount(root, ctx) {
 | `js/blocks.js`, `js/icons.js` | 블록·아이콘 정의 |
 | `js/dxf.js`, `js/ifc.js`, `js/ifcout.js`, `js/excel.js`, `js/zip.js` | 입출력 |
 | `js/house.js`, `js/tower.js` | 샘플 프로젝트 |
+| `js/sitegeo.js` (1.2.0) | 대지경계(SITE 레이어 닫힌 폴리선)·건물 외곽·포장, 들로네 TIN·등고선 — 토목·조경·법규 공용 |
 
 ### 툴 간 공개 함수 (바꾸면 사용하는 트랙에 영향)
 | 제공 | 함수 | 사용처 |
@@ -124,6 +137,11 @@ export function mount(root, ctx) {
 | interior `js/furn.js` | `FURN`, `FURN_CATS`, `furnName`, `furnPlan`, `furnXf` | model(core), cad, ifcout |
 | interior `tools/furn3d.js` | 가구 3D 형상 | view3d |
 | interior `tools/interior.js` | `roomLighting`, `LUX_BY_USE` | mep(조명 부하) |
+| civil `tools/civil.js` | `civilCalc(P)` | — |
+| landscape `tools/landscape.js` | `SPECIES`, `landCalc`, `autoPlant`, `applyToModel`, `legalRatio` | — |
+
+### 툴 간 데이터 연동 (1.2.0)
+- 토목 우수 계산은 `P.landscape.last.green`(조경 녹지 면적)이 있으면 그 값을 녹지로 씁니다.
 
 공개 함수의 이름·인자·반환을 바꾸려면 코어 변경 요청으로 등록합니다.
 
