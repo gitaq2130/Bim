@@ -6,7 +6,7 @@ import { esc } from '../js/util.js';
 import { runStructure, settingsOf, seismicParams, USES, SYSTEMS, GRADES, memberForces, combine, DEFAULTS } from '../js/structmodel.js';
 import { designMember, designFoundations, designConnections, constructionChecks } from '../js/kds.js';
 import { FIELDS as RB_FIELDS, specOf } from '../js/rebar.js';
-import { simUI, slabUI, shortUI, csUI, pushUI, heat } from './structsim.js';
+import { simUI, slabUI, shortUI, csUI, pushUI, heat, memberCells, memberSVG, drawingSet, drawingHTML, drawingDXF } from './structsim.js';
 import { schemeUI } from './structscheme.js';
 import { autoRun, baseSettings, REGIONS, USE_INFO, SITE_DEFAULT } from '../js/structauto.js';
 
@@ -53,7 +53,7 @@ export function mount(root, ctx) {
       st.view === 'mode' ? sel(C.res.info.modal.modes.map((m, i) => [i, `${i + 1}차 T=${m.T.toFixed(3)}s`]), st.mode, v => { st.mode = +v; draw(); }) : '',
       sel([['all', '전체 층'], ...C.res.M.lv.map(l => [l.id, l.name])], st.floor, v => { st.floor = v; draw(); }),
       h('label', { class: 'row', style: { gap: '4px' } }, h('span', { class: 'note' }, '배율'), h('input', { type: 'range', min: 0.2, max: 5, step: 0.1, value: st.scale, style: { width: '90px' }, oninput: e => { st.scale = +e.target.value; draw(); } })),
-      h('span', { style: { flex: 1 } }), h('button', { class: 'btn', onclick: autoRebar, title: '필요 철근으로 배근(일람표)을 만들고 실배근으로 다시 검토' }, '자동 배근'), h('button', { class: 'btn', onclick: editCombos }, '하중조합'), h('button', { class: 'btn', onclick: exportXLSX }, 'Excel'), h('button', { class: 'btn', onclick: exportHTML }, '구조계산서'));
+      h('span', { style: { flex: 1 } }), h('button', { class: 'btn', onclick: autoRebar, title: '필요 철근으로 배근(일람표)을 만들고 실배근으로 다시 검토' }, '자동 배근'), h('button', { class: 'btn', onclick: editCombos }, '하중조합'), h('button', { class: 'btn', onclick: exportXLSX }, 'Excel'), h('button', { class: 'btn', onclick: exportHTML }, '구조계산서'), h('button', { class: 'btn', onclick: exportDwg, title: '구조 일반사항·일람표·배근 상세·철골 접합 상세 (A3 도면 시트 또는 DXF)' }, '시공도면'));
   }
   // ---------- 현장·용도 조건 (사용자 입력) ----------
   async function settings() {
@@ -293,6 +293,7 @@ export function mount(root, ctx) {
       h('button', { class: 'btn sm', onclick: () => { ctx.state.hi = { ids: [el.id], label: `구조 ${d.ratio.toFixed(2)} ${d.gov}` }; ctx.go('view3d'); } }, '3D에서 보기'),
       d.ratio > 1 ? h('button', { class: 'btn sm', onclick: () => raiseIssue(d, m) }, '이슈 등록') : null));
     const kind = m.kind === 'wall' ? 'wall' : m.kind; if (m.mat !== 'STEEL' && RB_FIELDS[kind]) side.append(h('div', { class: 'row', style: { gap: '6px', marginTop: '8px' } }, h('button', { class: 'btn sm primary', onclick: () => editRebar(st.sel) }, d.provided ? '배근 수정' : '배근 입력'), d.auto ? h('button', { class: 'btn sm', onclick: () => applyAuto([st.sel]) }, '필요 철근으로 배근') : null));
+    const cells = memberCells(C.res, C.D, C.J || [], C.S, st.sel); if (cells.length) { const box = h('div'); box.innerHTML = memberSVG(cells); side.append(h('h4', { style: { margin: '12px 0 4px' } }, '단면·배근도'), box, h('div', { class: 'row', style: { gap: '6px', margin: '4px 0 8px' } }, h('button', { class: 'btn sm', onclick: () => saveFile(`${(m.el.tag || d.type).replace(/[\\/:*?"<>|]/g, '_')}_상세.html`, drawingHTML(P, [{ name: `${m.r.level.name} ${m.el.tag || d.type} 상세`, cells, cols: 1, rows: 2 }])) }, '도면 시트'), h('button', { class: 'btn sm', onclick: () => saveFile(`${(m.el.tag || d.type).replace(/[\\/:*?"<>|]/g, '_')}_상세.dxf`, drawingDXF([{ name: `${m.r.level.name} ${m.el.tag || d.type}`, cells, cols: 2, rows: 1 }])) }, 'DXF'))); }
     const xs = (C.X || []).filter(x => x.mi === st.sel && x.lv !== '확인'); if (xs.length) side.append(h('h4', { style: { margin: '12px 0 4px' } }, '시공 체크'), ...xs.map(siteCard));
     const js = (C.J || []).filter(j => j.mi === st.sel); for (const j of js) side.append(h('h4', { style: { margin: '12px 0 4px' } }, `접합부 — ${j.end ? '끝단' : '시작단'} · ${j.type} `, pill(j.ratio <= 1, j.ratio.toFixed(2))), connTable(j));
     if (m.kind === 'beam') side.append(h('div', { class: 'row', style: { gap: '6px', marginTop: '8px', alignItems: 'center' } }, h('span', { class: 'note' }, '단부 접합'), sel([['', '강접 (모멘트)'], ['both', '양단 핀'], ['i', '시작단 핀'], ['j', '끝단 핀']], el.rel || '', v => { if (v) el.rel = v; else delete el.rel; ctx.touch(m.r.sheet.id); toast('단부 조건을 바꿨습니다 — 다시 해석하세요'); })));
@@ -375,6 +376,11 @@ export function mount(root, ctx) {
     const ng = F.filter(x => x.ratio > 1); if (ng.some(x => x.rq > 1)) side.append(h('div', { class: 'note', style: { marginTop: '8px', color: '#ff9f1c' } }, '지내력 초과 — 기초 확대, 말뚝기초 또는 지반 개량을 검토하세요.'));
   }
   // ---------- 출력 ----------
+  async function exportDwg() {
+    const v = await dialog({ title: '시공도면', body: '<div class="note" style="line-height:1.6">해석·설계 결과(실배근, 없으면 자동 제안 배근)로 구조 일반사항(재료·피복·정착·이음 길이표), 기둥·보·벽 일람표, 보·기둥 배근 상세(정착·이음·늑근 구간), 철골 접합 상세를 만듭니다. 같은 부호는 검토비가 가장 큰 부재 기준입니다.</div>', fields: [{ key: 'fmt', label: '형식', type: 'select', options: [['html', 'A3 도면 시트 (인쇄·PDF 저장)'], ['dxf', 'DXF (CAD, 도면층 S-CONC·S-REBAR·S-STEEL·S-DIM·S-TEXT)']], value: 'html' }, { key: 'scope', label: '범위', type: 'select', options: [['all', '전체'], ['list', '일반사항·일람표'], ['detail', '배근·접합 상세']], value: 'all' }], ok: '만들기' });
+    if (!v) return; const sh = drawingSet(C.res, C.D, C.J || [], C.S, { scope: v.scope }); const nm = P.name.replace(/[\\/:*?"<>|]/g, '_');
+    if (v.fmt === 'dxf') saveFile(`${nm}_구조시공도면.dxf`, drawingDXF(sh)); else saveFile(`${nm}_구조시공도면.html`, drawingHTML(P, sh)); toast(`도면 ${sh.reduce((a, x) => a + Math.ceil(x.cells.length / (x.cols * x.rows)), 0)}장`, 'ok');
+  }
   async function exportXLSX() {
     const { writeBook } = await import('../js/excel.js'); const M = C.res.M.members; const sp = C.res.info.seis;
     const mem = [['층', '부재', '종류', '단면', '길이(m)', '검토비', '판정', '지배', '조합', '필요 철근비(%)', '상세'], ...C.D.map(d => { const m = M[d.mi]; return [m.r.level.name, m.el.tag || '', d.type, d.rows[0][1], +(m.L / 1000).toFixed(2), +d.ratio.toFixed(3), d.ratio <= 1 ? 'OK' : 'NG', d.gov, d.combo || '', d.rhoReq != null && isFinite(d.rhoReq) ? +(d.rhoReq * 100).toFixed(2) : '', d.rows.slice(1).map(r => `${r[0]} ${r[1]}`).join(' / ')]; })];

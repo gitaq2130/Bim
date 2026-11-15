@@ -387,7 +387,7 @@ export function designConnections(res, S) {
       } else if (sp.kind === 'RC 벽' || sp.kind === 'RC 기둥' || sp.kind === 'RC 보') { const nv = Math.ceil(V / (0.65 * 283 * 400)); rows.push(['매입 철판', `전단 스터드 φ19 ${Math.max(4, nv)}개 · 철판 PL-16×${Math.round(tab.hp + 80)}`]); notes.push('콘크리트 파괴(KDS 14 20 54) 별도 검토'); items.push(`매입판+스터드 ${Math.max(4, nv)}`); }
       if (sp.rel && Mu > 1e6) notes.push('모델은 핀 — 해석 단부 모멘트 무시');
       if (notes.length) rows.push(['비고', notes.join(' · ')]);
-      out.push({ mi, end, n: sp.n, kind: sp.kind, type, V, Mu: rigid ? Mu : 0, N, ratio, rows, items, tag: m.el.tag || '', level: m.r.level.name });
+      out.push({ mi, end, n: sp.n, kind: sp.kind, type, V, Mu: rigid ? Mu : 0, N, ratio, rows, items, tag: m.el.tag || '', level: m.r.level.name, tab: { bk: tab.bk, d: tab.B.d, n: tab.n, cols: tab.cols, p: tab.B.p, e: tab.B.e, tp: tab.tp, hp: tab.hp, s: tab.s, ecc: tab.e }, rigid: !!type.startsWith('강접'), strong: sp.strong, sec: m.el.sec });
     }
   }
   // 패널존 (강축 강접 보가 모이는 철골·SRC 기둥 절점)
@@ -506,4 +506,26 @@ export function constructionChecks(res, D, S) {
   if (res.info.cs && R.cases.D0) { let mx = 0, at = 0; for (const f of res.story) { let a = 0, b = 0; N.forEach((n, i) => { if (n.z !== f.z || !n.vert) return; a = Math.min(a, R.cases.D.disp[i * 6 + 2]); b = Math.max(b, R.cases.D.disp[i * 6 + 2]); }); if (b - a > mx) { mx = b - a; at = f.z; } }
     if (mx > 10) add('경고', '레벨 보정', null, `층 내 수직부재 부등 축소 최대 ${mx.toFixed(0)} mm`, `시공단계 해석(고정하중) 기준, 높이 ${(at / 1000).toFixed(1)} m 층`, '기둥 축소량 화면의 층별 보정값으로 설치 레벨 상향(철골 기둥 제작 길이·거푸집 레벨)'); }
   const ord = { 위험: 0, 경고: 1, 확인: 2 }; return out.sort((a, b) => ord[a.lv] - ord[b.lv]);
+}
+
+// ---------- 도면용 정보 ----------
+// 부재 배근 (실배근 우선, 없으면 자동 제안)
+export function rebarOf(res, mi, d) {
+  const m = res.M.members[mi]; const sp = specOf(res.P, m.el); const a = d?.auto || {}; const src = sp ? '실배근' : '자동 제안';
+  if (m.kind === 'beam') return { top: sp?.top || a.top, bot: sp?.bot || a.bot, stir: sp?.stir || a.stir || 'D10@200', cover: sp?.cover || 40, src };
+  if (m.kind === 'column') return { main: sp?.main || a.main || (d?.rhoReq && isFinite(d.rhoReq) ? barsFor(d.rhoReq * m.by * m.hz, 40) : null), hoop: sp?.hoop || a.hoop || 'D10@150', cover: sp?.cover || 40, src };
+  if (m.kind === 'wall') return { v: sp?.v || a.v || 'D13@300', h: sp?.h || a.h || 'D13@300', layers: sp?.layers || a.layers || 2, cover: sp?.cover || 30, src };
+  return { src };
+}
+// 보 양단 지지 조건: [{kind:'기둥'|'벽'|'보'|'자유단', w(보 방향 지지 폭), cont(반대편 보 연속)}]
+export function beamEnds(res, mi) {
+  const { M, R } = res; const fr = frameOf(res); const m = M.members[mi]; const out = [];
+  for (const end of [0, 1]) {
+    const E = R.E[end ? m.segs[m.segs.length - 1] : m.segs[0]]; const n = end ? E.e.n2 : E.e.n1; const dir = E.R[0]; let cont = false, col = null, wall = null, beam = null;
+    for (const ej of fr.at.get(n) || []) { const e2 = R.E[ej]; const mm = M.members[e2.e.mem]; if (!mm || e2.e.mem === mi) continue; if (mm.kind === 'beam') { if (Math.abs(e2.R[0][0] * dir[0] + e2.R[0][1] * dir[1]) > 0.95) cont = true; else beam = mm; } if (mm.kind === 'column') col = { mm, C: e2 }; if (mm.kind === 'wall') wall = mm; }
+    if (col) { const zc = col.C.R[2]; const w = col.mm.mat === 'STEEL' ? col.mm.sh.h : Math.abs(dir[0] * zc[0] + dir[1] * zc[1]) >= 0.7 ? col.mm.hz : col.mm.by; out.push({ kind: '기둥', w, cont, sup: col.mm }); }
+    else if (wall || R.E.some(x => x.e.rigid && (x.e.n1 === n || x.e.n2 === n))) out.push({ kind: '벽', w: wall?.hz || 200, cont, sup: wall });
+    else if (beam) out.push({ kind: '보', w: beam.by, cont, sup: beam }); else out.push({ kind: '자유단', w: 0, cont });
+  }
+  return out;
 }

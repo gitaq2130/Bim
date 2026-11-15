@@ -5,7 +5,8 @@ import { settingsOf, USES, constructionStages } from '../js/structmodel.js';
 import { stationForces } from '../js/fem.js';
 import { windField, caseField, groundMotion, timeHistory, longTermField, columnShortening, xiOf, ensureModes, pushover } from '../js/simcore.js';
 import { analyzeSlab } from '../js/plate.js';
-import { specOf, FIELDS as RB_FIELDS } from '../js/rebar.js';
+import { specOf, FIELDS as RB_FIELDS, parseN, parseS } from '../js/rebar.js';
+import { rebarOf, beamEnds, devLen } from '../js/kds.js';
 
 export const heat = (t) => { t = Math.max(0, Math.min(1, t)); const stops = [[0, [0.19, 0.42, 0.85]], [0.3, [0.2, 0.75, 0.85]], [0.55, [0.45, 0.85, 0.35]], [0.75, [0.98, 0.82, 0.25]], [1, [0.95, 0.25, 0.22]]]; for (let i = 1; i < stops.length; i++) if (t <= stops[i][0]) { const [a, ca] = stops[i - 1], [b, cb] = stops[i]; const u = (t - a) / (b - a); return ca.map((v, k) => v + (cb[k] - v) * u); } return stops[4][1]; };
 const kN = (v) => (v / 1e3).toFixed(0);
@@ -303,4 +304,203 @@ export function pushUI(api) {
   }
   render(); if (st.out) show();
   return { leave() { if (pts3) { api.G.remove(pts3); pts3.geometry.dispose(); pts3.material.dispose(); } } };
+}
+
+// =====================================================================
+// 단면·배근도 · 시공도면 — 도면 요소(선·원·문자·치수)를 한 번 만들고 SVG(화면·A3 시트)와 DXF로 출력
+// 좌표: 모델 mm (y 위쪽). 문자 높이·오프셋은 출력 용지 mm(ph, ox, oy)로 지정해 축척과 무관하게 읽히게 한다.
+const DIA = (s) => { const p = parseN(s) || parseS(s); return p ? +p.d.slice(1) : 0; };
+function Pr() {
+  const a = [];
+  const o = { a,
+    L(x1, y1, x2, y2, ly = 'S-CONC') { a.push({ t: 'L', x1, y1, x2, y2, ly }); return o; },
+    R(x, y, w, h, ly = 'S-CONC') { o.L(x, y, x + w, y, ly).L(x + w, y, x + w, y + h, ly).L(x + w, y + h, x, y + h, ly).L(x, y + h, x, y, ly); return o; },
+    P(pts, ly = 'S-CONC', close = false) { for (let i = 0; i < pts.length - 1; i++) o.L(...pts[i], ...pts[i + 1], ly); if (close) o.L(...pts[pts.length - 1], ...pts[0], ly); return o; },
+    C(x, y, r, ly = 'S-REBAR', fill = true) { a.push({ t: 'C', x, y, r, ly, fill }); return o; },
+    T(x, y, s, { ph = 2.5, ox = 0, oy = 0, al = 'l', ly = 'S-TEXT', b = false } = {}) { a.push({ t: 'T', x, y, s: String(s), ph, ox, oy, al, ly, b }); return o; },
+    D(x1, y1, x2, y2, off, txt) { a.push({ t: 'D', x1, y1, x2, y2, off, txt: txt ?? String(Math.round(Math.hypot(x2 - x1, y2 - y1))), ly: 'S-DIM' }); return o; },
+    Q(x, y, ox, oy, txt) { a.push({ t: 'Q', x, y, ox, oy, txt, ly: 'S-TEXT' }); return o; },
+    Z(x1, y1, x2, y2) { const mx = (x1 + x2) / 2, my = (y1 + y2) / 2, dx = x2 - x1, dy = y2 - y1, l = Math.hypot(dx, dy) || 1, nx = -dy / l * 60, ny = dx / l * 60; o.P([[x1, y1], [mx - dx * 0.05, my - dy * 0.05], [mx + nx, my + ny], [mx - nx, my - ny], [mx + dx * 0.05, my + dy * 0.05], [x2, y2]], 'S-CONC'); return o; }, // 절단선
+  };
+  return o;
+}
+function bbox(a) { let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; const u = (x, y) => { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); };
+  for (const e of a) { if (e.t === 'L' || e.t === 'D') { u(e.x1, e.y1); u(e.x2, e.y2); } else if (e.t === 'C') { u(e.x - e.r, e.y - e.r); u(e.x + e.r, e.y + e.r); } else if (e.t === 'T' || e.t === 'Q') u(e.x, e.y); } return isFinite(x0) ? { x0, y0, x1, y1, w: x1 - x0 || 1, h: y1 - y0 || 1 } : { x0: 0, y0: 0, x1: 1, y1: 1, w: 1, h: 1 }; }
+const SCALES = [1, 2, 5, 10, 15, 20, 25, 30, 40, 50, 60, 75, 100, 150, 200, 250, 300, 500];
+// 출력기: mode 'svg' (용지 mm, 축척 s=1/S) 또는 'dxf' (모델 mm)
+function emit(cell, out, X, Y, s) {
+  const LC = { 'S-CONC': ['#222', 0.35], 'S-REBAR': ['#c8102e', 0.3], 'S-STEEL': ['#0057b8', 0.4], 'S-DIM': ['#555', 0.15], 'S-TEXT': ['#111', 0.15], 'S-WELD': ['#0a7d3b', 0.3] };
+  const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  for (const e of cell.pr.a) {
+    if (e.t === 'L') out.line(X(e.x1), Y(e.y1), X(e.x2), Y(e.y2), e.ly, LC[e.ly]);
+    else if (e.t === 'C') out.circle(X(e.x), Y(e.y), e.r * s, e.ly, LC[e.ly], e.fill);
+    else if (e.t === 'T') out.text(X(e.x) + e.ox, Y(e.y) - e.oy, e.s, e.ph, e.al, e.b);
+    else if (e.t === 'Q') { const tx = X(e.x) + e.ox, ty = Y(e.y) - e.oy; out.line(X(e.x), Y(e.y), tx, ty, 'S-TEXT', LC['S-DIM']); out.line(tx, ty, tx + (e.ox >= 0 ? 2 : -2), ty, 'S-TEXT', LC['S-DIM']); out.text(tx + (e.ox >= 0 ? 3 : -3), ty + 0.9, e.txt, 2.2, e.ox >= 0 ? 'l' : 'r'); }
+    else if (e.t === 'D') { const dx = e.x2 - e.x1, dy = e.y2 - e.y1, l = Math.hypot(dx, dy) || 1, ux = dx / l, uy = dy / l, nx = -uy, ny = ux; const o2 = e.off; // 용지 mm
+      const p1 = [X(e.x1), Y(e.y1)], p2 = [X(e.x2), Y(e.y2)]; const vx = nx * o2, vy = -ny * o2; const q1 = [p1[0] + vx, p1[1] + vy], q2 = [p2[0] + vx, p2[1] + vy]; const sg = Math.sign(o2) || 1;
+      out.line(p1[0] + nx * 0.8 * sg, p1[1] - ny * 0.8 * sg, q1[0] + nx * 1.2 * sg, q1[1] - ny * 1.2 * sg, 'S-DIM', LC['S-DIM']); out.line(p2[0] + nx * 0.8 * sg, p2[1] - ny * 0.8 * sg, q2[0] + nx * 1.2 * sg, q2[1] - ny * 1.2 * sg, 'S-DIM', LC['S-DIM']); out.line(...q1, ...q2, 'S-DIM', LC['S-DIM']);
+      for (const q of [q1, q2]) out.line(q[0] - 0.8 * (ux - nx), q[1] + 0.8 * (uy - ny), q[0] + 0.8 * (ux - nx), q[1] - 0.8 * (uy - ny), 'S-DIM', LC['S-DIM']);
+      const mx = (q1[0] + q2[0]) / 2 + nx * 1.4 * sg, my = (q1[1] + q2[1]) / 2 - ny * 1.4 * sg; out.text(mx, my + (Math.abs(ny) > 0.5 ? (sg > 0 ? 0 : 1.8) : 0.7), e.txt, 2.0, 'c', false, Math.abs(ux) < 0.5 ? -90 : 0); }
+  }
+}
+function svgOut() { const parts = []; const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  return { parts, line(x1, y1, x2, y2, ly, c) { parts.push(`<line x1="${x1.toFixed(2)}" y1="${y1.toFixed(2)}" x2="${x2.toFixed(2)}" y2="${y2.toFixed(2)}" stroke="${c[0]}" stroke-width="${c[1]}" stroke-linecap="round"/>`); },
+    circle(x, y, r, ly, c, fill) { parts.push(`<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="${Math.max(r, 0.35).toFixed(2)}" fill="${fill ? c[0] : 'none'}" stroke="${c[0]}" stroke-width="${c[1]}"/>`); },
+    text(x, y, s, ph, al, b, rot = 0) { parts.push(`<text x="${x.toFixed(2)}" y="${y.toFixed(2)}" font-size="${ph}" text-anchor="${al === 'c' ? 'middle' : al === 'r' ? 'end' : 'start'}"${b ? ' font-weight="700"' : ''}${rot ? ` transform="rotate(${rot} ${x.toFixed(2)} ${y.toFixed(2)})"` : ''}>${esc(s)}</text>`); } }; }
+function dxfOut() { const L = []; const u = (s) => String(s).replace(/[^\x20-\x7e]/g, ch => '\\U+' + ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0'));
+  return { L, line(x1, y1, x2, y2, ly) { L.push('0', 'LINE', '8', ly, '10', x1.toFixed(2), '20', (-y1).toFixed(2), '30', '0', '11', x2.toFixed(2), '21', (-y2).toFixed(2), '31', '0'); },
+    circle(x, y, r, ly) { L.push('0', 'CIRCLE', '8', ly, '10', x.toFixed(2), '20', (-y).toFixed(2), '30', '0', '40', r.toFixed(2)); },
+    text(x, y, s, ph, al, b, rot = 0) { const h = ph * this.k; const a = al === 'c' ? 1 : al === 'r' ? 2 : 0; L.push('0', 'TEXT', '8', 'S-TEXT', '10', x.toFixed(2), '20', (-y).toFixed(2), '30', '0', '40', h.toFixed(2), '1', u(s), '50', String(-rot), '72', String(a), '11', x.toFixed(2), '21', (-y).toFixed(2), '31', '0'); }, k: 1 }; }
+// 칸 하나를 용지 영역(px,py,pw,ph — mm)에 축척 맞춰 배치
+function placeCell(cell, out, px, py, pw, ph) {
+  const bb = bbox(cell.pr.a); const padL = cell.padL ?? 12, padR = cell.padR ?? 46, padT = 9, padB = 12; const sFit = Math.min((pw - padL - padR) / bb.w, (ph - padT - padB) / bb.h);
+  const S = cell.fixed ? 1 : SCALES.find(v => 1 / v <= sFit) || 500; const s = cell.fixed ? 1 : 1 / S;
+  const ox = cell.fixed ? px + padL : px + padL + ((pw - padL - padR) - bb.w * s) / 2, oy = cell.fixed ? py + padT + 4 : py + padT + ((ph - padT - padB) - bb.h * s) / 2;
+  const X = (x) => ox + (x - bb.x0) * s, Y = (y) => oy + (bb.y1 - y) * s;
+  if (cell.title) { out.text(px + 2, py + 5, cell.title, 3, 'l', true); if (!cell.fixed) out.text(px + pw - 2, py + 5, `S = 1/${S}`, 2.2, 'r'); }
+  emit(cell, out, X, Y, s); return S;
+}
+const A3 = { W: 420, H: 297 };
+function titleBlock(out, P, sheet, no, total) {
+  const x = A3.W - 10, y = A3.H - 10; out.line(10, 10, A3.W - 10, 10, 'S-TEXT', ['#111', 0.5]); out.line(A3.W - 10, 10, A3.W - 10, A3.H - 10, 'S-TEXT', ['#111', 0.5]); out.line(A3.W - 10, A3.H - 10, 10, A3.H - 10, 'S-TEXT', ['#111', 0.5]); out.line(10, A3.H - 10, 10, 10, 'S-TEXT', ['#111', 0.5]);
+  const bx = x - 150, by = y - 22; for (const [a, b, c, d] of [[bx, by, x, by], [bx, by, bx, y], [bx, by + 11, x, by + 11], [bx + 100, by, bx + 100, y]]) out.line(a, b, c, d, 'S-TEXT', ['#111', 0.3]);
+  out.text(bx + 3, by + 7, P.name, 3.2, 'l', true); out.text(bx + 3, by + 18, sheet, 3.4, 'l', true); out.text(bx + 103, by + 7, `S-${String(no).padStart(3, '0')} / ${total}`, 3, 'l', true); out.text(bx + 103, by + 18, `${new Date().toLocaleDateString('ko-KR')} · 빌더 구조`, 2.4, 'l');
+}
+// ---------- 부재별 도면 요소 ----------
+function beamSection(b, h, rb, title) {
+  const p = Pr(); const c = rb.cover || 40, dt = DIA(rb.stir) || 10; p.R(0, 0, b, h); p.R(c, c, b - 2 * c, h - 2 * c, 'S-REBAR'); p.L(c, h - c, c + 7 * dt, h - c - 7 * dt, 'S-REBAR').L(c + 6, h - c, c + 6 + 7 * dt, h - c - 7 * dt, 'S-REBAR');
+  const bars = (spec, top) => { const q = parseN(spec); if (!q) return null; const db = +q.d.slice(1); const sMin = Math.max(25, db, 33); const w = b - 2 * (c + dt) - db; const per = Math.max(2, Math.floor((w + sMin) / (db + sMin))); let rem = q.n, k = 0, y0 = top ? h - c - dt - db / 2 : c + dt + db / 2;
+    while (rem > 0) { const m = Math.min(rem, per); const y = y0 + (top ? -1 : 1) * k * (db + 25); for (let i = 0; i < m; i++) p.C(m === 1 ? b / 2 : c + dt + db / 2 + w * i / (m - 1), y, db / 2); rem -= m; k++; } return { y: y0, db, layers: k }; };
+  const t = bars(rb.top, true), bo = bars(rb.bot, false);
+  if (t) p.Q(b - c - dt - t.db / 2, t.y, 10, 5, `상부근 ${rb.top}${t.layers > 1 ? ` (${t.layers}단)` : ''}`); if (bo) p.Q(b - c - dt - bo.db / 2, bo.y, 10, -5, `하부근 ${rb.bot}${bo.layers > 1 ? ` (${bo.layers}단)` : ''}`); p.Q(b - c, h / 2, 10, 0, `늑근 ${rb.stir}`);
+  p.D(0, 0, b, 0, -5).D(0, 0, 0, h, 5); return { pr: p, title };
+}
+function columnSection(bx, hy, rb, title, sh) {
+  const p = Pr(); const c = rb.cover || 40, dt = DIA(rb.hoop) || 10; p.R(0, 0, bx, hy); p.R(c, c, bx - 2 * c, hy - 2 * c, 'S-REBAR'); p.L(c, hy - c, c + 7 * dt, hy - c - 7 * dt, 'S-REBAR');
+  const q = parseN(rb.main); if (q) { const db = +q.d.slice(1); const S = Math.max(4, Math.round((q.n + 4) / 2)); let nx = Math.min(S - 2, Math.max(2, Math.round(S * bx / (bx + hy)))); const ny = S - nx; const x0 = c + dt + db / 2, x1 = bx - x0, y0 = c + dt + db / 2, y1 = hy - y0;
+    for (let i = 0; i < nx; i++) { const x = x0 + (x1 - x0) * i / (nx - 1); p.C(x, y0, db / 2).C(x, y1, db / 2); if (i > 0 && i < nx - 1 && nx > 3 && i % 2 === 0) p.L(x, y0, x, y1, 'S-REBAR'); }
+    for (let j = 1; j < ny - 1; j++) { const y = y0 + (y1 - y0) * j / (ny - 1); p.C(x0, y, db / 2).C(x1, y, db / 2); if (ny > 3 && j % 2 === 0) p.L(x0, y, x1, y, 'S-REBAR'); }
+    p.Q(x1, y1, 10, 6, `주근 ${rb.main} (${nx}×${ny})`); }
+  p.Q(bx - c, hy / 2, 10, -2, `띠철근 ${rb.hoop}${q && (q.n > 8) ? ' + 보조띠철근' : ''}`);
+  if (sh) { const cx = bx / 2, cy = hy / 2; p.P([[cx - sh.b / 2, cy - sh.h / 2], [cx + sh.b / 2, cy - sh.h / 2], [cx + sh.b / 2, cy - sh.h / 2 + sh.tf], [cx + sh.tw / 2, cy - sh.h / 2 + sh.tf], [cx + sh.tw / 2, cy + sh.h / 2 - sh.tf], [cx + sh.b / 2, cy + sh.h / 2 - sh.tf], [cx + sh.b / 2, cy + sh.h / 2], [cx - sh.b / 2, cy + sh.h / 2], [cx - sh.b / 2, cy + sh.h / 2 - sh.tf], [cx - sh.tw / 2, cy + sh.h / 2 - sh.tf], [cx - sh.tw / 2, cy - sh.h / 2 + sh.tf], [cx - sh.b / 2, cy - sh.h / 2 + sh.tf]], 'S-STEEL', true); p.Q(cx + sh.b / 2, cy - sh.h / 2, 10, -10, `내장 철골 H-${sh.h}×${sh.b}×${sh.tw}×${sh.tf}`); }
+  p.D(0, 0, bx, 0, -5).D(0, 0, 0, hy, 5); return { pr: p, title };
+}
+function wallSection(L, t, rb, title) {
+  const p = Pr(); const c = rb.cover || 30; const Ls = Math.min(L, 1600); const v = parseS(rb.v), hh = parseS(rb.h); const dv = v ? +v.d.slice(1) : 13, dh = hh ? +hh.d.slice(1) : 13;
+  p.L(0, 0, Ls, 0).L(0, t, Ls, t); if (Ls < L) p.Z(Ls, -80, Ls, t + 80); p.L(0, 0, 0, t);
+  for (const y of rb.layers >= 2 ? [c + dh / 2, t - c - dh / 2] : [t / 2]) p.L(30, y, Ls - 30, y, 'S-REBAR');
+  const yv = rb.layers >= 2 ? [c + dh + dv / 2, t - c - dh - dv / 2] : [t / 2 + dh]; if (v) for (let x = 75; x < Ls - 40; x += v.s) for (const y of yv) p.C(x, y, dv / 2);
+  p.Q(75, yv[yv.length - 1], 8, 8, `수직근 ${rb.v} ${rb.layers >= 2 ? '복배근' : '단배근'}`); p.Q(Ls * 0.6, rb.layers >= 2 ? c + dh / 2 : t / 2, 8, -7, `수평근 ${rb.h}`); p.D(0, 0, 0, t, 5); p.T(Ls / 2, 0, `벽 길이 ${L} (부분 표시)`, { ph: 2.2, oy: -8, al: 'c' });
+  return { pr: p, title, padR: 40 };
+}
+function beamElevation(m, rb, ends, fck, fy, title) {
+  const p = Pr(); const h = m.hz, c = rb.cover || 40; const st = parseS(rb.stir) || { d: 'D10', s: 200 }; const dt = +st.d.slice(1); const tq = parseN(rb.top), bq = parseN(rb.bot); const dbt = tq ? +tq.d.slice(1) : 22, dbb = bq ? +bq.d.slice(1) : 22;
+  const w0 = ends[0].w || 0, w1 = ends[1].w || 0; const Lc = Math.max(1000, m.L - w0 / 2 - w1 / 2); const LT = devLen(dbt, fck, fy, { top: h >= 380 }), LB = devLen(dbb, fck, fy);
+  p.L(0, 0, Lc, 0).L(0, h, Lc, h);
+  for (const [i, E] of ends.entries()) { const x = i ? Lc : 0, w = E.w, sg = i ? 1 : -1; if (E.kind === '기둥' || E.kind === '벽') { p.L(x, -500, x, 0).L(x, h, x, h + 500).L(x + sg * w, -500, x + sg * w, h + 500).Z(x, -500, x + sg * w, -500).Z(x, h + 500, x + sg * w, h + 500); p.T(x + sg * w / 2, h + 500, `${E.kind} ${E.sup?.el?.tag || ''}`, { ph: 2.2, oy: 2, al: 'c' }); }
+    else if (E.kind === '보') { p.R(i ? x : x - w, 0, w, h); p.L(i ? x : x - w, 0, i ? x + w : x, h, 'S-DIM'); } }
+  const yt = h - c - dt - dbt / 2, yb = c + dt + dbb / 2;
+  const barEnd = (i, y, db, L, up) => { const E = ends[i], sg = i ? 1 : -1, x = i ? Lc : 0; if (E.cont) return { x: x + sg * (E.w + 700), cont: true }; if (E.kind === '자유단') return { x: x - sg * c }; const xf = x + sg * (E.w - c - dt - db / 2); return { x: xf, hook: true, hk: 12 * db * (up ? 1 : -1), ld: L.ldh, avail: E.w - c - dt }; };
+  for (const [y, db, L, up, spec, nm] of [[yt, dbt, LT, false, rb.top, '상부근'], [yb, dbb, LB, true, rb.bot, '하부근']]) { const a = barEnd(0, y, db, L, up), b2 = barEnd(1, y, db, L, up); p.L(a.x, y, b2.x, y, 'S-REBAR');
+    for (const [e, i] of [[a, 0], [b2, 1]]) { if (e.hook) { p.L(e.x, y, e.x, y + e.hk, 'S-REBAR'); p.T(e.x, y + e.hk / 2, `${12 * db}`, { ph: 1.8, ox: i ? 1 : -1, al: i ? 'l' : 'r' }); }
+      if (e.cont) p.T(e.x, y, '연속', { ph: 1.8, ox: i ? 1 : -1, oy: 0.6, al: i ? 'l' : 'r' }); }
+    p.Q(Lc * (up ? 0.3 : 0.62), y, 0, up ? -26 : 9, `${nm} ${spec}${a.hook || b2.hook ? ` · 외단 90° 갈고리 ldh ${Math.ceil(L.ldh / 10) * 10}` : ''}`); }
+  // 이음 구간
+  const lapT = Math.ceil(LT.lap / 10) * 10, lapB = Math.ceil(LB.lap / 10) * 10; p.L(Lc / 3, yt - 30, 2 * Lc / 3, yt - 30, 'S-DIM').L(Lc / 3, yt - 15, Lc / 3, yt - 45, 'S-DIM').L(2 * Lc / 3, yt - 15, 2 * Lc / 3, yt - 45, 'S-DIM'); p.T(Lc / 2, yt - 30, `상부근 이음 구간 (L/3) · 이음 ${lapT}`, { ph: 1.9, oy: -3, al: 'c' });
+  for (const [x0, x1] of [[0, Lc / 4], [3 * Lc / 4, Lc]]) { p.L(x0, yb + 30, x1, yb + 30, 'S-DIM'); } p.T(Lc / 8, yb + 30, `하부근 이음 (L/4) ${lapB}`, { ph: 1.9, oy: 1.5, al: 'c' });
+  // 늑근
+  const z = Math.min(2 * h, Lc / 2); const sE = st.s, sM = Math.min(2 * st.s, Math.floor((h - c - 30) / 2 / 25) * 25, 300); const xs = []; for (let x = 50; x <= z; x += sE) xs.push(x); for (let x = xs[xs.length - 1] + sM; x < Lc - z; x += sM) xs.push(x); for (let x = Lc - z; x <= Lc - 49; x += sE) xs.push(x);
+  for (const x of xs) p.L(x, c, x, h - c, 'S-REBAR');
+  p.D(0, 0, z, 0, -5, `2h=${Math.round(z)} @${sE}`).D(z, 0, Lc - z, 0, -5, `@${sM}`).D(Lc - z, 0, Lc, 0, -5, `@${sE}`).D(0, 0, Lc, 0, -11, `순경간 ${Math.round(Lc)}`).D(0, 0, 0, h, 6);
+  p.T(Lc / 2, 0, `늑근 ${st.d} — 단부(2h) @${sE} · 중앙 @${sM}`, { ph: 2.2, oy: -17, al: 'c' });
+  return { pr: p, title, padR: 20, padL: 14 };
+}
+function columnElevation(m, rb, hb, top, fck, fy, title) {
+  const p = Pr(); const H = m.L, bx = m.by, c = rb.cover || 40; const q = parseN(rb.main); const db = q ? +q.d.slice(1) : 22; const hp = parseS(rb.hoop) || { d: 'D10', s: 150 }; const dt = +hp.d.slice(1); const L = devLen(db, fck, fy); const lap = Math.ceil(Math.max(L.lap, L.lapc) / 10) * 10;
+  const Hc = H - hb; p.L(0, 0, 0, Hc).L(bx, 0, bx, Hc); p.R(-400, Hc, bx + 800, hb).Z(-400, Hc, -400, H).Z(bx + 400, Hc, bx + 400, H); p.L(-400, 0, bx + 400, 0).L(-400, -200, bx + 400, -200).Z(-400, 0, -400, -200).Z(bx + 400, 0, bx + 400, -200);
+  const xL = c + dt + db / 2, xR = bx - xL;
+  for (const x of [xL, xR]) { p.L(x, -200, x, top ? H - c : H + 300, 'S-REBAR'); if (top) p.L(x, H - c, x + (x === xL ? 1 : -1) * 12 * db, H - c, 'S-REBAR'); p.L(x + (x === xL ? db + 4 : -db - 4), -250, x + (x === xL ? db + 4 : -db - 4), lap, 'S-REBAR'); }
+  const lo = Math.max(bx, m.hz, Hc / 6, 450); const ys = []; const s1 = Math.min(hp.s, 100), s2 = Math.min(hp.s, 150); for (let y = 50; y <= lap; y += s1) ys.push(y); for (let y = ys[ys.length - 1] + hp.s; y < Hc - lo; y += hp.s) ys.push(y); for (let y = Math.max(ys[ys.length - 1] + s2, Hc - lo); y <= Hc - 40; y += s2) ys.push(y);
+  for (const y of ys) p.L(c, y, bx - c, y, 'S-REBAR');
+  p.D(bx, 0, bx, lap, -6, `이음 ${lap}`).D(bx, Hc - lo, bx, Hc, -6, `lo ${Math.round(lo)}`).D(0, -200, 0, H, 10, `층고 ${Math.round(H)}`);
+  p.Q(xR, Hc * 0.55, 12, 0, `주근 ${rb.main || '-'}`); p.Q(bx - c, lap / 2, 12, -6, `띠철근 이음구간 ${hp.d}@${s1}`); p.Q(bx - c, Hc * 0.4, 12, -4, `띠철근 ${hp.d}@${hp.s}`); p.Q(bx - c, Hc - lo / 2, 12, 4, `상단 lo 구간 ${hp.d}@${s2}`);
+  if (top) p.T(bx / 2, H, `최상층 — 주근 90° 갈고리 ${12 * db} 보 안쪽 정착`, { ph: 2, oy: 3, al: 'c' }); else p.T(bx / 2, H, `상층 주근과 겹침이음 ${lap}`, { ph: 2, oy: 3, al: 'c' });
+  return { pr: p, title, padR: 50 };
+}
+function steelConnDetail(j, m, title) {
+  const p = Pr(); const sh = m.sh, t = j.tab; const hb = sh.h; const L = 900; const g = 12;
+  p.R(-30, -hb / 2 - 250, 30, hb + 500, 'S-STEEL'); p.T(-15, hb / 2 + 250, j.kind, { ph: 2.2, oy: 2, al: 'c' });
+  p.L(g, hb / 2, L, hb / 2, 'S-STEEL').L(g, hb / 2 - sh.tf, L, hb / 2 - sh.tf, 'S-STEEL').L(g, -hb / 2, L, -hb / 2, 'S-STEEL').L(g, -hb / 2 + sh.tf, L, -hb / 2 + sh.tf, 'S-STEEL').L(g, -hb / 2, g, hb / 2, 'S-STEEL').Z(L, -hb / 2 - 40, L, hb / 2 + 40);
+  const wp = t.ecc + 40 + (t.cols - 1) * t.p / 2 + (t.cols > 1 ? t.p / 2 : 0); p.R(0, -t.hp / 2, wp, t.hp, 'S-STEEL');
+  const xb = t.cols === 1 ? [t.ecc] : [t.ecc - t.p / 2 + t.p / 2, t.ecc + t.p / 2 + t.p / 2]; for (const x of xb) for (let i = 0; i < t.n; i++) p.C(x, (i - (t.n - 1) / 2) * t.p, t.d / 2 + 1, 'S-STEEL', false);
+  p.Q(wp, t.hp / 2 - 10, 14, 6, `PL-${t.tp}×${Math.round(t.hp)} (SM355)`); p.Q(xb[xb.length - 1], -(t.n - 1) / 2 * t.p, 14, -6, `${t.bk} F10T ${t.n * t.cols}개 (${t.n}×${t.cols}열) @${t.p}, 연단 ${t.e}`); p.Q(0, -t.hp / 2 + 20, -10, -8, `필릿 ${t.s} 양면 (E49)`);
+  if (j.rigid && (j.kind === '철골 기둥' || j.kind === 'SRC 기둥') && j.strong) { p.Q(g, hb / 2 - sh.tf / 2, -12, 8, '플랜지 완전용입(CJP) · 스캘럽 R35'); if (j.items.some(x => /스티프너/.test(x))) { p.L(-30, hb / 2 - sh.tf / 2, -330, hb / 2 - sh.tf / 2, 'S-STEEL').L(-30, -hb / 2 + sh.tf / 2, -330, -hb / 2 + sh.tf / 2, 'S-STEEL'); p.T(-180, -hb / 2, j.items.find(x => /스티프너/.test(x)), { ph: 1.9, oy: -3, al: 'c' }); } }
+  else if (j.rigid) p.T(L / 2, -hb / 2, j.type, { ph: 2, oy: -5, al: 'c' });
+  p.D(wp + 40, -t.hp / 2, wp + 40, t.hp / 2, -4).D(0, -t.hp / 2, t.ecc, -t.hp / 2, -4).D(L, -hb / 2, L, hb / 2, -4, `${sh.h}`);
+  return { pr: p, title, padR: 58, padL: 30 };
+}
+function textCell(title, lines, maxCh = 95) { const p = Pr(); let y = 0;
+  const wrap = (t) => { const out = []; let cur = ''; for (const part of t.split(/(?<= · )|(?<=, )/)) { if ((cur + part).length > maxCh && cur) { out.push(cur); cur = '   ' + part; } else cur += part; } if (cur) out.push(cur); return out; };
+  for (const ln of lines) { if (typeof ln === 'object') { const { head, rows, w } = ln; const xs = w.reduce((a, v) => (a.push(a[a.length - 1] + v), a), [2]); const row = (r, b) => { r.forEach((c, i) => p.T(xs[i] + 1.5, y, c, { ph: 2.3, b })); }; p.L(2, y + 3.4, xs[xs.length - 1], y + 3.4, 'S-DIM'); row(head, true); y -= 1.6; p.L(2, y, xs[xs.length - 1], y, 'S-DIM'); y -= 3.6; for (const r of rows) { row(r); y -= 1.4; p.L(2, y, xs[xs.length - 1], y, 'S-DIM'); y -= 3.6; } for (const x of xs) p.L(x, y + 3.6 + 1.4 * 0, x, y + 3.6 + (rows.length + 1) * 5 + 0.2, 'S-DIM'); y -= 2; continue; }
+    if (ln.startsWith('## ')) { y -= 2.5; p.T(0, y, ln.slice(3), { ph: 3, b: true }); y -= 5.5; } else for (const w of wrap(ln)) { p.T(2, y, w, { ph: 2.3 }); y -= 4.4; } }
+  return { pr: p, title, fixed: true, padL: 6, padR: 4 }; }
+// ---------- 부재 묶음 → 도면 칸 ----------
+export function memberCells(res, D, J, S, mi) {
+  const m = res.M.members[mi]; const d = D[mi]; const rb = rebarOf(res, mi, d); const tag = `${m.r.level.name} ${m.el.tag || ''}`.trim(); const fck = m.fck || (m.kind === 'beam' ? S.fck : S.fckV || S.fck); const out = [];
+  if (m.mat === 'STEEL') { for (const j of J.filter(j => j.mi === mi)) out.push(steelConnDetail(j, m, `${tag} ${j.end ? '끝단' : '시작단'} 접합 상세`)); return out; }
+  if (m.kind === 'beam' && rb.top && rb.bot) { out.push(beamSection(m.by, m.hz, rb, `${tag} 단면 (${rb.src})`)); out.push(beamElevation(m, rb, beamEnds(res, mi), fck, S.fy, `${tag} 배근 상세`)); }
+  else if (m.kind === 'column' && rb.main) { out.push(columnSection(m.by, m.hz, rb, `${tag} 단면 ${m.by}×${m.hz} (${rb.src})`, m.sh)); const fr = res.R.E[m.segs[m.segs.length - 1]].e.n2; let hb = 0, top = true; for (const [ei, E] of res.R.E.entries()) { const e = E.e; if (e.n1 !== fr && e.n2 !== fr) continue; const mm = res.M.members[e.mem]; if (!mm) continue; if (mm.kind === 'beam') hb = Math.max(hb, mm.hz); if (mm.kind === 'column' && e.mem !== mi && e.vert) top = false; } out.push(columnElevation(m, rb, hb || 600, top, fck, S.fy, `${tag} 배근 상세`)); }
+  else if (m.kind === 'wall') out.push(wallSection(m.by, m.hz, rb, `${tag} 벽 배근 t${m.hz} (${rb.src})`));
+  return out;
+}
+export function memberSVG(cells) { const out = svgOut(); const n = cells.length; const W = 140, CH = 95, H = CH * n; cells.forEach((c, i) => placeCell({ ...c, padR: Math.min(c.padR ?? 46, 40) }, out, 0, i * CH, W, CH)); return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="background:#fff;border-radius:6px;font-family:'Noto Sans KR','Malgun Gothic',sans-serif">${out.parts.join('')}</svg>`; }
+// 일람표·상세 시트 구성
+export function drawingSet(res, D, J, S, { scope = 'all' } = {}) {
+  const M = res.M; const sheets = []; const grp = (kind, f) => { const g = new Map(); M.members.forEach((m, mi) => { if (m.kind !== kind || !f(m)) return; const k = m.el.tag || `${kind}-${m.by}x${m.hz}`; const a = g.get(k) || g.set(k, { list: [], lv: new Set() }).get(k); a.list.push(mi); a.lv.add(m.r.level.name); }); for (const a of g.values()) a.rep = a.list.reduce((p, q) => (D[q]?.ratio || 0) > (D[p]?.ratio || 0) ? q : p, a.list[0]); return [...g.entries()].sort((a, b) => a[0].localeCompare(b[0], 'ko', { numeric: true })); };
+  const lvs = (a) => { const v = [...a.lv]; return v.length > 3 ? `${v[0]}~${v[v.length - 1]}` : v.join(','); };
+  // 구조 일반사항
+  const bars = [10, 13, 16, 19, 22, 25, 29]; const fH = S.fck, fV = S.fckV || S.fck; const r10 = (v) => Math.ceil(v / 10) * 10;
+  const gen = ['## 1. 설계 기준', 'KDS 41 10 15 (설계하중), KDS 41 17 00 (내진), KDS 14 20 (콘크리트), KDS 14 31 (강구조), KDS 21 50 00 (거푸집·동바리)', '## 2. 재료', `콘크리트 — 보·슬래브 fck ${fH} MPa · 기둥·벽 ${S.zones?.length ? S.zones.map(z => `${M.lv[z.from]?.name}~${M.lv[z.to]?.name} ${z.fck}`).join(', ') : fV} MPa · 기초 ${S.fckF || 30} MPa`, `철근 — 주근 SD${S.fy}, 전단철근 SD${S.fyt || 400} · 강재 SM${S.Fy} · 고력볼트 F10T (마찰접합, 미끄럼계수 0.5) · 용접봉 E49`, '## 3. 피복 두께 (mm)', '슬래브·벽 20~30 · 보·기둥 40 · 흙에 접하는 부재 50 · 기초 75 (흙에 접해 타설)',
+    `## 4. 정착·이음 길이 (mm) — 보·슬래브 fck ${fH} / 기둥·벽 fck ${fV}, SD${S.fy}`, { head: ['철근', 'ld 인장', '상부근 ld', 'ldh 갈고리', 'ldt 확대머리', '이음 B급', '기둥·벽 이음'], w: [16, 20, 22, 24, 26, 22, 26], rows: bars.map(db => { const a = devLen(db, fH, S.fy), t = devLen(db, fH, S.fy, { top: true }), v = devLen(db, fV, S.fy); return [`D${db}`, r10(a.ld), r10(t.ld), r10(a.ldh), r10(a.ldt), r10(a.lap), r10(Math.max(v.lap, v.lapc))].map(String); }) }, '피복·순간격 조건(피복 ≥ db, 순간격 ≥ db) 충족 기준 — 미충족 시 ld·이음을 1/0.8배, 상부근: 아래 콘크리트 300 mm 이상인 수평철근(α=1.3)',
+    '## 5. 표준갈고리', '주근 90° 갈고리 연장 12db · 180° 갈고리 4db 이상(60 이상) · 늑근·띠철근 135° 갈고리 6db(75 이상)', '## 6. 이음 위치', '보 상부근: 경간 중앙 L/3 구간 · 보 하부근: 지지부 L/4 구간 · 기둥 주근: 층 하단(띠철근 @100 이하), 집중 시 커플러 50% 엇갈림 · 벽 수직근: 층 하단',
+    '## 7. 철골', '볼트 구멍 표준(d+2, M24 d+3) · 마찰면 블라스트 처리 · 완전용입 용접부 초음파 탐상 · 스캘럽 R35 · 데크 용접(횡지지) 완료 후 콘크리트 타설', '## 8. 시공 순서', '거푸집 해체: 압축강도 ≥ 2/3·fck 및 14 MPa 확인 · 되받이 동바리 · 기둥 강도가 바닥의 1.4배 초과 시 기둥 주변 선타설'];
+  if (scope !== 'detail') { const k = gen.findIndex(x => typeof x === 'string' && x.startsWith('## 5.')); sheets.push({ name: '구조 일반사항', cells: [textCell('구조 일반사항', gen.slice(0, k)), textCell('', gen.slice(k))], cols: 2, rows: 1 }); }
+  if (scope !== 'detail') {
+    const cols = grp('column', m => m.mat !== 'STEEL').map(([k, a]) => { const m = M.members[a.rep]; const rb = rebarOf(res, a.rep, D[a.rep]); return rb.main ? columnSection(m.by, m.hz, rb, `${k} (${lvs(a)}) ${m.by}×${m.hz}`, m.sh) : null; }).filter(Boolean); if (cols.length) sheets.push({ name: '기둥 일람표', cells: cols, cols: 4, rows: 2 });
+    const bms = []; for (const [k, a] of grp('beam', m => m.mat !== 'STEEL')) { const m = M.members[a.rep]; const rb = rebarOf(res, a.rep, D[a.rep]); if (!rb.top) continue; bms.push(beamSection(m.by, m.hz, rb, `${k} (${lvs(a)}) ${m.by}×${m.hz} — 단부`)); const st = parseS(rb.stir); bms.push(beamSection(m.by, m.hz, { ...rb, stir: st ? `${st.d}@${Math.min(2 * st.s, Math.floor((m.hz - 70) / 2 / 25) * 25, 300)}` : rb.stir }, `${k} — 중앙`)); } if (bms.length) sheets.push({ name: '보 일람표', cells: bms, cols: 4, rows: 2 });
+    const wls = grp('wall', () => true).map(([k, a]) => { const m = M.members[a.rep]; return wallSection(m.by, m.hz, rebarOf(res, a.rep, D[a.rep]), `${k} (${lvs(a)}) t${m.hz}`); }); if (wls.length) sheets.push({ name: '벽 일람표', cells: wls, cols: 3, rows: 3 });
+  }
+  if (scope !== 'list') {
+    const be = []; for (const [k, a] of grp('beam', m => m.mat !== 'STEEL')) { const c = memberCells(res, D, J, S, a.rep).filter(x => /배근 상세/.test(x.title)); c.forEach(x => { x.title = `${k} (${lvs(a)}) 배근 상세`; }); be.push(...c); } if (be.length) sheets.push({ name: '보 배근 상세', cells: be, cols: 1, rows: 2 });
+    const ce = []; for (const [k, a] of grp('column', m => m.mat !== 'STEEL')) { const c = memberCells(res, D, J, S, a.rep).filter(x => /배근 상세/.test(x.title)); c.forEach(x => { x.title = `${k} (${lvs(a)}) 배근 상세`; }); ce.push(...c); } if (ce.length) sheets.push({ name: '기둥 배근 상세', cells: ce, cols: 3, rows: 1 });
+    const seen = new Map(); for (const j of J) { const m = M.members[j.mi]; const k = `${m.el.sec}|${j.kind}|${j.type}|${j.tab.bk}|${j.tab.n}|${j.tab.cols}|${j.tab.tp}|${j.items.join()}`; if (!seen.has(k)) seen.set(k, { j, m, n: 0 }); seen.get(k).n++; }
+    const sc = [...seen.values()].map((v, i) => steelConnDetail(v.j, v.m, `C${i + 1} ${v.m.el.sec} — ${v.j.kind} ${v.j.rigid ? '강접' : '전단'} (${v.n}곳)`)); if (sc.length) sheets.push({ name: '철골 접합 상세', cells: sc, cols: 2, rows: 2 });
+  }
+  return sheets;
+}
+// A3 시트 HTML (인쇄·PDF) / DXF
+export function drawingHTML(P, sheets) {
+  const pages = []; for (const sh of sheets) { const per = sh.cols * sh.rows; for (let i = 0; i < sh.cells.length; i += per) pages.push({ sh, cells: sh.cells.slice(i, i + per), k: Math.floor(i / per) + 1, nk: Math.ceil(sh.cells.length / per) }); }
+  const svgs = pages.map((pg, pi) => { const out = svgOut(); const aw = A3.W - 20, ah = A3.H - 20 - 26; const cw = aw / pg.sh.cols, ch = ah / pg.sh.rows;
+    pg.cells.forEach((c, i) => { const cx = 10 + (i % pg.sh.cols) * cw, cy = 10 + Math.floor(i / pg.sh.cols) * ch; placeCell(c, out, cx, cy, cw, ch); out.line(cx, cy + ch, cx + cw, cy + ch, 'S-TEXT', ['#bbb', 0.15]); if (i % pg.sh.cols) out.line(cx, cy, cx, cy + ch, 'S-TEXT', ['#bbb', 0.15]); });
+    titleBlock(out, P, `${pg.sh.name}${pg.nk > 1 ? ` (${pg.k}/${pg.nk})` : ''}`, pi + 1, pages.length);
+    return `<svg class="pg" viewBox="0 0 ${A3.W} ${A3.H}" xmlns="http://www.w3.org/2000/svg">${out.parts.join('')}</svg>`; });
+  return `<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>구조 시공도면 — ${P.name.replace(/</g, '')}</title><style>@page{size:A3 landscape;margin:0}body{margin:0;background:#888;font-family:'Noto Sans KR','Malgun Gothic',sans-serif}.pg{display:block;width:420mm;height:297mm;margin:10px auto;background:#fff;page-break-after:always}@media print{body{background:#fff}.pg{margin:0}}</style></head><body>${svgs.join('\n')}</body></html>`;
+}
+export function drawingDXF(sheets) {
+  const out = dxfOut(); let X0 = 0;
+  for (const sh of sheets) { let x = X0, y = 0, rowH = 0, col = 0, maxX = X0;
+    out.k = 25; out.text(X0, -1500, sh.name, 6, 'l', true);
+    for (const c of sh.cells) { const bb = bbox(c.pr.a); const S = c.fixed ? 50 : Math.max(10, SCALES.find(v => 1 / v <= Math.min(160 / bb.w, 110 / bb.h)) || 100); out.k = S; const s = c.fixed ? 1 / 50 : 1;
+      const pad = 60 * S / 2; const w = (c.fixed ? 200 * 50 : bb.w) + pad * 2, hh = (c.fixed ? 140 * 50 : bb.h) + pad * 2;
+      const X = (v) => x + pad + (v - bb.x0) * (c.fixed ? 50 : 1), Y = (v) => y + pad + (bb.y1 - v) * (c.fixed ? 50 : 1);
+      const k = S;
+      // 문자·치수 오프셋(용지 mm)을 모델 단위로: X·Y에 S를 곱한 좌표계로 emit
+      const Xs = (v) => X(v) / k, Ys = (v) => Y(v) / k; const scaled = { line: (a, b2, c2, d2, ly) => out.line(a * k, b2 * k, c2 * k, d2 * k, ly), circle: (a, b2, r, ly) => out.circle(a * k, b2 * k, r * k, ly), text: (tx, ty, str, ph, al, b, rot) => out.text(tx * k, ty * k, str, ph, al, b, rot) };
+      if (c.title) out.text(x, y, c.title + (c.fixed ? '' : `  S=1/${S}`), 3.5, 'l', true);
+      emit(c, scaled, Xs, Ys, c.fixed ? 50 / k : 1 / k);
+      x += w; rowH = Math.max(rowH, hh); maxX = Math.max(maxX, x); col++; if (col >= sh.cols) { col = 0; x = X0; y += rowH; rowH = 0; } }
+    X0 = Math.max(maxX, X0 + 6 * 25 * sh.name.length) + 8000; }
+  const lay = ['S-CONC', 'S-REBAR', 'S-STEEL', 'S-DIM', 'S-TEXT', 'S-WELD']; const col = { 'S-CONC': 7, 'S-REBAR': 1, 'S-STEEL': 5, 'S-DIM': 8, 'S-TEXT': 7, 'S-WELD': 3 };
+  return ['0', 'SECTION', '2', 'HEADER', '9', '$ACADVER', '1', 'AC1009', '9', '$INSUNITS', '70', '4', '0', 'ENDSEC', '0', 'SECTION', '2', 'TABLES', '0', 'TABLE', '2', 'LAYER', '70', String(lay.length), ...lay.flatMap(l => ['0', 'LAYER', '2', l, '70', '0', '62', String(col[l]), '6', 'CONTINUOUS']), '0', 'ENDTAB', '0', 'ENDSEC', '0', 'SECTION', '2', 'ENTITIES', ...out.L, '0', 'ENDSEC', '0', 'EOF'].join('\r\n');
 }
