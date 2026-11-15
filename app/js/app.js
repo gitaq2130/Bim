@@ -1,5 +1,6 @@
 // 빌더 통합 서비스: 프로젝트 관리 + 툴 연동
 import { createStore } from './store.js';
+import { BOQ_ADDED, DEFAULT_BOQ } from './model.js';
 import { newProject, sampleProject, DISC, allElements, takeoff, sumBy, billReview, levelOf } from './model.js';
 import { h, $, toast, dialog, confirmBox, pickFile, readText, saveFile, table, approvalCell } from './ui.js';
 import { uid, deep, createBus, fmt, fmt0, esc } from './util.js';
@@ -123,6 +124,7 @@ function migrate(P) {
   P.issues ||= []; P.photos ||= []; P.sched ||= { acts: [] }; P.bill ||= { periods: [] }; P.clash ||= { status: {}, tol: 0, clearance: 50 }; P.check ||= { status: {} }; P.view ||= { mats: {} }; P.mep ||= { systems: [], calc: {} }; P.interior ||= { finishes: {}, lighting: { uf: 0.6, mf: 0.8 } }; P.civil ||= { pts: [], mode: 'balance', cell: 2000, I: 100, slope: 1 }; P.landscape ||= { areas: [], plan: [], auto: true };
   P.base ||= { x: 0, y: 0 }; P.site ||= { lat: 37.5665, lng: 126.978, tz: 9, north: 0 }; P.layers ||= [];
   for (const s of P.sheets) P.content[s.id] ||= { ents: [], els: [] };
+  if (P.boq) for (const c of BOQ_ADDED) if (!P.boq.some(b => b.code === c)) P.boq.push({ ...DEFAULT_BOQ.find(b => b.code === c) });
 }
 async function createProject(P) {
   migrate(P);
