@@ -237,7 +237,7 @@ export function buildTasks(P) {
   // 5. 실내 (층별): 동바리 해체(위 2층 타설) 후
   const intEnd = []; const mepTr = { duct: ['DCT', '설비', '덕트 설치'], pipe: ['PIP', '설비', '배관 설치'], tray: ['TRY', '전기', '케이블트레이 설치'], riser: [null, '설비', '수직 샤프트 배관·덕트'], sprinkler: ['SPK', '소방', '스프링클러 배관·헤드'] };
   for (let i = 0; i < n; i++) {
-    const L = lv[i]; const E = all.filter(r => r.level.id === L.id); if (i === n - 1 && !E.some(r => r.el.k === 'room')) continue;
+    const L = lv[i]; const E = all.filter(r => r.level.id === L.id); if (!E.length || (i === n - 1 && !E.some(r => r.el.k === 'room'))) continue;
     const base = { lv: L.id, ph: '내부' }; const shoreT = T.filter(t => t.id.startsWith(`st.shore.${L.id}.`)); const pS = (sPour[i] || []).filter(Boolean);
     const start = add({ ...base, id: `in.start.${L.id}`, name: `${L.name} 실내 작업 착수 (동바리 해체·청소·먹매김)`, trade: '공무', dur: 1, men: 3, check: ['동바리 해체 완료', '층 청소·자재 양중 계획'] }); for (const t of shoreT) dep(start, t); if (!shoreT.length) for (const t of pS) dep(start, t, 5); if (scafUp[i]) dep(start, scafUp[i]);
     const A = area[i] || maxA; const cr = crewsFor(A); let last = start; const seq = (o) => { const t = add({ ...base, ...o }); dep(t, last); last = t; return t; };
@@ -296,7 +296,8 @@ export function buildTasks(P) {
   // 부재 → 작업 순서
   const elTasks = new Map(); for (const t of T) for (const id of t.els) (elTasks.get(id) || elTasks.set(id, []).get(id)).push(t.id);
   const succ = new Map(); for (const t of T) for (const p of t.preds) (succ.get(p.id) || succ.set(p.id, []).get(p.id)).push(t.id);
-  return { T, byId, elTasks, succ, Z, lv, cover, all };
+  const empty = lv.filter(L => !all.some(r => r.level.id === L.id)).map(L => L.name);
+  return { T, byId, elTasks, succ, Z, lv, cover, all, empty };
 }
 
 // ---------- 일정 계산 ----------
