@@ -22,23 +22,34 @@ export const ICONS = {
   daily: I('<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 2h6v4H9z"/><path d="M8 11h8M8 15h5"/>'),
   mep: I('<path d="M3 7h10a3 3 0 013 3v11"/><path d="M3 12h6a2 2 0 012 2v7"/><circle cx="19" cy="5" r="2"/><path d="M19 7v3"/>'),
   interior: I('<path d="M9 2h6l2 6H7z"/><path d="M12 8v3"/><path d="M8 15l-2 6M16 15l2 6"/><path d="M5 15h14"/>'),
+  civil: I('<path d="M2 20h20"/><path d="M2 20l6-8 4 4 3-5 7 9"/><path d="M8 12v8M15 11v9" stroke-dasharray="2 2"/>'),
+  landscape: I('<path d="M12 22v-7"/><path d="M12 15c-4 0-6-3-6-6a6 6 0 0112 0c0 3-2 6-6 6z"/><path d="M4 22h16"/><path d="M5 22c0-2 1-3 2.5-3S10 20 10 22"/>'),
   site: I('<path d="M3 8a2 2 0 012-2h2l2-2h6l2 2h2a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><circle cx="12" cy="13" r="3.5"/>'),
 };
+export const PHASES = [{ id: 'plan', name: '기획·대지' }, { id: 'design', name: '설계' }, { id: 'review', name: '설계검토' }, { id: 'est', name: '적산·공정' }, { id: 'build', name: '시공·관리' }];
+// 빌딩 라이프사이클 순서: 기획·대지 → 설계 → 설계검토 → 적산·공정 → 시공·관리
 export const TOOLS = [
-  { id: 'cad', name: '작도', full: '빌더 CAD', color: '#4ea1ff', desc: 'AutoCAD식 명령·단축키로 작도하고 치수를 잽니다. 벽·기둥·보 등 객체로 그려 다른 툴과 연결됩니다.', load: () => import('../tools/cad.js') },
-  { id: 'view3d', name: '3D', full: '3D 뷰어', color: '#a78bfa', desc: '기준점과 층고로 도면을 3D로 올리고, 재질·태양 위치를 바꿔 외관·실내를 검토합니다.', load: () => import('../tools/view3d.js') },
-  { id: 'qto', name: '물량', full: '물량산출', color: '#3fbf7f', desc: '객체에서 콘크리트·거푸집·철근·철골·마감 물량을 자동 산출하고 내역 단가를 연결합니다.', load: () => import('../tools/qto.js') },
-  { id: 'bill', name: '기성', full: '기성검토', color: '#e6b450', desc: '회차별 진척률을 입력하고 협력사 청구량과 모델 물량을 대비해 기성을 검토합니다.', load: () => import('../tools/bill.js') },
-  { id: 'clash', name: '간섭', full: '간섭검토', color: '#ef5f5f', desc: '구조·기계·전기·배관 공종 간 충돌과 여유공간, 철근-철골 간섭을 찾습니다.', load: () => import('../tools/clash.js') },
-  { id: 'check', name: '정합', full: '도면정합', color: '#7dcfff', desc: '건축·구조 도면 간 기둥·그리드·벽체 불일치, 치수 수정, 중복 객체, 리비전 변경을 검토합니다.', load: () => import('../tools/check.js') },
-  { id: 'sched', name: '공정', full: '공정(4D)', color: '#9ece6a', desc: '공정표를 모델 객체에 연결해 3D로 시공 순서를 재생하고, 기성 계획률을 자동 계산합니다.', load: () => import('../tools/sched.js') },
-  { id: 'site', name: '현장', full: '현장 사진', color: '#e6b450', desc: '현장 사진을 도면 위치·부재에 붙이고, 사진 기준(AI 보조)으로 시공 단계와 기성 진척을 판정합니다.', load: () => import('../tools/site.js') },
-  { id: 'code', name: '법규', full: '건축개요·법규', color: '#c3a6ff', desc: '모델에서 대지·건축·연면적을 계산해 건폐율·용적률·높이·정북일조를 검토하고 건축개요를 만듭니다.', load: () => import('../tools/code.js') },
-  { id: 'struct', name: '구조', full: '구조해석·설계', color: '#ff9e64', desc: '기둥·보·RC벽으로 3D 골조 해석 모델을 만들어 고정·활·풍·지진하중(KDS)으로 해석하고 부재 검토비·층간변위를 확인합니다.', load: () => import('../tools/struct.js') },
-  { id: 'daily', name: '일보', full: '작업일보', color: '#e0af68', desc: '날씨·인원·장비와 공정표 연동 금일/명일 작업, 그날의 이슈·사진으로 작업일보를 작성하고 출력합니다.', load: () => import('../tools/daily.js') },
-  { id: 'issue', name: '이슈', full: '이슈·RFI', color: '#f7768e', desc: '간섭·정합 결과와 현장 질의를 담당·기한·상태로 관리하고 RFI 문서를 만듭니다.', load: () => import('../tools/issue.js') },
-  { id: 'mep', name: 'MEP', full: '설비·전기·소방', color: '#73daca', desc: '덕트·배관·트레이·스프링클러·분전반을 계통으로 묶어 경로·높이를 배분하고, 공종별 사이즈·부하·헤드 배치를 검토합니다.', load: () => import('../tools/mep.js') },
-  { id: 'interior', name: '실내', full: '인테리어·조명', color: '#d4a5ff', desc: '실(방)별 마감·천장·가구를 정리하고, 조명기구 배치로 평균 조도를 계산해 목표 조도와 비교합니다.', load: () => import('../tools/interior.js') },
+  // 기획·대지
+  { id: 'code', phase: 'plan', name: '법규', full: '건축개요·법규', color: '#c3a6ff', desc: '모델에서 대지·건축·연면적을 계산해 건폐율·용적률·높이·정북일조를 검토하고 건축개요를 만듭니다.', load: () => import('../tools/code.js') },
+  { id: 'civil', phase: 'plan', name: '토목', full: '토목(지형·토공·배수)', color: '#c9a36a', desc: '측점으로 지형(TIN·등고선)을 만들고 계획고(균형고)로 정지할 때 절·성토량, 터파기, 잔토 운반, 우수 유출량·우수관 관경을 산정합니다.', load: () => import('../tools/civil.js') },
+  // 설계
+  { id: 'cad', phase: 'design', name: '작도', full: '빌더 CAD', color: '#4ea1ff', desc: 'AutoCAD식 명령·단축키로 작도하고 치수를 잽니다. 벽·기둥·보 등 객체로 그려 다른 툴과 연결됩니다.', load: () => import('../tools/cad.js') },
+  { id: 'view3d', phase: 'design', name: '3D', full: '3D 뷰어', color: '#a78bfa', desc: '기준점과 층고로 도면을 3D로 올리고, 재질·태양 위치를 바꿔 외관·실내를 검토합니다.', load: () => import('../tools/view3d.js') },
+  { id: 'struct', phase: 'design', name: '구조', full: '구조해석·설계', color: '#ff9e64', desc: '기둥·보·RC벽으로 3D 골조 해석 모델을 만들어 고정·활·풍·지진하중(KDS)으로 해석하고 부재 검토비·층간변위를 확인합니다.', load: () => import('../tools/struct.js') },
+  { id: 'mep', phase: 'design', name: 'MEP', full: '설비·전기·소방', color: '#73daca', desc: '덕트·배관·트레이·스프링클러·분전반을 계통으로 묶어 경로·높이를 배분하고, 공종별 사이즈·부하·헤드 배치를 검토합니다.', load: () => import('../tools/mep.js') },
+  { id: 'interior', phase: 'design', name: '실내', full: '인테리어·조명', color: '#d4a5ff', desc: '실(방)별 마감·천장·가구를 정리하고, 조명기구 배치로 평균 조도를 계산해 목표 조도와 비교합니다.', load: () => import('../tools/interior.js') },
+  { id: 'landscape', phase: 'design', name: '조경', full: '조경·식재', color: '#6cc070', desc: '녹지를 산정해 법정 조경면적·식재 기준(교목·관목·상록·향토)을 검토하고, 자동 식재 계획과 수목 일람표·공사비·탄소흡수를 만듭니다.', load: () => import('../tools/landscape.js') },
+  // 설계검토
+  { id: 'clash', phase: 'review', name: '간섭', full: '간섭검토', color: '#ef5f5f', desc: '구조·기계·전기·배관 공종 간 충돌과 여유공간, 철근-철골 간섭을 찾습니다.', load: () => import('../tools/clash.js') },
+  { id: 'check', phase: 'review', name: '정합', full: '도면정합', color: '#7dcfff', desc: '건축·구조 도면 간 기둥·그리드·벽체 불일치, 치수 수정, 중복 객체, 리비전 변경을 검토합니다.', load: () => import('../tools/check.js') },
+  // 적산·공정
+  { id: 'qto', phase: 'est', name: '물량', full: '물량산출', color: '#3fbf7f', desc: '객체에서 콘크리트·거푸집·철근·철골·마감 물량을 자동 산출하고 내역 단가를 연결합니다.', load: () => import('../tools/qto.js') },
+  { id: 'sched', phase: 'est', name: '공정', full: '공정(4D)', color: '#9ece6a', desc: '공정표를 모델 객체에 연결해 3D로 시공 순서를 재생하고, 기성 계획률을 자동 계산합니다.', load: () => import('../tools/sched.js') },
+  // 시공·관리
+  { id: 'site', phase: 'build', name: '현장', full: '현장 사진', color: '#e6b450', desc: '현장 사진을 도면 위치·부재에 붙이고, 사진 기준(AI 보조)으로 시공 단계와 기성 진척을 판정합니다.', load: () => import('../tools/site.js') },
+  { id: 'daily', phase: 'build', name: '일보', full: '작업일보', color: '#e0af68', desc: '날씨·인원·장비와 공정표 연동 금일/명일 작업, 그날의 이슈·사진으로 작업일보를 작성하고 출력합니다.', load: () => import('../tools/daily.js') },
+  { id: 'bill', phase: 'build', name: '기성', full: '기성검토', color: '#e6b450', desc: '회차별 진척률을 입력하고 협력사 청구량과 모델 물량을 대비해 기성을 검토합니다.', load: () => import('../tools/bill.js') },
+  { id: 'issue', phase: 'build', name: '이슈', full: '이슈·RFI', color: '#f7768e', desc: '간섭·정합 결과와 현장 질의를 담당·기한·상태로 관리하고 RFI 문서를 만듭니다.', load: () => import('../tools/issue.js') },
 ];
 
 const store = createStore();
@@ -58,7 +69,7 @@ function renderNav() {
   const nav = $('#nav'); nav.innerHTML = '';
   const add = (id, name, icon) => nav.append(h('a', { href: '#' + id, class: state.tool === id ? 'on' : '', html: icon + `<span>${name}</span>`, title: name }));
   add('hub', '통합', ICONS.hub);
-  if (state.P) for (const t of TOOLS) add(t.id, t.name, ICONS[t.id]);
+  if (state.P) { let ph = null; for (const t of TOOLS) { if (t.phase !== ph) { ph = t.phase; nav.append(h('span', { class: 'ph', title: PHASES.find(x => x.id === ph)?.name }, PHASES.find(x => x.id === ph)?.name)); } add(t.id, t.name, ICONS[t.id]); } }
 }
 function refreshHeader() { $('#projName').textContent = state.P ? '/ ' + state.P.name : ''; renderNav(); }
 store.bus.on('status', (s) => {
@@ -109,7 +120,7 @@ async function openProject(pid) {
   refreshHeader(); bus.emit('project', P);
 }
 function migrate(P) {
-  P.issues ||= []; P.photos ||= []; P.sched ||= { acts: [] }; P.bill ||= { periods: [] }; P.clash ||= { status: {}, tol: 0, clearance: 50 }; P.check ||= { status: {} }; P.view ||= { mats: {} }; P.mep ||= { systems: [], calc: {} }; P.interior ||= { finishes: {}, lighting: { uf: 0.6, mf: 0.8 } };
+  P.issues ||= []; P.photos ||= []; P.sched ||= { acts: [] }; P.bill ||= { periods: [] }; P.clash ||= { status: {}, tol: 0, clearance: 50 }; P.check ||= { status: {} }; P.view ||= { mats: {} }; P.mep ||= { systems: [], calc: {} }; P.interior ||= { finishes: {}, lighting: { uf: 0.6, mf: 0.8 } }; P.civil ||= { pts: [], mode: 'balance', cell: 2000, I: 100, slope: 1 }; P.landscape ||= { areas: [], plan: [], auto: true };
   P.base ||= { x: 0, y: 0 }; P.site ||= { lat: 37.5665, lng: 126.978, tz: 9, north: 0 }; P.layers ||= [];
   for (const s of P.sheets) P.content[s.id] ||= { ents: [], els: [] };
 }
@@ -226,6 +237,8 @@ function toolStats(P, id, cache) {
     case 'daily': { const ks = Object.keys(P.daily || {}).sort(); if (!ks.length) return [['작성', 0]]; const k = ks[ks.length - 1]; const n = (P.daily[k].crew || []).reduce((s, c) => s + (+c.n || 0), 0); return [['작성', ks.length + '일'], ['최근', k.slice(5)], ['인원', n + '명']]; }
     case 'check': { const l = P.check.last; return l ? [['지적', l.count], ['미해결', l.open], ['검토일', new Date(l.at).toLocaleDateString('ko-KR')]] : [['지적', '미실행']]; }
     case 'mep': { const n = (k) => els.filter(r => r.el.k === k).length; return [['덕트·배관·트레이', n('duct') + n('pipe') + n('tray')], ['헤드', n('sprinkler')], ['분전반', n('panel')]]; }
+    case 'civil': { const l = P.civil?.last; return l ? [['절토', fmt(l.cut, 0) + 'm³'], ['성토', fmt(l.fill, 0) + 'm³'], ['우수관', 'Ø' + l.D]] : [['측점', (P.civil?.pts || []).length]]; }
+    case 'landscape': { const l = P.landscape?.last; return l ? [['조경', fmt(l.credit, 0) + '/' + fmt(l.need, 0) + '㎡'], ['교목', l.trees], ['기준', l.ok ? '적합' : '부족']] : [['검토', '미실행']]; }
     case 'interior': { const n = (k) => els.filter(r => r.el.k === k).length; return [['실', n('room')], ['조명', n('light')], ['천장', n('ceiling')]]; }
   }
   return [];
@@ -245,18 +258,21 @@ function renderDashboard(w) {
   if (!todo.length) w.append(h('div', { class: 'card' }, h('div', { class: 'd' }, '처리할 항목이 없습니다.')));
   else w.append(h('div', { class: 'card' }, h('ul', { class: 'todo', style: { margin: 0, paddingLeft: '18px' } }, ...todo.map(t => h('li', {}, h('span', { class: 'pill ' + (t.lv || '') }, t.tag), ' ', h('a', { href: '#', onclick: (e) => { e.preventDefault(); t.go(); } }, t.text))))));
   if (!localStorageGet('bld:guide-off')) w.append(h('div', { class: 'card', style: { marginTop: '10px' } }, h('div', { class: 'row', style: { justifyContent: 'space-between' } }, h('div', { class: 't' }, '처음 쓰는 순서'), h('button', { class: 'btn sm ghost', onclick: (e) => { localStorageSet('bld:guide-off', '1'); e.target.closest('.card').remove(); } }, '숨기기')),
-    h('ol', { class: 'd', style: { margin: '6px 0 0', paddingLeft: '18px', lineHeight: 1.8 } }, h('li', {}, '도면 가져오기: 작도 → 파일 ▾ → DXF, 또는 아래 데이터의 "IFC 가져오기"'), h('li', {}, '물량 확인 → 배근 상세 입력 → 기성 회차에 엑셀 청구서 불러오기'), h('li', {}, '간섭·정합 실행 → 문제는 "이슈"로 등록 → 설계 변경 반영 후 Rev 저장'), h('li', {}, '3D 상단 Rev 버튼으로 변경 확인 → 물량의 "설계변경"에서 증감 금액'), h('li', {}, '현장 사진을 도면에 붙이고 기성 진척 근거로 연결 · 어디서든 Ctrl+K로 검색'))));
+    h('ol', { class: 'd', style: { margin: '6px 0 0', paddingLeft: '18px', lineHeight: 1.8 } }, h('li', {}, '기획·대지 — 법규에서 건폐율·용적률 확인, 토목에 측량 CSV를 넣어 토공량·우수관 산정'), h('li', {}, '설계 — 작도에서 그리거나 DXF·IFC 가져오기 → 3D 확인 → 구조(용도·지반만 입력) → MEP·실내 → 조경 자동 식재'), h('li', {}, '설계검토 — 간섭·정합 실행 → 문제는 이슈로 등록 → 수정 후 Rev 저장'), h('li', {}, '적산·공정 — 물량·내역 단가 연결, 공정표를 모델에 연결해 4D 확인'), h('li', {}, '시공·관리 — 현장 사진을 도면에 붙여 기성 근거로, 작업일보·기성·이슈 관리 · 어디서든 Ctrl+K로 검색'))));
 
   // 툴 카드
-  w.append(h('h2', {}, '툴'));
+  w.append(h('h2', {}, '툴 — 빌딩 라이프사이클 순'));
+  for (const ph of PHASES) {
+  w.append(h('div', { class: 'phase-h' }, h('b', {}, `${PHASES.indexOf(ph) + 1}. ${ph.name}`)));
   const cards = h('div', { class: 'cards' });
-  for (const t of TOOLS) {
+  for (const t of TOOLS.filter(x => x.phase === ph.id)) {
     const k = h('div', { class: 'k' }, toolStats(P, t.id, cache).map(([a, b]) => h('div', {}, h('b', {}, String(b)), a)));
     cards.append(h('div', { class: 'card click', onclick: () => go(t.id) },
       h('div', { class: 'ic', style: { background: t.color + '22', color: t.color }, html: ICONS[t.id] }),
       h('div', { class: 't' }, t.full), h('div', { class: 'd' }, t.desc), k));
   }
   w.append(cards);
+  }
 
   // 연동 흐름
   w.append(h('h2', {}, '데이터 흐름'), h('div', { class: 'card' }, h('div', { class: 'd', html:

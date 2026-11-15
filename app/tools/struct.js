@@ -7,6 +7,7 @@ import { runStructure, settingsOf, seismicParams, USES, SYSTEMS, GRADES, memberF
 import { designMember, designFoundations } from '../js/kds.js';
 import { FIELDS as RB_FIELDS, specOf } from '../js/rebar.js';
 import { simUI, slabUI, shortUI, heat } from './structsim.js';
+import { schemeUI } from './structscheme.js';
 import { autoRun, baseSettings, REGIONS, USE_INFO, SITE_DEFAULT } from '../js/structauto.js';
 
 const CACHE = new WeakMap();
@@ -42,7 +43,7 @@ export function mount(root, ctx) {
   function sel(opts, v, on) { const s = h('select', { onchange: e => on(e.target.value) }); for (const [k, l] of opts) s.append(h('option', { value: k, selected: String(k) === String(v) }, l)); return s; }
   function renderTB() {
     tb.innerHTML = '';
-    tb.append(h('b', { style: { marginRight: '6px' } }, '구조해석'), h('button', { class: 'btn', onclick: settings }, '현장·용도 조건'), h('button', { class: 'btn primary', onclick: run }, C ? '다시 해석' : '해석 실행'));
+    tb.append(h('b', { style: { marginRight: '6px' } }, '구조해석'), h('button', { class: 'btn', onclick: settings }, '현장·용도 조건'), h('button', { class: 'btn primary', onclick: run }, C ? '다시 해석' : '해석 실행'), h('button', { class: 'btn' + (st.page === 'scheme' ? ' primary' : ''), onclick: () => setPage(st.page === 'scheme' ? 'res' : 'scheme') }, '구조 형식 비교·추천'));
     if (!C) return;
     tb.append(h('span', { class: 'note', style: { margin: '0 4px' } }, '|'), ...[['res', '해석 결과'], ['sim', '거동 시뮬레이션'], ['slab', '슬래브'], ['short', '기둥 축소량']].map(([k, l]) => h('button', { class: 'btn' + (st.page === k ? ' primary' : ''), onclick: () => setPage(k) }, l)));
     if (st.page !== 'res') return;
@@ -90,7 +91,9 @@ export function mount(root, ctx) {
   // ---------- 그리기 ----------
   const comboOf = (id) => C.res.combos.find(c => c.id === id);
   function forcesFor(mi, stations) { const mf = memberForces(C.res, mi, stations); if (C.res.cases.includes(st.lc)) return mf.byCase[st.lc].map(s => ({ ...s })); const cb = comboOf(st.lc) || C.res.combos[1] || C.res.combos[0]; return combine(mf, cb); }
-  function draw(fit = false) {
+  let PV = null;
+  function draw(fit = false) { return drawWith((st.page === 'scheme' && PV) ? PV : (st.page === 'scheme' ? null : C), fit); }
+  function drawWith(C, fit = false) {
     for (const o of [...G.children]) { G.remove(o); o.geometry?.dispose(); o.material?.dispose?.(); } pickables = [];
     if (!C) { // 미해석: 모델 윤곽만
       legend.innerHTML = '해석 전 — 현장·용도 조건 확인 후 "해석 실행"'; dirty = true; return;
@@ -171,13 +174,14 @@ export function mount(root, ctx) {
   function setPage(p) {
     sub?.leave?.(); sub = null; st.page = p; renderTB();
     if (p === 'res') { renderSide(); draw(); return; }
+    if (p !== 'scheme' && !C) { st.page = 'res'; renderTB(); renderSide(); return; }
     legend.innerHTML = ''; side.innerHTML = '';
-    sub = (p === 'sim' ? simUI : p === 'slab' ? slabUI : shortUI)(api);
+    sub = (p === 'sim' ? simUI : p === 'slab' ? slabUI : p === 'scheme' ? schemeUI : shortUI)(api);
   }
   Object.defineProperty(api, 'C', { get: () => C });
   Object.assign(api, { P, ctx, side, G, holderEl: holder, markDirty: () => { dirty = true; },
     overlay(el) { holder.querySelector('.st-ov')?.remove(); if (el) { el.classList.add('st-ov'); holder.append(el); } },
-    anim: { build: buildAnim } });
+    anim: { build: buildAnim }, preview(res, D) { PV = res ? { res, D } : null; st.view = 'ratio'; st.lc = 'env'; G.userData.fitted = false; draw(true); }, invalidate() { C = null; CACHE.delete(P); delete P.struct.last; renderTB(); } });
   function clearG() { for (const o of [...G.children]) { G.remove(o); o.geometry?.dispose(); o.material?.dispose?.(); } pickables = []; }
   function buildAnim() {
     clearG(); const { M, R } = C.res; const N = M.nodes; const lid = [], wid = [], widx = [];

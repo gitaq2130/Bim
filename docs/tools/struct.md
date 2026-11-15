@@ -2,11 +2,11 @@
 
 | 항목 | 값 |
 |---|---|
-| Rev | v14 |
-| 요구 Core | 1.0.0 |
+| Rev | v15 |
+| 요구 Core | 1.1.0 |
 | 브랜치 | `builder/struct` |
 | 포함 툴 | 구조해석·설계(struct) |
-| 소유 파일 | `app/tools/struct.js`, `app/tools/structsim.js`, `app/js/kds.js`, `app/js/structauto.js`, `app/js/structmodel.js`, `app/js/fem.js`, `app/js/plate.js`, `app/js/simcore.js` |
+| 소유 파일 | `app/tools/struct.js`, `app/tools/structsim.js`, `app/js/kds.js`, `app/js/structauto.js`, `app/js/structmodel.js`, `app/js/fem.js`, `app/js/plate.js`, `app/js/simcore.js`, `app/js/schemes.js`, `app/tools/structscheme.js` |
 
 ## 기능
 기둥·보·RC벽으로 3D 골조 해석 모델을 만들어 고정·활·풍·지진하중(KDS)으로 해석하고 부재 검토비·층간변위를 확인합니다.
@@ -26,6 +26,7 @@
 - 해석: 3D 골조 선형정적, 티모셴코 보, 층 강막, RC 벽(벽기둥+강체연결), 고유치+응답스펙트럼(CQC, 85% 보정), P-Δ, 보 단부 핀
 - 설계(KDS 14): RC 보·기둥(2축 P-M)·벽, 철골(H1-1), SRC, 실배근·자동배근, 처짐, 독립·매트 기초, 슬래브(MITC4, Branson, Wood–Armer)
 - 시뮬레이션: 풍향·풍속 변형, 지진 시간이력(모드 중첩), 장기처짐, 기둥 축소량(ACI 209)
+- 구조형식 비교·추천(v15): RC 라멘·벽식·무량판, 철골+데크, 철골+코어, SRC+데크, PC 7개 형식을 같은 평면에서 자동 생성·해석·설계 → 물량·공사비·공기·점수로 비교, 용도별 가중치로 추천, 적용/되돌리기
 - 샘플 검증: RC 근생(의도된 NG 2), 2층 주택(전 부재 적합), 50층 타워(응답스펙트럼+P-Δ, 전 부재 적합)
 
 ## 다음 작업 후보
@@ -34,4 +35,5 @@
 - [ ] 철골 접합부, 횡비틀림좌굴, 세장효과
 
 ## 변경 이력
+- v15 (2026-11-15): 구조형식 비교·추천(7개 형식), 해석 속도 개선(부재별 하중 색인) — 아티팩트 1794701883-444a 동기화
 - v14 (2026-11-15): Git 저장소 기준선 — 아티팩트 버전 1794697024-befc에서 가져옴
