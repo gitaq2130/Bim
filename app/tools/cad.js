@@ -124,7 +124,7 @@ export function mount(root, ctx) {
       measure: [group('측정', big('DIST', '거리'), big('AREA', '면적'), big('BASE', '좌표', () => startCmd('IDPT'))), group('PDF 물량', big('UNDERLAY', 'PDF 도면', pdfUnderlay), big('TAKEOFF', '물량 산출', () => takeoffMenu())), group('기성', big('PROGMARK', '영역 마킹'), col(progSel()))],
       view: [group('단면·입면', big('SECTION', '단면 생성', () => startCmd('SECTIONCUT')), big('ELEV', '입면 4면', makeElevations), ...(sheet().kind === 'section' ? [big('REV', '다시 생성', () => { snapshot(); const r = fillSection(sheet()); ctx.touch(sid); dirty = true; log(`모델 기준으로 다시 생성: 절단 ${r.nCut} · 투영 ${r.nBeyond}`); })] : [])), group('창', big('BROWSER', '프로젝트 탐색기', () => { pbOpen = !pbOpen; P.view.pb = pbOpen; renderPB(); buildToolbar(); }, pbOpen), big('PROPS', '속성 팔레트', () => side.classList.toggle('open'))), group('화면', big('ZOOMEXT', '전체 보기', zoomExt), big('VIEW3D', '3D 보기', () => ctx.go('view3d'))), group('표시', col(sm('LAYER', '레이어 관리자', layerManager), sm('UNDERLAY', 'PDF 언더레이', pdfUnderlay), sm('BASE', '객체 스냅 설정', snapSettings))), group('기준', big('BASE', '3D 기준점'))],
       collab: [group('리비전', big('REVISION', cmp ? '비교 끄기' : 'Rev 관리', null, !!cmp), big('REVCLOUD', '리비전 구름'), big('VIEW3D', '3D Rev 비교', () => ctx.go('view3d'))), group('이슈', big('PROGMARK', '선택→이슈', issueFromSel))],
-      output: [group('플롯', big('PLOT', '플롯(PDF)', () => plotDialog()), big('PLOT', '일괄 플롯', () => batchPlot()), big('PDF', space === 'layout' ? '모형으로' : '배치 보기', () => setSpace(space === 'layout' ? 'model' : 'layout'), space === 'layout')), group('파일', big('DXFIN', 'DXF 가져오기', importDXF), big('DXFOUT', 'DXF 내보내기', () => saveFile(sheet().name.replace(/[\\/:*?"<>|]/g, '_') + '.dxf', toDXF(P, [sid]))), col(sm('DXFOUT', '같은 층 합본 DXF', () => saveFile(`${P.name}_${lv().name}_합본.dxf`.replace(/[\\/:*?"<>|]/g, '_'), toDXF(P, P.sheets.filter(s => s.level === sheet().level).map(s => s.id)))), sm('PDF', 'PNG 이미지', exportPNG), sm('PDF', '벡터 PDF(영문)', exportPDF)))],
+      output: [group('플롯', big('PLOT', '플롯(PDF)', () => plotDialog()), big('PLOT', '일괄 플롯', () => batchPlot()), big('PDF', space === 'layout' ? '모형으로' : '배치 보기', () => setSpace(space === 'layout' ? 'model' : 'layout'), space === 'layout')), group('파일', big('DXFIN', 'DXF 가져오기', importDXF), big('DXFOUT', 'DXF 내보내기', () => saveFile(sheet().name.replace(/[\\/:*?"<>|]/g, '_') + '.dxf', dxfOut([sid]))), col(sm('DXFOUT', '같은 층 합본 DXF', () => saveFile(`${P.name}_${lv().name}_합본.dxf`.replace(/[\\/:*?"<>|]/g, '_'), dxfOut(P.sheets.filter(s => s.level === sheet().level).map(s => s.id)))), sm('PDF', 'PNG 이미지', exportPNG), sm('PDF', '벡터 PDF(영문)', exportPDF)))],
     };
     for (const p of panels[cur] || panels.home) body.append(p);
     tb.append(tabRow, body);
@@ -901,16 +901,21 @@ export function mount(root, ctx) {
   // 선 → 객체 변환 / 자동 인식
   async function convertLines() {
     const c = C(); const src = sel.size ? c.ents.filter(e => sel.has(e.id)) : c.ents;
-    const r = G.recognize(src);
-    const total = r.walls.length + r.cols.length + r.slabs.length;
-    if (!total) { endCmd('인식된 객체가 없습니다 (평행선 쌍 80~450mm → 벽, 닫힌 사각형 ≤1500 → 기둥, 큰 닫힌 폴리선 → 슬래브)'); return; }
-    const v = await dialog({ title: '선 → 객체 자동 인식', body: `${sel.size ? '선택한 ' : '도면 전체 '}선에서 <b>벽 ${r.walls.length}</b>개, <b>기둥 ${r.cols.length}</b>개, <b>슬래브 ${r.slabs.length}</b>개를 찾았습니다.`, fields: [{ key: 'mat', label: '벽 재료', type: 'select', options: Object.entries(MATS).map(([k, m]) => [k, m.name]), value: 'RC' }, { key: 'del', label: '원본 선 삭제', type: 'checkbox', value: true }], ok: '변환' });
+    const rc = G.recognizeCore(src, { uses: Object.keys(LUX_BY_USE) });
+    const r = G.recognize(src.filter(e => !G.coreLayerKind(e.layer))); // 실·천장·설비 레이어 선은 벽·슬래브 인식에서 제외
+    const nCore = rc.rooms.length + rc.ceilings.length + rc.lights.length + rc.sprinklers.length + rc.panels.length;
+    const total = r.walls.length + r.cols.length + r.slabs.length + nCore;
+    if (!total) { endCmd('인식된 객체가 없습니다 (평행선 쌍 80~450mm → 벽, 닫힌 사각형 ≤1500 → 기둥, 큰 닫힌 폴리선 → 슬래브, 실·천장·조명·스프링클러·분전반 레이어 → 해당 객체)'); return; }
+    const coreTxt = nCore ? `<br>레이어 기준: <b>실 ${rc.rooms.length}</b> · <b>천장 ${rc.ceilings.length}</b> · <b>조명 ${rc.lights.length}</b> · <b>스프링클러 ${rc.sprinklers.length}</b> · <b>분전반 ${rc.panels.length}</b><div class="note">실 용도는 실 안 문자로 인식하고 목표 조도는 용도 기준으로 자동 지정합니다. 용도를 못 찾은 실은 '사무실'로 둡니다.</div>` : '';
+    const v = await dialog({ title: '선 → 객체 자동 인식', body: `${sel.size ? '선택한 ' : '도면 전체 '}선에서 <b>벽 ${r.walls.length}</b>개, <b>기둥 ${r.cols.length}</b>개, <b>슬래브 ${r.slabs.length}</b>개를 찾았습니다.${coreTxt}`, fields: [{ key: 'mat', label: '벽 재료', type: 'select', options: Object.entries(MATS).map(([k, m]) => [k, m.name]), value: 'RC' }, { key: 'del', label: '원본 선 삭제', type: 'checkbox', value: true }], ok: '변환' });
     if (!v) return endCmd();
     snapshot(); const used = new Set();
     for (const w of r.walls) { addEl({ ...w, mat: v.mat, src: undefined }); w.src.forEach(i => used.add(i)); }
     for (const x of [...r.cols, ...r.slabs]) { addEl({ ...x, src: undefined }); x.src.forEach(i => used.add(i)); }
+    for (const x of [...rc.rooms, ...rc.ceilings, ...rc.lights, ...rc.sprinklers, ...rc.panels]) addEl(coreElFrom(x));
+    rc.used.forEach(i => used.add(i));
     if (v.del) c.ents = c.ents.filter(e => !used.has(e.id));
-    sel.clear(); selChanged(); changed(); endCmd(`변환 완료: 벽 ${r.walls.length}, 기둥 ${r.cols.length}, 슬래브 ${r.slabs.length}`);
+    sel.clear(); selChanged(); changed(); endCmd(`변환 완료: 벽 ${r.walls.length}, 기둥 ${r.cols.length}, 슬래브 ${r.slabs.length}${nCore ? `, 실 ${rc.rooms.length}, 천장 ${rc.ceilings.length}, 조명 ${rc.lights.length}, 스프링클러 ${rc.sprinklers.length}, 분전반 ${rc.panels.length}` : ''}`);
   }
 
   // ---------- AI 작도 ----------
@@ -951,10 +956,36 @@ Steel sections available: ${Object.keys(SECTIONS).join(', ')}. Use defaults when
     if (!v) return;
     const fname = (s) => s.replace(/[\\/:*?"<>|]/g, '_');
     if (v.a === 'dxfin') return importDXF();
-    if (v.a === 'dxfout') return saveFile(fname(sheet().name) + '.dxf', toDXF(P, [sid]));
-    if (v.a === 'dxfall') return saveFile(fname(`${P.name}_${lv().name}_합본`) + '.dxf', toDXF(P, P.sheets.filter(s => s.level === sheet().level).map(s => s.id)));
+    if (v.a === 'dxfout') return saveFile(fname(sheet().name) + '.dxf', dxfOut([sid]));
+    if (v.a === 'dxfall') return saveFile(fname(`${P.name}_${lv().name}_합본`) + '.dxf', dxfOut(P.sheets.filter(s => s.level === sheet().level).map(s => s.id)));
     if (v.a === 'png') return exportPNG();
     if (v.a === 'pdf') return exportPDF();
+  }
+  // 인식 결과 → 객체 (기본값은 KINDS, 설계값은 기준으로 자동 지정)
+  function coreElFrom(x) {
+    const { src, ...a } = x; const el = { ...deep(KINDS[a.k].def), ...a };
+    if (a.k === 'room') { el.name = a.name || '실'; el.use = a.use || el.use; el.lux = LUX_BY_USE[el.use] || el.lux; }
+    if (a.k === 'sprinkler') el.kf = SPK_TYPES[el.type]?.[1] ?? 80;
+    if (a.k === 'light' && !a.rot) delete el.rot;
+    return el;
+  }
+  // DXF 내보내기용 주석 — 코어 toDXF는 객체를 외곽선만 내보내므로 실명·CH·기호·라벨을 같은 레이어 요소로 덧붙인다
+  function coreAnnotations(c) {
+    const out = [], lay = (k) => `${KINDS[k].disc}-${k.toUpperCase()}`;
+    for (const el of c.els) {
+      if (el.k === 'room' && el.pts?.length > 2) { const { A, lux, c: ct } = roomInfo(el); const t1 = el.name || '실', t2 = `${el.use || ''} · ${fmt(A, 1)}㎡ · ${lux}lx`, cx = (s, hh) => ct[0] - s.length * hh * 0.45; // DXF TEXT는 왼쪽 기준 → 대략 가운데 정렬
+        out.push({ t: 'text', p: [cx(t1, 350), ct[1] + 100], h: 350, s: t1, rot: 0, layer: lay('room') }, { t: 'text', p: [cx(t2, 220), ct[1] - 400], h: 220, s: t2, rot: 0, layer: lay('room') }); }
+      if (el.k === 'ceiling' && el.pts?.length > 2) { const b = bboxOf(el.pts); out.push({ t: 'text', p: [b.x0 + 200, b.y0 + 200], h: 200, s: `CH ${Math.round(el.z ?? 2700)} ${el.fin || ''}`.trim(), rot: 0, layer: lay('ceiling') }); }
+      if (el.k === 'sprinkler' && el.p) out.push({ t: 'circle', c: el.p, r: (el.w || 80) / 2, layer: lay('sprinkler') });
+      if (el.k === 'light' && el.p && el.circuit) out.push({ t: 'text', p: [el.p[0], el.p[1] - el.d / 2 - 210], h: 150, s: el.circuit, rot: 0, layer: lay('light') });
+      if (el.k === 'panel' && el.p) out.push({ t: 'text', p: [el.p[0] + Math.max(el.w, el.d) / 2 + 80, el.p[1]], h: 180, s: el.tag || `${el.sys || ''} 분전반`.trim(), rot: 0, layer: lay('panel') });
+    }
+    return out;
+  }
+  function dxfOut(ids) {
+    const content = { ...P.content };
+    for (const id of ids) { const c = P.content[id]; if (c) content[id] = { ...c, ents: [...c.ents, ...coreAnnotations(c)] }; }
+    return toDXF({ ...P, content }, ids);
   }
   async function importDXF() {
     const f = await pickFile('.dxf'); if (!f) return;

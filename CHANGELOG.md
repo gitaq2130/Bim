@@ -3,6 +3,7 @@
 형식: `- YYYY-MM-DD [track] vN: 요약` (최신이 위)
 
 ## 2026-11-15
+- [cad] v3: 1.1.0 객체 DXF 왕복 — 내보내기 라벨·기호 추가, 선→객체(CV)에서 레이어 기준으로 실·천장·조명·스프링클러·분전반 인식
 - [cad] v2: Core 1.1.0 객체(실·천장·조명·스프링클러·분전반) 작도 2D 표시·선택·속성 편집 — 목표 조도·K-factor 자동 지정, 분전반 부하는 MEP 산정값 표시
 - [core] 1.1.0: MEP·인테리어 트랙 신설 — 공종 F(소방)·I(인테리어) 추가, P를 배관(위생)으로 변경, 객체 sprinkler·panel·light·ceiling·room 추가(3D 박스·외곽·물량 코드 SPK·PNL·LGT·CLG), P.mep·P.interior 추가, TOOLS에 mep·interior 등록, js/mep.js→mep 트랙·js/furn.js와 tools/furn3d.js→interior 트랙으로 소유 이관, 상단 탭 간격 조정
 - [mep] v1: 계통별 집계(공종 탭), 층별 천장 속 높이 배분 점검
