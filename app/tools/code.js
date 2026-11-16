@@ -5,11 +5,11 @@ import { fmt, fmt0, esc, polyArea, bboxOf } from '../js/util.js';
 
 // ===== 법령 데이터 BEGIN — 주간 개정 점검 작업이 이 블록만 갱신합니다 =====
 // 확인일: 아래 값을 원문(또는 원문을 옮긴 출처)과 마지막으로 대조한 날
-export const LAW_CHECKED = '2026-11-15';
+export const LAW_CHECKED = '2026-11-16';
 // verify: true = 2차 출처로만 확인 — 국가법령정보센터 원문 대조 필요
 export const LAWS = {
-  ktpl: { name: '국토의 계획 및 이용에 관한 법률', verify: true, url: 'https://www.law.go.kr/법령/국토의계획및이용에관한법률' },
-  ktpa: { name: '국토의 계획 및 이용에 관한 법률 시행령', ef: '2026-09-18', no: '대통령령 제36587호(2026.8.18. 공포, 타법개정)', url: 'https://www.law.go.kr/법령/국토의계획및이용에관한법률시행령' },
+  ktpl: { name: '국토의 계획 및 이용에 관한 법률', ef: '2026-07-01', no: '법률 제21447호(2026.3.5. 공포, 타법개정)', url: 'https://www.law.go.kr/법령/국토의계획및이용에관한법률' },
+  ktpa: { name: '국토의 계획 및 이용에 관한 법률 시행령', ef: '2026-09-18', no: '대통령령 제36587호(2026.8.18. 공포, 타법개정) — 이후 공포 제36656호(2026.9.8. 일부개정·즉시 시행, 제133조 삭제·별표 13 오피스텔 전환 허용, 제84조·제85조 변경 없음)', url: 'https://www.law.go.kr/법령/국토의계획및이용에관한법률시행령' },
   bldl: { name: '건축법', ef: '2026-08-11', no: '2026.8.11. 시행 개정분 (통합입법예고센터 하위법령 정비계획 기준)', verify: true, url: 'https://www.law.go.kr/법령/건축법' },
   blda: { name: '건축법 시행령', ef: '2026-02-27', no: '대통령령 제35717호(2025.8.26. 공포, 일부개정)', verify: true, url: 'https://www.law.go.kr/법령/건축법시행령' },
 };
@@ -43,6 +43,7 @@ export const ORDINANCES = {
 };
 // 진행 중인 개정 (입법예고 → 공포 → 시행). 공포·시행되면 위 데이터에 반영하고 여기서 뺍니다.
 export const PENDING = [
+  { law: 'ktpl', title: '국토의 계획 및 이용에 관한 법률 일부개정 (법률 제21812호) — 도시·군계획시설 구분지상권 설정 의무화, 무상귀속 공공시설 인정기준, 도로연결 허가 의제. 판정 조문(제77조·제78조·제84조) 변경 없음(개정이유 기준)', stage: '공포 2026.6.16. → 시행 2026.12.17. 예정', url: 'https://www.law.go.kr/LSW/lsRvsRsnListP.do?lsId=009294&chrClsCd=010102' },
   { law: 'blda', title: '건축법 시행령 일부개정령안 (건축정책과, 국토교통부 공고 제2026-1191호) — 다세대·다가구주택 규모 기준 등', stage: '입법예고 2026.9.17.~10.26. (재입법예고 10.16.~10.26.)', url: 'https://www.molit.go.kr/USR/law/m_46/dtl.jsp?r_id=10053' },
   { law: 'blda', title: '건축법 시행령 일부개정령안 (건축안전과, 공고 제2026-1346호) — 가설건축물·200㎡ 이상 축사·창고·작물재배사 구조안전확인 대상 확대', stage: '입법예고 2026.10.28.~12.11.', url: 'https://opinion.lawmaking.go.kr/gcom/ogLmPp/89242' },
 ];
