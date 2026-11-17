@@ -13,7 +13,32 @@
 
 ## 대기
 
-(없음)
+### [view3d] three 0.182 업그레이드 + ThatOpen(IFC) importmap 등록 — 2026-11-17
+- 변경: `app/index.html` importmap을 아래로 교체 (three 0.170.0 → 0.182.0, 신규 6개)
+  ```json
+  "three": "https://cdn.jsdelivr.net/npm/three@0.182.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.182.0/examples/jsm/",
+  "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.182.0/examples/jsm/",
+  "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.182.0/build/three.tsl.js",
+  "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.182.0/build/three.webgpu.js",
+  "three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.8.3/build/index.module.js",
+  "three-gpu-pathtracer": "https://cdn.jsdelivr.net/npm/three-gpu-pathtracer@0.0.23/build/index.module.js",
+  "camera-controls": "https://cdn.jsdelivr.net/npm/camera-controls@3.1.2/dist/camera-controls.module.js",
+  "web-ifc": "https://cdn.jsdelivr.net/npm/web-ifc@0.0.77/web-ifc-api.js",
+  "@thatopen/fragments": "https://cdn.jsdelivr.net/npm/@thatopen/fragments@3.6.1/dist/index.mjs",
+  "@thatopen/fragments/inline": "https://cdn.jsdelivr.net/npm/@thatopen/fragments@3.6.1/dist/inline.mjs",
+  "@thatopen/components": "https://cdn.jsdelivr.net/npm/@thatopen/components@3.6.0/dist/index.mjs"
+  ```
+  `docs/CORE.md` 1장 라이브러리 목록 갱신, CORE_VERSION minor +1
+- 이유: 3D 뷰어 IFC 업로드·인식(ThatOpen components 3.6 / fragments 3.6). ThatOpen 3.x는 peer로 three ≥0.182 요구, 같은 three 인스턴스여야 빌더 모델과 한 장면에 겹쳐 그림. web-ifc는 `app/lib/web-ifc.wasm`과 같은 0.0.77로 고정(파일 해시 일치 확인). 폐기 패키지(web-ifc-three, web-ifc-viewer, openbim-components)는 쓰지 않음
+- 검증(view3d 트랙, 테스트 하네스로 위 importmap 주입): 샘플 프로젝트로 3D(재질·조명·단면 축 2D 추출)·작도·구조·MEP·실내·현장 화면 열기 — 콘솔 오류 0. ThatOpen: IFC(빌더 내보내기 82KB) → fragments 변환 0.4초, 분류·공간구조·속성·GUID 조회 정상. 사진 렌더(pathtracer 0.0.23)는 GPU 없는 환경이라 미확인 → 허브에서 한 번 확인 필요
+- 영향 트랙: 전 트랙(three 사용 전부: view3d, interior furn3d, struct·structsim, site 등) — r170→r182 사이 이 코드베이스에서 쓰는 API 변경으로 인한 오류는 위 검증에서 없었음
+
+### [view3d] IFC 가져오기 객체에 GlobalId 저장 — 2026-11-17
+- 변경: `js/ifc.js` `readIFC` 항목에 `guid`(IfcRoot.GlobalId) 추가, `ifcToProject`가 `el.guid`로 저장(현재는 `el.ifc`=expressID만 저장). `js/ifcout.js`는 `el.guid`가 있으면 새 GUID 대신 그 값을 씀(왕복 시 GUID 유지). CORE.md 5장 객체 공통 속성에 `guid` 추가
+- 이유: 3D 뷰어의 IFC 모델 ↔ 빌더 객체(작도 2D) 연동을 파일이 바뀌어도 유지되는 GlobalId로 하기 위함. expressID는 같은 파일에서만 유효
+- 영향 트랙: cad(가져오기 결과 객체에 속성 1개 추가, 표시 영향 없음). 반영 전에는 view3d가 expressID → 부호(Tag) → 위치 순으로 연결하므로 막히지 않음
+
 
 ## 처리됨
 
