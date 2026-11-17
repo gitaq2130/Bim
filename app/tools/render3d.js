@@ -383,3 +383,70 @@ export function sectionDXF(res, meta = {}) {
   o.push('0', 'ENDSEC', '0', 'EOF');
   return o.join('\r\n') + '\r\n';
 }
+
+// ======================================================================
+// IFC 모델 (ThatOpen components 3.x / fragments 3.x) — 엔진 로드·분류 이름·변환본 캐시
+// 폐기 패키지(web-ifc-three, web-ifc-viewer, openbim-components)는 쓰지 않는다.
+// ======================================================================
+export const IFC_KO = {
+  IFCWALL: '벽', IFCWALLSTANDARDCASE: '벽', IFCCURTAINWALL: '커튼월', IFCSLAB: '슬래브', IFCCOLUMN: '기둥', IFCBEAM: '보', IFCMEMBER: '부재(가새·멀리언)',
+  IFCFOOTING: '기초', IFCPILE: '말뚝', IFCDOOR: '문', IFCWINDOW: '창', IFCSTAIR: '계단', IFCSTAIRFLIGHT: '계단판', IFCRAMP: '경사로', IFCRAMPFLIGHT: '경사로판',
+  IFCRAILING: '난간', IFCROOF: '지붕', IFCCOVERING: '마감(천장·바닥·벽)', IFCPLATE: '판재', IFCCHIMNEY: '굴뚝', IFCSHADINGDEVICE: '차양',
+  IFCFURNISHINGELEMENT: '가구', IFCFURNITURE: '가구', IFCSYSTEMFURNITUREELEMENT: '시스템가구', IFCSPACE: '공간(실)', IFCOPENINGELEMENT: '개구부',
+  IFCBUILDINGELEMENTPROXY: '기타 객체', IFCREINFORCINGBAR: '철근', IFCREINFORCINGMESH: '철망', IFCTENDON: '긴장재',
+  IFCDUCTSEGMENT: '덕트', IFCDUCTFITTING: '덕트 이음', IFCAIRTERMINAL: '취출·흡입구', IFCDAMPER: '댐퍼', IFCFAN: '송풍기', IFCUNITARYEQUIPMENT: '공조기',
+  IFCPIPESEGMENT: '배관', IFCPIPEFITTING: '배관 이음', IFCVALVE: '밸브', IFCPUMP: '펌프', IFCTANK: '탱크', IFCSANITARYTERMINAL: '위생기구', IFCFLOWTERMINAL: '단말기구',
+  IFCFLOWSEGMENT: '관로', IFCFLOWFITTING: '관 이음', IFCFLOWCONTROLLER: '제어기', IFCFLOWMOVINGDEVICE: '이송기기', IFCENERGYCONVERSIONDEVICE: '열원기기',
+  IFCFIRESUPPRESSIONTERMINAL: '소화 헤드', IFCALARM: '경보기', IFCSENSOR: '감지기',
+  IFCCABLECARRIERSEGMENT: '케이블트레이', IFCCABLECARRIERFITTING: '트레이 이음', IFCCABLESEGMENT: '케이블', IFCLIGHTFIXTURE: '조명기구', IFCLAMP: '램프',
+  IFCELECTRICDISTRIBUTIONBOARD: '분전반', IFCOUTLET: '콘센트', IFCSWITCHINGDEVICE: '스위치', IFCELECTRICAPPLIANCE: '전기기기', IFCTRANSPORTELEMENT: '승강기',
+  IFCGEOGRAPHICELEMENT: '지형·조경', IFCCIVILELEMENT: '토목 요소', IFCSITE: '대지', IFCBUILDINGSTOREY: '층',
+};
+export const ifcCatName = (c) => IFC_KO[c] || (c || '').replace(/^IFC/, '');
+// IFC 분류 → 빌더 객체 종류 (연동 위치 매칭에 사용)
+export const IFC_KIND = {
+  IFCWALL: 'wall', IFCWALLSTANDARDCASE: 'wall', IFCCURTAINWALL: 'wall', IFCCOLUMN: 'column', IFCBEAM: 'beam', IFCMEMBER: 'beam', IFCSLAB: 'slab', IFCFOOTING: 'footing', IFCPILE: 'pile',
+  IFCDOOR: 'opening', IFCWINDOW: 'opening', IFCDUCTSEGMENT: 'duct', IFCPIPESEGMENT: 'pipe', IFCCABLECARRIERSEGMENT: 'tray', IFCLIGHTFIXTURE: 'light',
+  IFCFIRESUPPRESSIONTERMINAL: 'sprinkler', IFCELECTRICDISTRIBUTIONBOARD: 'panel', IFCCOVERING: 'ceiling', IFCFURNISHINGELEMENT: 'furn', IFCFURNITURE: 'furn',
+};
+// 엔진 로드: 코어 importmap에 three ≥0.182와 @thatopen/* 가 있어야 한다
+export async function loadThatOpen() {
+  const T = await import('three'); if (+T.REVISION < 182) throw Object.assign(new Error(`IFC 엔진(ThatOpen 3.x)은 three 0.182 이상이 필요합니다 — 현재 r${T.REVISION}. 코어 업데이트(importmap) 반영 후 사용할 수 있습니다.`), { core: true });
+  try { const [OBC, FRAGS] = await Promise.all([import('@thatopen/components'), import('@thatopen/fragments')]); return { OBC, FRAGS }; }
+  catch (e) { throw Object.assign(new Error('IFC 엔진(@thatopen/components)을 불러오지 못했습니다 — 코어 importmap 등록이 필요합니다. ' + (e.message || '')), { core: true }); }
+}
+// fragments 워커: importmap 경로 기준으로 같은 버전 worker.mjs를 받아 같은 출처(blob) URL로 만든다
+export async function fragmentsWorkerURL() {
+  const base = import.meta.resolve('@thatopen/fragments'); const url = base.replace(/index\.mjs(\?.*)?$/, 'Worker/worker.mjs');
+  const res = await fetch(url); if (!res.ok) throw new Error('fragments 워커를 받지 못했습니다 (' + res.status + ')');
+  return URL.createObjectURL(new Blob([await res.text()], { type: 'text/javascript' }));
+}
+// 변환본(.frag) 캐시 — IndexedDB (없거나 막히면 조용히 건너뜀: 다시 업로드하면 됨)
+function idb() {
+  return new Promise((res, rej) => { try { const q = indexedDB.open('builder-ifc', 1); q.onupgradeneeded = () => q.result.createObjectStore('frag'); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); } catch (e) { rej(e); } });
+}
+async function idbDo(mode, fn) { const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction('frag', mode); const r = fn(tx.objectStore('frag')); tx.oncomplete = () => { db.close(); res(r?.result); }; tx.onerror = () => { db.close(); rej(tx.error); }; }); }
+export const ifcCacheGet = (key) => idbDo('readonly', s => s.get(key)).catch(() => null);
+export const ifcCachePut = (key, buf) => idbDo('readwrite', s => s.put(buf, key)).then(() => true).catch(() => false);
+export const ifcCacheDel = (key) => idbDo('readwrite', s => s.delete(key)).catch(() => null);
+// 공간 구조 트리 → 층별 객체 id
+export function storeyItems(tree) {
+  const out = new Map(); // storeyLocalId → [localId]
+  const walk = (n, st, inStoreyCat) => {
+    if (!n) return; let cur = st;
+    if (n.localId != null) { if (inStoreyCat) { cur = n.localId; if (!out.has(cur)) out.set(cur, []); } else if (st != null) out.get(st).push(n.localId); }
+    for (const c of n.children || []) walk(c, cur, n.category === 'IFCBUILDINGSTOREY');
+  };
+  walk(tree, null, false); return out;
+}
+// 속성 평탄화: getItemsData 결과 → { attrs:[[k,v]], psets:[{name, props:[[k,v]]}] }
+export function flattenIfcData(d) {
+  const val = (x) => x && typeof x === 'object' && 'value' in x ? x.value : x;
+  const attrs = []; const psets = [];
+  for (const [k, v] of Object.entries(d || {})) { if (k.startsWith('_') || Array.isArray(v)) continue; const vv = val(v); if (vv != null && vv !== '') attrs.push([k, String(vv)]); }
+  for (const rel of [...(d?.IsDefinedBy || []), ...(d?.IsTypedBy || [])]) {
+    const props = []; for (const p of [...(rel.HasProperties || []), ...(rel.Quantities || [])]) { const nm = val(p.Name); const v = val(p.NominalValue) ?? val(p.LengthValue) ?? val(p.AreaValue) ?? val(p.VolumeValue) ?? val(p.CountValue) ?? val(p.WeightValue); if (nm != null) props.push([nm, v == null ? '' : String(v)]); }
+    if (props.length) psets.push({ name: val(rel.Name) || ifcCatName(val(rel._category)), props });
+  }
+  return { attrs, psets };
+}
