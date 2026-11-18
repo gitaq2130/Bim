@@ -13,6 +13,10 @@
 
 ## 대기
 
+(없음)
+
+## 처리됨
+
 ### [view3d] three 0.182 업그레이드 + ThatOpen(IFC) importmap 등록 — 2026-11-17
 - 변경: `app/index.html` importmap을 아래로 교체 (three 0.170.0 → 0.182.0, 신규 6개)
   ```json
@@ -46,8 +50,11 @@
 - 이유: 사용자 요청 — 공정 최적화(OR-Tools), IFC↔P6/MS Project 변환(ifc4d), 웹 간트(frappe-gantt). field v5에서 최적화는 JS 휴리스틱, P6 XER·MS Project XML 가져오기는 JS로 구현.
 - 영향 트랙: core(ifcout·importmap), field
 
-
-## 처리됨
+- **처리 (Core 1.7.0, 2026-11-18)**:
+  - importmap: three 0.182.0(+tsl·webgpu), camera-controls 3.1.2, web-ifc 0.0.77, @thatopen/components 3.6.0·fragments 3.6.1 등록. 전 툴 열기·시공 시뮬·구조 시뮬·탭 테스트 오류 0, ThatOpen 로드 확인. 사진 렌더(pathtracer)는 GPU 없는 환경이라 미확인
+  - `ifc.js` guid 저장, `ifcout.js` guid 유지(왕복 확인)
+  - `ifcout.js` 4D 내보내기(IfcWorkSchedule·IfcTask·IfcTaskTime·IfcRelSequence(+IfcLagTime)·IfcRelAssignsToProduct) — 주택 샘플 작업 11·순서 10·부재 연결 42, web-ifc로 다시 읽기 정상
+  - 보류: frappe-gantt(선택 사항, 현 SVG 간트 유지), OR-Tools WASM — 멀티스레드 빌드는 COOP/COEP 헤더가 필요한데 Claude 아티팩트 호스팅에서 헤더를 지정할 수 없음 → 서버(FastAPI + OR-Tools) 단계에서 처리
 
 ### [field] 말뚝 객체(pile) 신설과 공법·부지 계획 데이터 등록 — 2026-11-15
 - 변경:

@@ -19,6 +19,8 @@ export function stepStr(v) {
 }
 const R = (v) => { const x = Math.round(v * 1000) / 1000; if (Math.abs(x) < 1e-9) return '0.'; const s = String(x); return /[.eE]/.test(s) ? s : s + '.'; };
 const hex = (c) => { const m = /^#?([0-9a-f]{6})$/i.exec(c || ''); const n = m ? parseInt(m[1], 16) : 0xb0b0b0; return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255]; };
+// IFC GlobalId 22자 (0-9A-Za-z_$) — 가져온 객체는 원래 GUID를 유지 (Core 1.7.0)
+const validGuid = (g) => typeof g === 'string' && /^[0-9A-Za-z_$]{22}$/.test(g) ? g : null;
 const SYSCOL = { SA: '#5aa9e6', RA: '#7bd389', OA: '#4ecdc4', EA: '#c9a227', CHWS: '#3a86ff', CHWR: '#8338ec', CDWS: '#06d6a0', CDWR: '#118ab2', CW: '#4dabf7', SD: '#a0785a', FP: '#e63946', BUS: '#ff9f1c', ELEC: '#ffbf69' };
 
 export function writeIFC(P, { onProgress } = {}) {
@@ -65,7 +67,7 @@ export function writeIFC(P, { onProgress } = {}) {
   const stats = {}; const openings = [];
   const CLS = { wall: 'IFCWALL', column: 'IFCCOLUMN', beam: 'IFCBEAM', slab: 'IFCSLAB', footing: 'IFCFOOTING', duct: 'IFCDUCTSEGMENT', pipe: 'IFCPIPESEGMENT', tray: 'IFCCABLECARRIERSEGMENT', fin: 'IFCMEMBER', furn: 'IFCFURNITURE' };
   const PRE = { slab: '.FLOOR.', footing: '.PAD_FOOTING.', duct: '.RIGIDSEGMENT.', pipe: '.RIGIDSEGMENT.', tray: '.CABLETRAYSEGMENT.', fin: '.MULLION.', beam: '.BEAM.', column: '.COLUMN.', wall: '.STANDARD.', furn: '.NOTDEFINED.' };
-  const wallE = {};
+  const wallE = {}; const elE = []; // [IFC 엔티티, 빌더 객체] — 4D 공정 연결용
   let i = 0;
   for (const r of all) {
     if (++i % 2000 === 0) onProgress?.(`IFC 쓰는 중… ${i}/${all.length}`);
@@ -87,8 +89,8 @@ export function writeIFC(P, { onProgress } = {}) {
     const color = el.sys ? (SYSCOL[String(el.sys).toUpperCase()] || el.color) : el.k === 'furn' ? (el.color || '#c8b89a') : MATS[el.mat]?.color || '#b0b0b0';
     const sty = style(el.sys ? 'SYS-' + el.sys : el.k === 'furn' ? 'FURN-' + (el.color || '') : el.mat || 'DEFAULT', color, el.mat === 'GLASS' ? 0.55 : 0);
     const name = el.k === 'furn' ? furnName(el.type) : elName(el);
-    const id = E(`${cls}('${ifcGuid()}',$,${stepStr(name)},${stepStr(el.room || '')},$,${pl},${shape(solid, sty)},${stepStr(el.tag || el.id)},${pre})`);
-    st.els.push(id); stats[cls] = (stats[cls] || 0) + 1;
+    const id = E(`${cls}('${validGuid(el.guid) || ifcGuid()}',$,${stepStr(name)},${stepStr(el.room || '')},$,${pl},${shape(solid, sty)},${stepStr(el.tag || el.id)},${pre})`);
+    st.els.push(id); stats[cls] = (stats[cls] || 0) + 1; elE.push([id, r]);
     if (el.k === 'wall') wallE[el.id] = { id, pl };
     if (el.mat) material(el.mat).els.push(id);
     const ps = pset({ Tag: el.tag, Sheet: r.sheet.name, System: el.sys, Room: el.room, Zone: el.zone, Section: el.sec || el.size, Thickness: el.k === 'wall' || el.k === 'slab' ? el.t : null });
@@ -104,7 +106,7 @@ export function writeIFC(P, { onProgress } = {}) {
       const t = (hr.el.t || 200) / 2; const fb = { ...b, hw: el.kind === 'window' ? Math.min(40, t) : Math.min(50, t) };
       const sty = style(el.kind === 'window' ? 'GLAZING' : 'DOOR', el.kind === 'window' ? '#9fd4f5' : '#8a6a4a', el.kind === 'window' ? 0.6 : 0);
       const cls = el.kind === 'door' ? 'IFCDOOR' : 'IFCWINDOW';
-      const fe = E(`${cls}('${ifcGuid()}',$,${stepStr(el.tag || (el.kind === 'door' ? '문' : '창'))},$,$,${place(hst, b.cx, b.cy, z0, b.ang)},${shape(boxSolid(fb), sty)},${stepStr(el.tag || el.id)},${R(el.h)},${R(el.w)},${el.kind === 'door' ? '.DOOR.' : '.WINDOW.'},$,$)`);
+      const fe = E(`${cls}('${validGuid(el.guid) || ifcGuid()}',$,${stepStr(el.tag || (el.kind === 'door' ? '문' : '창'))},$,$,${place(hst, b.cx, b.cy, z0, b.ang)},${shape(boxSolid(fb), sty)},${stepStr(el.tag || el.id)},${R(el.h)},${R(el.w)},${el.kind === 'door' ? '.DOOR.' : '.WINDOW.'},$,$)`);
       E(`IFCRELFILLSELEMENT('${ifcGuid()}',$,$,$,${op},${fe})`); hst.els.push(fe); stats[cls] = (stats[cls] || 0) + 1;
       const ps = pset({ Tag: el.tag, Sheet: r.sheet.name }); if (ps) ps.els.push(fe);
     }
@@ -114,6 +116,22 @@ export function writeIFC(P, { onProgress } = {}) {
   for (const s of Object.values(ST)) if (s.els.length) chunk(s.els, a => E(`IFCRELCONTAINEDINSPATIALSTRUCTURE('${ifcGuid()}',$,$,$,(${a.join(',')}),${s.id})`));
   for (const m of Object.values(matE)) if (m.els.length) chunk(m.els, a => E(`IFCRELASSOCIATESMATERIAL('${ifcGuid()}',$,$,$,(${a.join(',')}),${m.id})`));
   for (const p of Object.values(psetE)) if (p.els.length) chunk(p.els, a => E(`IFCRELDEFINESBYPROPERTIES('${ifcGuid()}',$,$,$,(${a.join(',')}),${p.id})`));
+  // 4D 공정 (Core 1.7.0): P.sched.acts → IfcWorkSchedule / IfcTask(+IfcTaskTime) / IfcRelSequence(FS+지연) / IfcRelAssignsToProduct(부재↔작업)
+  const acts = P.sched?.acts || [];
+  if (acts.length) {
+    const dt = (d) => d ? `'${d}T08:00:00'` : '$'; const dur = (n) => `'P${Math.max(0, Math.round(n || 0))}D'`;
+    const s0 = acts.reduce((m, a) => a.start && (!m || a.start < m) ? a.start : m, null), s1 = acts.reduce((m, a) => a.end && (!m || a.end > m) ? a.end : m, null);
+    const ws = E(`IFCWORKSCHEDULE('${ifcGuid()}',$,${stepStr((P.name || '빌더') + ' 공정표')},$,$,$,${dt(new Date().toISOString().slice(0, 10))},$,$,$,$,${dt(s0)},${dt(s1)},.PLANNED.)`);
+    const taskE = {}; const match = (a, r) => { if (a.ids?.length) return a.ids.includes(r.el.id); const f = a.filter || {}; if (!f.level && !f.kind && !f.disc && !f.zone) return false; return (!f.level || r.level.id === f.level) && (!f.kind || r.el.k === f.kind) && (!f.disc || r.sheet.disc === f.disc) && (!f.zone || r.el.zone === f.zone); };
+    for (const a of acts) { const tt = E(`IFCTASKTIME($,$,$,.WORKTIME.,${dur(a.dur)},${dt(a.start)},${dt(a.end)},$,$,$,$,$,$,$,$,$,$,$,$,$)`);
+      taskE[a.id] = E(`IFCTASK('${ifcGuid()}',$,${stepStr(a.name)},$,${stepStr(a.wbs || '')},${stepStr(a.id)},$,$,$,${a.ms ? '.T.' : '.F.'},$,${tt},.CONSTRUCTION.)`); }
+    chunk(Object.values(taskE), x => E(`IFCRELASSIGNSTOCONTROL('${ifcGuid()}',$,$,$,(${x.join(',')}),.PROCESS.,${ws})`));
+    for (const a of acts) for (const pid of a.pred || []) { if (!taskE[pid]) continue; const lag = a.lag ? E(`IFCLAGTIME($,$,$,IFCDURATION(${dur(a.lag)}),.WORKTIME.)`) : '$';
+      E(`IFCRELSEQUENCE('${ifcGuid()}',$,$,$,${taskE[pid]},${taskE[a.id]},${lag},.FINISH_START.,$)`); }
+    const byEl = new Map(); for (const [eid, r] of elE) for (const a of acts) if (match(a, r)) (byEl.get(eid) || byEl.set(eid, []).get(eid)).push(taskE[a.id]);
+    for (const [eid, ts] of byEl) E(`IFCRELASSIGNSTOPRODUCT('${ifcGuid()}',$,$,$,(${ts.join(',')}),.PROCESS.,${eid})`);
+    stats.IFCTASK = acts.length; stats['4D 연결 부재'] = byEl.size;
+  }
   const now = new Date().toISOString().slice(0, 19);
   const head = `ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION(('ViewDefinition [ReferenceView_V1.2]'),'2;1');\nFILE_NAME(${stepStr((P.name || 'builder') + '.ifc')},'${now}',(''),(''),'Builder','Builder IFC4 exporter','');\nFILE_SCHEMA(('IFC4'));\nENDSEC;\nDATA;\n`;
   return { text: head + L.join('\n') + '\nENDSEC;\nEND-ISO-10303-21;\n', stats, count: n };

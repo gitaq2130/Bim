@@ -58,7 +58,7 @@ export async function readIFC(buf, onProgress = () => { }) {
     if (!a.length) continue; const line = api.GetLine(mid, eid); const [kind, disc] = kmap[api.GetLineType(mid, eid)];
     const P3 = a.map(p => [p[0] * k, -p[2] * k, p[1] * k]); let z0 = Infinity, z1 = -Infinity; for (const p of P3) { z0 = Math.min(z0, p[2]); z1 = Math.max(z1, p[2]); }
     const plan = []; const seen = new Set(); for (const p of P3) { const key = Math.round(p[0]) + ',' + Math.round(p[1]); if (!seen.has(key)) { seen.add(key); plan.push([p[0], p[1]]); } }
-    items.push({ eid, kind, disc, name: str(line.Name), cls: api.GetNameFromTypeCode?.(api.GetLineType(mid, eid)) || '', st: contain[eid], z0, z1, ob: obb(plan) });
+    items.push({ eid, kind, disc, guid: str(line.GlobalId) || undefined, name: str(line.Name), cls: api.GetNameFromTypeCode?.(api.GetLineType(mid, eid)) || '', st: contain[eid], z0, z1, ob: obb(plan) });
   }
   api.CloseModel(mid);
   return { storeys, items, unitMM };
@@ -92,14 +92,14 @@ export function ifcToProject(P, data, { prefix = 'IFC' } = {}) {
       case 'pipe': el = { k: 'pipe', a, b, w: R(Math.max(o.W, H)), hh: R(Math.max(o.W, H)), z: R((it.z0 + it.z1) / 2 - L.elev), sys: it.name || '' }; break;
     }
     if (!el) continue; for (const k2 of Object.keys(el)) if (el[k2] === undefined) delete el[k2];
-    el.id = uid('e'); el.tag = it.name || undefined; el.ifc = it.eid; if (!el.tag) delete el.tag; P.content[s.id].els.push(el); stats[it.kind] = (stats[it.kind] || 0) + 1;
+    el.id = uid('e'); el.tag = it.name || undefined; el.ifc = it.eid; if (it.guid) el.guid = it.guid; if (!el.tag) delete el.tag; P.content[s.id].els.push(el); stats[it.kind] = (stats[it.kind] || 0) + 1;
   }
   // 문·창 → 가까운 벽의 개구부
   for (const it of items.filter(i => i.kind === 'door' || i.kind === 'window')) {
     if (!it.ob) continue; const L = levelFor(it); let best = null, bd = 1e9;
     for (const w of walls) { if (w.s.level !== L.id) continue; const e = w.el; const dx = e.b[0] - e.a[0], dy = e.b[1] - e.a[1], l2 = dx * dx + dy * dy || 1; const t = ((it.ob.c[0] - e.a[0]) * dx + (it.ob.c[1] - e.a[1]) * dy) / l2; const q = [e.a[0] + dx * t, e.a[1] + dy * t]; const d = Math.hypot(q[0] - it.ob.c[0], q[1] - it.ob.c[1]); if (t >= -0.05 && t <= 1.05 && d < bd) { bd = d; best = { w, t, len: Math.sqrt(l2) }; } }
     if (!best || bd > 600) { stats.skippedOpenings = (stats.skippedOpenings || 0) + 1; continue; }
-    const s0 = best.t * best.len - it.ob.L / 2; P.content[best.w.s.id].els.push({ id: uid('e'), k: 'opening', host: best.w.el.id, s: R(Math.max(0, s0)), w: R(it.ob.L), h: R(it.z1 - it.z0), sill: R(it.z0 - L.elev), kind: it.kind === 'window' ? 'window' : 'door', tag: it.name || undefined, ifc: it.eid });
+    const s0 = best.t * best.len - it.ob.L / 2; P.content[best.w.s.id].els.push({ id: uid('e'), k: 'opening', host: best.w.el.id, s: R(Math.max(0, s0)), w: R(it.ob.L), h: R(it.z1 - it.z0), sill: R(it.z0 - L.elev), kind: it.kind === 'window' ? 'window' : 'door', tag: it.name || undefined, ifc: it.eid, ...(it.guid ? { guid: it.guid } : {}) });
     stats[it.kind] = (stats[it.kind] || 0) + 1;
   }
   return { stats, sheets: Object.values(sheetFor) };

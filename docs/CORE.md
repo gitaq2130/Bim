@@ -1,4 +1,4 @@
-# 빌더 코어 규격 (Core v1.6.0)
+# 빌더 코어 규격 (Core v1.7.0)
 
 모든 툴이 공유하는 계약입니다. **이 문서와 코어 파일은 허브·코어 트랙만 수정합니다.**
 툴 트랙은 이 규격을 읽기만 하고, 바꿔야 하면 아래 "코어 변경 요청" 절차를 따릅니다.
@@ -8,7 +8,19 @@
 ## 1. 실행 구조
 
 - 정적 웹앱. `app/index.html` → `app/js/app.js`(ES 모듈) 진입. 빌드 단계 없음.
-- 외부 라이브러리는 `index.html`의 importmap으로 CDN 로드 (three@0.170.0, three-mesh-bvh, three-gpu-pathtracer).
+- 외부 라이브러리는 `index.html`의 importmap으로 CDN 로드 (1.7.0):
+  | 패키지 | 버전 | 라이선스 |
+  |---|---|---|
+  | three (+addons, tsl, webgpu) | 0.182.0 | MIT |
+  | three-mesh-bvh | 0.8.3 | MIT |
+  | three-gpu-pathtracer | 0.0.23 | MIT |
+  | camera-controls | 3.1.2 | MIT |
+  | web-ifc | 0.0.77 (`lib/web-ifc.wasm`과 같은 버전) | MPL-2.0 |
+  | @thatopen/components / @thatopen/fragments | 3.6.0 / 3.6.1 | MIT |
+  | pdf.js (`lib/`) | — | Apache-2.0 |
+  | SheetJS xlsx (cdnjs) | 0.18.5 | Apache-2.0 |
+- 라이선스 규칙(상용): MIT·BSD·Apache·MPL 바로 사용 / LGPL은 별도 라이브러리 동적 링크나 서버 전용 / GPL·AGPL은 참고만(코드 복사 금지). 새 패키지는 코어 변경 요청으로 이 표에 등록한 뒤 사용합니다.
+- 툴 간 직접 import는 줄여 갑니다(목표: `ctx.api` 등록소로만 호출).
 - `app/lib/`: pdf.js, web-ifc.wasm (벤더 파일, 수정 금지)
 - 배포: `app/` 폴더 전체를 Claude 아티팩트 "빌더 — 건축물 생애주기 통합 플랫폼"에 게시.
 - 해석·설계 계산은 브라우저 JS로만 수행 (AI 호출 없음).
@@ -114,6 +126,7 @@ export function mount(root, ctx) {
 | pile (1.6.0) | S | point | struct·cad (field `planBasis().found.piles` 기준) | `D, L, type(PHC·RCD·PRD), z0(두부 높이, 레벨 기준), cap(기초 id)` — 3D 원형 등가 박스, 물량 PIL(m) |
 | furn | A | point | interior | 조경 툴이 L 시트에 `tree`·`shrub`(`landscape:true, sp, cnt`)을 배치 → 물량 LTR·LSH(1.3.0) |
 
+- 객체 공통 속성 `guid`(1.7.0): IFC GlobalId(22자). IFC 가져오기 때 저장, 내보내기 때 그대로 사용(왕복 유지).
 - 공종(`DISC`): A 건축, S 구조, M 기계, E 전기, P 배관(위생), F 소방(1.1.0), I 인테리어(1.1.0), C 토목(1.2.0), L 조경(1.2.0). 재질은 `MATS`.
 - 내역 코드 1.6.0 추가: PIL 말뚝 시공(m).
 - 내역 코드(`DEFAULT_BOQ`) 1.3.0 추가: FLR 바닥 마감, WLF 벽 마감, BSE 걸레받이, LTR 교목 식재, LSH 관목 식재 (`BOQ_ADDED` → migrate가 기존 P.boq에 보충)
@@ -131,7 +144,7 @@ export function mount(root, ctx) {
 | `js/rev.js` | 리비전 생성·복원 |
 | `js/rebar.js` | 철근 규격·BBS |
 | `js/blocks.js`, `js/icons.js` | 블록·아이콘 정의 |
-| `js/dxf.js`, `js/ifc.js`, `js/ifcout.js`, `js/excel.js`, `js/zip.js` | 입출력 |
+| `js/dxf.js`, `js/ifc.js`, `js/ifcout.js`, `js/excel.js`, `js/zip.js` | 입출력 — `ifcout`은 1.7.0부터 `P.sched.acts`를 IFC4 4D(IfcWorkSchedule·IfcTask·IfcTaskTime·IfcRelSequence·IfcRelAssignsToProduct)로 함께 내보냄 |
 | `js/house.js`, `js/tower.js` | 샘플 프로젝트 |
 | `js/sitegeo.js` (1.2.0) | 대지경계(SITE 레이어 닫힌 폴리선)·건물 외곽·포장, 들로네 TIN·등고선 — 토목·조경·법규 공용 |
 

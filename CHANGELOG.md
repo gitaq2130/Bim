@@ -2,6 +2,9 @@
 
 형식: `- YYYY-MM-DD [track] vN: 요약` (최신이 위)
 
+## 2026-11-18
+- [core] 1.7.0: three 0.182·ThatOpen·camera-controls·web-ifc importmap 등록(view3d 요청), IFC GUID 왕복, IFC4 4D 공정 내보내기(field 요청), 라이선스 표·규칙 CORE.md 등록
+
 ## 2026-11-17
 - [view3d] v4: IFC 모델(ThatOpen components·fragments) — .ifc/.frag 업로드·변환 캐시, 분류·층 인식·속성, 빌더 객체 자동 연동(ID·GUID·부호·위치)·작도 이동, 단면 클리핑. 코어 three 0.182 importmap 반영 후 활성(.rvt는 IFC 내보내기 안내)
 
