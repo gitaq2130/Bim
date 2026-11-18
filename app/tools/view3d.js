@@ -2,11 +2,12 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { h, toast, saveFile, dialog } from '../js/ui.js';
+import { h, toast, saveFile, dialog, pickFile } from '../js/ui.js';
+import { uid } from '../js/util.js';
 import { IC } from '../js/icons.js';
 import { buildFurn } from './furn3d.js';
 import { sysColor, mepNetwork, SYS } from '../js/mep.js';
-import { FINISHES, finishMaps, worldUV, kelvin, skyTexture, horizonColor, buildInteriorLights, buildFixtureLights, sectionBasis, sectionCut, chainSegments, sectionProject, sectionSVG, sectionDXF } from './render3d.js';
+import { FINISHES, finishMaps, worldUV, kelvin, skyTexture, horizonColor, buildInteriorLights, buildFixtureLights, sectionBasis, sectionCut, chainSegments, sectionProject, sectionSVG, sectionDXF, loadThatOpen, fragmentsWorkerURL, ifcCatName, IFC_KIND, ifcCacheGet, ifcCachePut, ifcCacheDel, storeyItems, flattenIfcData } from './render3d.js';
 import { DISC, KINDS, MATS, SECTIONS, allElements, levelOf, elName, cumProgress, takeoff, isRefElement } from '../js/model.js';
 import { sunVector, localToDate, toDeg } from '../js/sun.js';
 import { statusAt, toD, toS, addDays, daysBetween } from './sched.js';
@@ -184,7 +185,7 @@ export function mount(root, ctx) {
       const only = new Set(RV.diff.removedObjs.map(x => x.el.id));
       buildInto({ ...P, ...RV.baseSnap }, { keep: true, only, ghost: true });
     }
-    mergeStatic(); rowsCache = null; netCache = null; refreshSel(); if (SEC.on) updateSec();
+    mergeStatic(); rowsCache = null; netCache = null; refreshSel(); if (SEC.on) updateSec(); IX.linkDirty = true; model.visible = IFC.builder !== false || !IX.models.size;
   }
   // 대형 모델: 같은 재질 메시를 합쳐 그리기 호출 수를 줄임 (원본은 숨겨 선택·속성용으로 유지)
   function mergeStatic() {
@@ -450,8 +451,12 @@ export function mount(root, ctx) {
     if (showPhotos && photoG.children.length) { const hp = ray.intersectObjects(photoG.children, false)[0]; if (hp) return showPhoto(hp.object.userData.photo); }
     if (st.secPick) { const hs = ray.intersectObjects([...model.children, ground], true).find(i => !isClipped(i.point) && (i.object.visible || i.object.userData.merged)); if (hs) secPickPoint(hs.point); return; }
     if (st.measure) { const hm = ray.intersectObjects([...model.children, ground], true).find(i => !isClipped(i.point)); if (hm) addMeasurePoint(hm.point); return; }
-    const hit = ray.intersectObjects(model.children, true).find(i => i.object.userData.ref && !isClipped(i.point) && (i.object.visible || i.object.userData.merged));
+    const hit = IFC.builder ? ray.intersectObjects(model.children, true).find(i => i.object.userData.ref && !isClipped(i.point) && (i.object.visible || i.object.userData.merged)) : null;
     const add = e.ctrlKey || e.metaKey || e.shiftKey;
+    if (IX.models.size && IFC.show && !add) { ifcPick(e, hit).then(done => { if (!done) pickBuilder(hit, add); }); return; }
+    pickBuilder(hit, add);
+  }
+  function pickBuilder(hit, add) {
     if (!hit) { if (!add) { sel.clear(); selRef.clear(); lastHit = null; onSel(); } return; }
     const ref = hit.object.userData.ref; lastHit = hit.point.clone();
     if (add) { if (sel.has(ref.id)) { sel.delete(ref.id); selRef.delete(ref.id); } else { sel.add(ref.id); selRef.set(ref.id, ref); } }
@@ -466,7 +471,7 @@ export function mount(root, ctx) {
     const boxes = new Map(); model.traverse(o => { const id = o.userData.ref?.id; if (o.isMesh && sel.has(id)) { if (!boxes.has(id)) boxes.set(id, new THREE.Box3()); boxes.get(id).expandByObject(o); } });
     for (const b of boxes.values()) { const hh = new THREE.Box3Helper(b.expandByScalar(0.02), 0x3fa9ff); hh.renderOrder = 40; hh.material.depthTest = false; hh.material.transparent = true; selG.add(hh); }
   }
-  function onSel() { refreshSel(); st.sideTab = 'prop'; renderSide(); markTree(); buildToolbar(); if (sel.size && window.innerWidth <= 800) side.classList.add('open'); }
+  function onSel() { if (IX.models.size) ifcFromBuilderSel(); refreshSel(); st.sideTab = 'prop'; renderSide(); markTree(); buildToolbar(); if (sel.size && window.innerWidth <= 800) side.classList.add('open'); }
   const findEl = (id) => { const ref = selRef.get(id); const SRC = ref?.removed && RV.baseSnap ? { ...P, ...RV.baseSnap } : VP; const sh = SRC.sheets.find(x => x.id === ref?.sheet) || SRC.sheets.find(x => SRC.content[x.id]?.els.some(e => e.id === id)); const el = sh && SRC.content[sh.id]?.els.find(x => x.id === id); return el ? { el, sh, lv: levelOf(SRC, sh.level), removed: !!ref?.removed } : null; };
   function hideSel() { if (!sel.size) return toast('먼저 객체를 선택하세요 (클릭, Ctrl+클릭으로 여러 개)'); for (const id of sel) st.hidden.add(id); sel.clear(); selRef.clear(); saveHidden(); buildModel(); renderTree(); onSel(); }
   function isolateSel() { if (!sel.size) return toast('먼저 객체를 선택하세요'); st.iso = new Set(sel); buildModel(); buildToolbar(); toast(`${sel.size}개만 표시 (분리) — "모두 표시"로 해제`); }
@@ -737,6 +742,181 @@ export function mount(root, ctx) {
       h('div', { class: 'note', style: { marginTop: '6px' } }, '굵은 선·해치 = 절단면(RC는 사선 해치, 벽은 회색), 가는 선 = 평면 너머 투영선(가려진 선 제거). 휠: 확대·축소, 끌기: 이동. DXF는 작도 툴에서 가져올 수 있습니다(레이어 단면-절단·투영·레벨·문자).'));
     bg.append(box); bg.addEventListener('pointerdown', (e) => { if (e.target === bg) close(); }); document.body.append(bg);
   }
+
+  // ---------- IFC 모델 (ThatOpen components·fragments) ----------
+  // P.view.ifc.files: [{id, name, size, date, items, cats}] — 변환본(.frag)은 IndexedDB 'builder-ifc'에 `${P.id}:${id}` 키로 캐시
+  const IFC = P.view.ifc = Object.assign({ files: [], show: true, builder: true, hidCats: [], hidStoreys: [] }, P.view.ifc || {});
+  const ifcG = new THREE.Group(); ifcG.name = 'ifc'; scene.add(ifcG);
+  const IX = { ready: null, err: null, models: new Map(), sel: null, data: null, linkDirty: true, busy: false };
+  const ifcKey = (id) => `${P.id}:${id}`;
+  async function ifcEngine() {
+    if (IX.ready) return IX.ready;
+    IX.ready = (async () => {
+      const { OBC, FRAGS } = await loadThatOpen();
+      const comp = new OBC.Components(); const frags = comp.get(OBC.FragmentsManager);
+      IX.workerURL = await fragmentsWorkerURL(); frags.init(IX.workerURL);
+      comp.init(); // 규칙: init()·dispose() 짝 (unmount에서 dispose)
+      const loader = comp.get(OBC.IfcLoader);
+      await loader.setup({ autoSetWasm: false, wasm: { path: new URL('../lib/', import.meta.url).href, absolute: true } });
+      frags.list.onItemSet.add(({ value }) => { value.useCamera(camera); value.useClippingPlanes?.(clipPlanes); });
+      Object.assign(IX, { OBC, FRAGS, comp, frags, loader }); IX.err = null; return IX;
+    })().catch(e => { IX.ready = null; IX.err = e; throw e; });
+    return IX.ready;
+  }
+  // fragments의 useClippingPlanes는 컬링용이라, 화면 단면은 타일 재질에 빌더 clipPlanes를 직접 연결 (타일이 동적으로 생기므로 갱신 때마다 확인)
+  function ifcClipMats() { ifcG.traverse(o => { const ms = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : []; for (const mt of ms) if (mt.clippingPlanes !== clipPlanes) { mt.clippingPlanes = clipPlanes; mt.clipShadows = true; mt.needsUpdate = true; } }); }
+  let ifcUpdT = 0; function ifcUpdate(force) { if (!IX.frags || !IX.models.size) return; const now = performance.now(); if (!force && now - ifcUpdT < 120) return; ifcUpdT = now; IX.frags.core.update(!!force); ifcClipMats(); }
+  controls.addEventListener('change', () => ifcUpdate());
+  const ifcProg = (msg) => { let el = holder.querySelector('.ifc-prog'); if (!msg) { el?.remove(); return; } if (!el) { el = h('div', { class: 'mono ifc-prog', style: { position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%,-50%)', background: '#0f1218ee', border: '1px solid #2a3342', borderRadius: '8px', padding: '10px 16px', fontSize: '13px', zIndex: 5 } }); holder.append(el); } el.textContent = msg; };
+  async function ifcUpload() {
+    if (IX.err?.core) { toast(IX.err.message, 'err', 7000); return; } // 엔진 사용 불가가 이미 확인됨 → 파일 고르기 전에 안내
+    const f = await pickFile('.ifc,.frag,.rvt'); if (!f) return; // 파일 선택창은 클릭 직후에 열어야 함(사용자 동작 제한)
+    if (/\.rvt$/i.test(f.name)) return dialog({ title: 'Revit 파일(.rvt)은 직접 읽을 수 없습니다', body: 'Revit 형식은 공개된 파서가 없습니다. Revit에서 <b>파일 → 내보내기 → IFC</b>로 내보낸 뒤(IFC4 Reference View 또는 IFC2x3 Coordination View 2.0 권장, "기준점: 측량점/프로젝트 기준점" 유지) 그 .ifc 파일을 올려 주세요.', ok: '확인', cancel: null });
+    if (IX.busy) return toast('다른 IFC를 처리 중입니다'); IX.busy = true;
+    try {
+      ifcProg('IFC 엔진 준비 중…'); await ifcEngine();
+      const buf = new Uint8Array(await f.arrayBuffer()); const id = uid('ifc'); let model;
+      if (/\.frag$/i.test(f.name)) { ifcProg('fragments 읽는 중…'); model = await IX.frags.core.load(buf, { modelId: id, camera }); }
+      else { const t0 = performance.now(); ifcProg(`IFC 변환 중… (${(f.size / 1e6).toFixed(1)}MB)`); model = await IX.loader.load(buf, false, id, { processData: { progressCallback: (p) => ifcProg(`IFC 변환 중… ${Math.round((p || 0) * 100)}%`) } }); console.info('IFC 변환', Math.round(performance.now() - t0), 'ms'); }
+      const frag = await model.getBuffer(false); const cached = await ifcCachePut(ifcKey(id), frag);
+      const info = await ifcAttach(id, model);
+      IFC.files.push({ id, name: f.name, size: f.size, date: new Date().toISOString().slice(0, 10), items: info.items, cats: info.cats.length, cached }); IFC.show = true; builderShow(false); ctx.touch('meta'); // 겹침(z-fighting) 방지: 빌더 모델은 숨기고 연동용으로만 유지
+      toast(`IFC 불러옴: ${f.name} — 객체 ${info.items.toLocaleString('ko-KR')}개, 분류 ${info.cats.length}종. 빌더 모델은 숨김(홈 → 빌더 모델로 겹쳐 보기)${cached ? '' : ' · 브라우저 캐시 불가: 다음에 다시 올려야 함'}`, 'ok', 6000);
+      frame(); st.sideTab = 'ifc'; renderSide(); side.classList.add('open'); buildToolbar();
+    } catch (e) { console.warn(e); toast((e.core ? '' : 'IFC 불러오기 실패: ') + e.message, 'err', 7000); }
+    finally { ifcProg(null); IX.busy = false; }
+  }
+  // 변환된 모델을 장면에 붙이고 분류·층·좌표 정렬
+  async function ifcAttach(id, model) {
+    model.useCamera(camera); model.useClippingPlanes?.(clipPlanes); ifcG.add(model.object);
+        // 좌표: fragments는 모델을 원점 근처로 옮겨 담는다(coordination). 그만큼 되돌려 IFC 원좌표(m, Y-up)에 놓고 빌더 기준점(P.base)만큼 이동. 연결 객체가 있으면 ifcLink에서 중앙값으로 미세 보정 (getBoxes는 월드 좌표)
+    const cm = await model.getCoordinationMatrix(); const t = new THREE.Vector3().setFromMatrixPosition(cm);
+    model.object.position.set(-t.x - bx / 1000, -t.y, -t.z + by / 1000); model.object.updateMatrixWorld(true);
+    const geoIds = await model.getItemsIdsWithGeometry(); const gset = new Set(geoIds);
+    const catMap = await model.getItemsOfCategories([/.*/]); const cats = [];
+    for (const [c, ids] of Object.entries(catMap)) { const g = ids.filter(i => gset.has(i)); if (g.length) cats.push({ c, ids: g }); }
+    cats.sort((a, b) => b.ids.length - a.ids.length);
+    const tree = await model.getSpatialStructure(); const sIt = storeyItems(tree); const sIds = [...sIt.keys()];
+    const sData = sIds.length ? await model.getItemsData(sIds, { attributesDefault: false, attributes: ['Name', 'Elevation'] }) : [];
+    const storeys = sIds.map((sid, i) => { const d = sData[i] || {}; return { id: sid, name: d.Name?.value || `층 ${sid}`, elev: +(d.Elevation?.value ?? 0), ids: sIt.get(sid).filter(x => gset.has(x)) }; }).sort((a, b) => a.elev - b.elev);
+    const M = { id, model, cats, storeys, items: geoIds.length, l2b: new Map(), b2l: new Map(), linkStat: null };
+    IX.models.set(id, M); IX.linkDirty = true; model.visible = IFC.builder !== false; await ifcApplyVis(M); ifcUpdate(true); if (pt) ptDirty();
+    return { items: geoIds.length, cats };
+  }
+  async function ifcRestore() { // 마운트 시 캐시된 IFC 자동 복원
+    if (!IFC.files.length) return;
+    try { await ifcEngine(); } catch (e) { IX.err = e; return; }
+    for (const f of IFC.files) { if (IX.models.has(f.id)) continue; const buf = await ifcCacheGet(ifcKey(f.id)); if (!buf) { f.missing = true; continue; } f.missing = false;
+      try { const model = await IX.frags.core.load(new Uint8Array(buf), { modelId: f.id, camera }); await ifcAttach(f.id, model); } catch (e) { console.warn(e); f.missing = true; } }
+    if (sel.size) ifcFromBuilderSel(); if (st.sideTab === 'ifc') renderSide();
+  }
+  async function ifcRemove(id) {
+    const M = IX.models.get(id); if (M) { ifcG.remove(M.model.object); await IX.frags.core.disposeModel(id); IX.models.delete(id); }
+    if (IX.sel?.file === id) IX.sel = null; IFC.files = IFC.files.filter(f => f.id !== id); await ifcCacheDel(ifcKey(id)); if (!IX.models.size) model.visible = true; ctx.touch('meta'); ifcUpdate(true); renderSide(); buildToolbar();
+  }
+  async function ifcApplyVis(M) {
+    const m = M.model; await m.resetVisible();
+    const hid = new Set(IFC.hidCats); const off = []; for (const c of M.cats) if (hid.has(c.c)) off.push(...c.ids);
+    const hs = new Set(IFC.hidStoreys); for (const s of M.storeys) if (hs.has(s.name)) off.push(...s.ids);
+    if (off.length) await m.setVisible(off, false);
+    M.model.object.visible = !!IFC.show; ifcUpdate(true);
+  }
+  async function ifcVisAll() { for (const M of IX.models.values()) await ifcApplyVis(M); }
+  function ifcSetShow(v) { IFC.show = v; for (const M of IX.models.values()) M.model.object.visible = v; ctx.touch('meta'); ifcUpdate(true); }
+  function builderShow(v) { IFC.builder = v; model.visible = v; ctx.touch('meta'); }
+  // ----- 2D/3D 연동: IFC 객체 ↔ 빌더 객체 -----
+  // 1) expressID(빌더 IFC 가져오기 el.ifc) 2) GlobalId(el.guid, 코어 반영 후) 3) 부호(Tag = 빌더 id 또는 고유 부호) 4) 같은 종류·중심 거리 ≤ 300mm
+  async function ifcLink(M) {
+    const rows = allElements(VP).filter(r => r.el.k !== 'room'); const byId = new Map(rows.map(r => [r.el.id, r]));
+    const m = M.model; const ids = M.cats.flatMap(c => c.ids); const catOf = new Map(); for (const c of M.cats) for (const i of c.ids) catOf.set(i, c.c);
+    const l2b = new Map(), b2l = new Map(); const how = { id: 0, guid: 0, tag: 0, pos: 0 };
+    const put = (lid, bid, k) => { if (l2b.has(lid) || b2l.has(bid)) return false; l2b.set(lid, bid); b2l.set(bid, lid); how[k]++; return true; };
+    const kindOk = (lid, r) => { const k = IFC_KIND[catOf.get(lid)]; return !k || k === r.el.k || (k === 'opening' && r.el.k === 'opening'); };
+    // 1) expressID — 종류가 70% 이상 맞을 때만 같은 파일로 인정
+    const byIfc = rows.filter(r => r.el.ifc != null); if (byIfc.length) { const cand = byIfc.filter(r => catOf.has(r.el.ifc)); const ok = cand.filter(r => kindOk(r.el.ifc, r)); if (ok.length >= Math.max(3, cand.length * 0.7)) for (const r of ok) put(r.el.ifc, r.el.id, 'id'); }
+    // 2) GlobalId
+    const byGuid = rows.filter(r => r.el.guid); if (byGuid.length) { const lids = await m.getLocalIdsByGuids(byGuid.map(r => r.el.guid)); lids.forEach((lid, i) => { if (lid != null && catOf.has(lid)) put(lid, byGuid[i].el.id, 'guid'); }); }
+    // 3) Tag
+    const rest = ids.filter(i => !l2b.has(i));
+    if (rest.length) { const data = await m.getItemsData(rest, { attributesDefault: false, attributes: ['Tag'] }); const tagCnt = new Map(); for (const r of rows) if (r.el.tag) tagCnt.set(r.el.tag, (tagCnt.get(r.el.tag) || 0) + 1);
+      const byTag = new Map(rows.filter(r => r.el.tag && tagCnt.get(r.el.tag) === 1).map(r => [r.el.tag, r]));
+      data.forEach((d, i) => { const tg = d?.Tag?.value; if (!tg) return; const r = byId.get(tg) || byTag.get(tg); if (r && kindOk(rest[i], r)) put(rest[i], r.el.id, 'tag'); }); }
+    // 연결된 쌍으로 위치 보정 (중앙값)
+    const pairs = [...l2b.entries()].slice(0, 400); const bBox = new Map(); model.updateMatrixWorld(true); model.traverse(o => { const id = o.userData.ref?.id; if (o.isMesh && id && !o.userData.ref.removed) { if (!bBox.has(id)) bBox.set(id, new THREE.Box3()); bBox.get(id).expandByObject(o); } });
+    if (pairs.length >= 3) { const lb = await m.getBoxes(pairs.map(p => p[0])); const dx = [], dy = [], dz = []; const mw = m.object.matrixWorld;
+      pairs.forEach(([lid, bid], i) => { const bb = bBox.get(bid); if (!bb || !lb[i] || lb[i].isEmpty()) return; const a = bb.getCenter(new THREE.Vector3()), b = lb[i].getCenter(new THREE.Vector3()); dx.push(a.x - b.x); dy.push(a.y - b.y); dz.push(a.z - b.z); });
+      const med = (v) => { const s2 = v.slice().sort((x, y) => x - y); return s2[s2.length >> 1] || 0; };
+      if (dx.length >= 3) { const d = new THREE.Vector3(med(dx), med(dy), med(dz)); if (d.length() > 0.01) { m.object.position.add(d); m.object.updateMatrixWorld(true); ifcUpdate(true); } M.shift = d.length(); } }
+    // 4) 위치 매칭
+    const rest2 = ids.filter(i => !l2b.has(i) && IFC_KIND[catOf.get(i)]);
+    if (rest2.length) { const lb = await m.getBoxes(rest2); const mw = m.object.matrixWorld; const grid = new Map(); const G = 2; const key = (v) => `${Math.floor(v.x / G)},${Math.floor(v.y / G)},${Math.floor(v.z / G)}`;
+      for (const [bid, bb] of bBox) { if (b2l.has(bid)) continue; const c = bb.getCenter(new THREE.Vector3()); const k = key(c); if (!grid.has(k)) grid.set(k, []); grid.get(k).push([bid, c, bb.getSize(new THREE.Vector3())]); }
+      rest2.forEach((lid, i) => { if (!lb[i] || lb[i].isEmpty()) return; const b = lb[i]; const c = b.getCenter(new THREE.Vector3()), sz = b.getSize(new THREE.Vector3()); let best = null, bd = 0.3;
+        for (let x = -1; x <= 1; x++) for (let y = -1; y <= 1; y++) for (let z = -1; z <= 1; z++) for (const [bid, bc, bs] of grid.get(`${Math.floor(c.x / G) + x},${Math.floor(c.y / G) + y},${Math.floor(c.z / G) + z}`) || []) { const r = byId.get(bid); if (!r || b2l.has(bid) || !kindOk(lid, r)) continue; const d = bc.distanceTo(c) + bs.distanceTo(sz) * 0.25; if (d < bd) { bd = d; best = bid; } }
+        if (best) put(lid, best, 'pos'); }); }
+    M.l2b = l2b; M.b2l = b2l; M.linkStat = { ...how, total: l2b.size, ifc: ids.length, builder: rows.filter(r => r.el.k !== 'opening').length };
+  }
+  async function ifcLinkAll(force) { if (!force && !IX.linkDirty) return; IX.linkDirty = false; for (const M of IX.models.values()) await ifcLink(M); }
+  const HL = () => ({ color: new THREE.Color('#ffb020'), renderedFaces: IX.FRAGS?.RenderedFaces?.TWO ?? 1, opacity: 1, transparent: false });
+  async function ifcHighlight(fileId, lids) { for (const M of IX.models.values()) await M.model.resetHighlight(); if (fileId && lids?.length) await IX.models.get(fileId)?.model.highlight(lids, HL()); ifcUpdate(true); }
+  async function ifcSelect(fileId, lid) {
+    const M = IX.models.get(fileId); if (!M) return; await ifcLinkAll();
+    const [d] = await M.model.getItemsData([lid], { attributesDefault: true, relations: { IsDefinedBy: { attributes: true, relations: true }, IsTypedBy: { attributes: true, relations: false }, DefinesOccurrence: false } });
+    const cat = d?._category?.value; IX.sel = { file: fileId, lid, cat, guid: d?._guid?.value, data: flattenIfcData(d), bid: M.l2b.get(lid) || null };
+    await ifcHighlight(fileId, [lid]);
+    sel.clear(); selRef.clear(); if (IX.sel.bid) { const r = allElements(VP).find(x => x.el.id === IX.sel.bid); if (r) { sel.add(r.el.id); selRef.set(r.el.id, { id: r.el.id, sheet: r.sheet.id }); } }
+    refreshSel(); markTree(); st.sideTab = 'ifc'; renderSide(); buildToolbar(); if (window.innerWidth <= 800) side.classList.add('open');
+  }
+  async function ifcFromBuilderSel() { // 빌더 객체 선택 → 연결된 IFC 객체 강조
+    if (!IX.models.size) return; await ifcLinkAll(); const hits = new Map();
+    for (const id of sel) for (const M of IX.models.values()) { const lid = M.b2l.get(id); if (lid != null) { if (!hits.has(M.id)) hits.set(M.id, []); hits.get(M.id).push(lid); } }
+    for (const M of IX.models.values()) await M.model.resetHighlight(); for (const [fid, lids] of hits) await IX.models.get(fid).model.highlight(lids, HL()); ifcUpdate(true);
+    IX.sel = null;
+  }
+  async function ifcPick(e, builderHit) { // 화면 클릭 → IFC 레이캐스트(빌더보다 가까우면 IFC 선택)
+    if (!IFC.show || !IX.models.size) return false; let best = null;
+    for (const M of IX.models.values()) { const r = await M.model.raycast({ camera, mouse: new THREE.Vector2(e.clientX, e.clientY), dom: renderer.domElement }); if (r && !isClipped(r.point) && (!best || r.distance < best.r.distance)) best = { M, r }; }
+    if (!best) return false; const bd = builderHit && IFC.builder ? builderHit.distance : Infinity; if (bd < best.r.distance - 0.02) return false;
+    await ifcSelect(best.M.id, best.r.localId); return true;
+  }
+  function goCad(bid) { const r = allElements(VP).find(x => x.el.id === bid); if (!r) return toast('연결된 빌더 객체를 찾지 못했습니다', 'err'); ctx.go('cad', { sheet: r.sheet.id, hi: { ids: [bid] } }); }
+  function ifcPanel() {
+    side.append(h('h4', {}, 'IFC 모델'));
+    const s0 = h('div', { class: 'sec' }); side.append(s0);
+    s0.append(h('div', { class: 'row', style: { gap: '4px', flexWrap: 'wrap' } }, h('button', { class: 'btn sm', onclick: ifcUpload }, 'IFC 올리기 (.ifc·.frag)'),
+      h('button', { class: 'btn sm' + (IFC.show ? ' on' : ''), onclick: () => { ifcSetShow(!IFC.show); renderSide(); buildToolbar(); } }, 'IFC 표시'),
+      h('button', { class: 'btn sm' + (IFC.builder ? ' on' : ''), onclick: () => { builderShow(!IFC.builder); renderSide(); buildToolbar(); } }, '빌더 모델 표시')));
+    if (IX.err?.core || (IX.err && !IX.models.size)) s0.append(h('div', { class: 'note', style: { color: '#ffb86b', marginTop: '6px' } }, IX.err.message));
+    if (!IFC.files.length) { s0.append(h('div', { class: 'note', style: { marginTop: '6px' } }, 'IFC2x3·IFC4 파일을 올리면 원본 형상 그대로 빌더 모델과 같은 좌표에 겹쳐 보입니다. Revit(.rvt)은 Revit에서 IFC로 내보내 올려 주세요. 변환본은 이 브라우저에 저장돼 다음에 바로 열립니다.')); return; }
+    for (const f of IFC.files) { const M = IX.models.get(f.id);
+      s0.append(h('div', { class: 'row', style: { justifyContent: 'space-between', marginTop: '6px', gap: '6px' } }, h('div', { style: { minWidth: 0 } }, h('div', { style: { fontSize: '12.5px', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, f.name), h('div', { class: 'note' }, `${(f.size / 1e6).toFixed(1)}MB · 객체 ${(f.items || 0).toLocaleString('ko-KR')} · ${f.date}${M ? '' : f.missing ? ' · 캐시 없음(다시 올리기)' : ' · 불러오는 중'}`)),
+        h('button', { class: 'btn sm', onclick: async () => { if (await dialog({ title: 'IFC 모델 제거', body: `${f.name}을(를) 이 프로젝트의 3D에서 제거합니다.`, ok: '제거', danger: true })) ifcRemove(f.id); } }, '제거'))); }
+    // 선택 객체 속성
+    if (IX.sel) { const S = IX.sel; side.append(h('h4', {}, '선택한 IFC 객체'));
+      const s1 = h('div', { class: 'sec' }); side.append(s1);
+      s1.append(h('div', { class: 'ptbl' }, h('span', {}, '분류'), h('span', {}, `${ifcCatName(S.cat)} (${S.cat})`), h('span', {}, 'GlobalId'), h('span', { class: 'mono' }, S.guid || '-'), h('span', {}, 'expressID'), h('span', { class: 'mono' }, String(S.lid)), ...S.data.attrs.filter(([k]) => !/^(GlobalId)$/.test(k)).slice(0, 12).flatMap(([k, v]) => [h('span', {}, k), h('span', {}, v)])));
+      const r = S.bid && allElements(VP).find(x => x.el.id === S.bid);
+      s1.append(h('div', { class: 'pgrp' }, '빌더 연동'), r ? h('div', {}, h('div', { class: 'note' }, `연결: ${elName(r.el)} · ${r.sheet.name}`), h('div', { class: 'row', style: { gap: '4px', marginTop: '4px' } }, h('button', { class: 'btn sm', onclick: () => goCad(r.el.id) }, '작도(2D)에서 보기'), h('button', { class: 'btn sm', onclick: () => { st.sideTab = 'prop'; renderSide(); } }, '빌더 속성'))) : h('div', { class: 'note' }, '연결된 빌더 객체 없음 — 허브의 "IFC 가져오기"로 빌더 객체를 만들면 자동 연결됩니다.'));
+      for (const ps of S.data.psets) { s1.append(h('div', { class: 'pgrp' }, ps.name), h('div', { class: 'ptbl' }, ...ps.props.slice(0, 30).flatMap(([k, v]) => [h('span', {}, k), h('span', {}, v)]))); }
+    }
+    // 분류(인식) · 층 · 연동 현황
+    for (const M of IX.models.values()) {
+      const f = IFC.files.find(x => x.id === M.id); side.append(h('h4', {}, `분류 — ${f?.name || M.id}`)); const s2 = h('div', { class: 'sec' }); side.append(s2);
+      const hid = new Set(IFC.hidCats);
+      for (const c of M.cats) { const cb = h('input', { type: 'checkbox', checked: !hid.has(c.c) }); cb.onchange = async () => { const H = new Set(IFC.hidCats); if (cb.checked) H.delete(c.c); else H.add(c.c); IFC.hidCats = [...H]; ctx.touch('meta'); await ifcVisAll(); };
+        const isol = h('button', { class: 'btn sm', style: { padding: '0 6px' }, title: '이 분류만 보기', onclick: async () => { IFC.hidCats = M.cats.map(x => x.c).filter(x => x !== c.c); ctx.touch('meta'); await ifcVisAll(); renderSide(); } }, '만');
+        s2.append(h('div', { class: 'row', style: { justifyContent: 'space-between', gap: '6px' } }, h('label', { class: 'row', style: { gap: '6px', minWidth: 0 }, title: c.c }, cb, `${ifcCatName(c.c)}`), h('span', { class: 'row', style: { gap: '4px' } }, h('span', { class: 'note' }, `${c.ids.length}`), isol))); }
+      s2.append(h('div', { class: 'row', style: { gap: '4px', marginTop: '6px' } }, h('button', { class: 'btn sm', onclick: async () => { IFC.hidCats = []; IFC.hidStoreys = []; ctx.touch('meta'); await ifcVisAll(); renderSide(); } }, '모두 표시')));
+      if (M.storeys.length) { s2.append(h('div', { class: 'pgrp' }, '층 (IfcBuildingStorey)')); const hs = new Set(IFC.hidStoreys);
+        for (const s3 of M.storeys) { const cb = h('input', { type: 'checkbox', checked: !hs.has(s3.name) }); cb.onchange = async () => { const H = new Set(IFC.hidStoreys); if (cb.checked) H.delete(s3.name); else H.add(s3.name); IFC.hidStoreys = [...H]; ctx.touch('meta'); await ifcVisAll(); };
+          s2.append(h('div', { class: 'row', style: { justifyContent: 'space-between' } }, h('label', { class: 'row', style: { gap: '6px' } }, cb, s3.name), h('span', { class: 'note mono' }, `EL ${fmt(s3.elev, 2)} · ${s3.ids.length}개`))); } }
+      const L = M.linkStat; s2.append(h('div', { class: 'pgrp' }, '빌더 연동'));
+      s2.append(L ? h('div', { class: 'note' }, `연결 ${L.total.toLocaleString('ko-KR')} / IFC ${L.ifc.toLocaleString('ko-KR')}개 (ID ${L.id} · GUID ${L.guid} · 부호 ${L.tag} · 위치 ${L.pos})${M.shift > 0.01 ? ` · 위치 보정 ${fmt(M.shift, 2)}m` : ''}`) : h('div', { class: 'note' }, '연동 계산 전'));
+      s2.append(h('button', { class: 'btn sm', style: { marginTop: '4px' }, onclick: async () => { await ifcLinkAll(true); renderSide(); } }, '연동 다시 계산'));
+    }
+    if (IX.models.size && IX.linkDirty) ifcLinkAll().then(() => { if (st.sideTab === 'ifc') renderSide(); });
+  }
+  function ifcDispose() { try { for (const M of IX.models.values()) ifcG.remove(M.model.object); IX.comp?.dispose(); } catch (e) { console.warn(e); } if (IX.workerURL) URL.revokeObjectURL(IX.workerURL); IX.models.clear(); }
   let boxHelper = null;
   function setSecBox(b) { if (!b) { st.secBox = null; applyClip(); return; } st.secBox = { min: b.min.clone(), max: b.max.clone() }; applyClip(); }
   function selBox3() { const b = new THREE.Box3(); model.traverse(o => { if (o.isMesh && sel.has(o.userData.ref?.id) && !o.userData.ref.removed) b.expandByObject(o); }); return b; }
@@ -811,7 +991,8 @@ export function mount(root, ctx) {
       home: [group('탐색', big('ORBIT', '궤도', () => setMode('orbit'), st.mode === 'orbit'), big('WALK', '보행', () => setMode('walk'), st.mode === 'walk'), col(sm('HOME3', '전체 보기', () => { setMode('orbit'); frame(); }), sm('ZOOMSEL', '선택 확대 (F)', zoomSel), sm('CAPTURE', '화면 캡처', capture))),
         group('선택', col(sm('HIDE', '숨기기 (H)', hideSel), sm('ISOLATE', '분리 (I)', isolateSel, !!st.iso), sm('SHOWALL', '모두 표시 (U)', showAll)), col(sm('TREE', '선택 트리', () => { st.treeOpen = !st.treeOpen; P.view.tree3d = st.treeOpen; renderTree(); R(); }, st.treeOpen), sm('PROPS', '속성', () => { st.sideTab = 'prop'; renderSide(); side.classList.add('open'); }), sm('', '선택 해제 (Esc)', () => { sel.clear(); selRef.clear(); onSel(); }))),
         group('공종', ...discCol()),
-        group('표시', col(sm('XRAY', '투시(X-ray)', () => { st.xray = !st.xray; buildModel(); R(); }, st.xray), sm('GROUND', '지반', () => { st.ground = !st.ground; ground.visible = st.ground; R(); }, st.ground), sm('PHOTO', `현장 사진 ${(P.photos || []).filter(p => p.pt).length}`, () => { showPhotos = !showPhotos; buildPhotos(); R(); }, showPhotos)))],
+        group('표시', col(sm('XRAY', '투시(X-ray)', () => { st.xray = !st.xray; buildModel(); R(); }, st.xray), sm('GROUND', '지반', () => { st.ground = !st.ground; ground.visible = st.ground; R(); }, st.ground), sm('PHOTO', `현장 사진 ${(P.photos || []).filter(p => p.pt).length}`, () => { showPhotos = !showPhotos; buildPhotos(); R(); }, showPhotos))),
+        group('IFC', big('BROWSER', 'IFC 올리기', ifcUpload, false, 'IFC(.ifc)·fragments(.frag) 올리기 — Revit은 IFC로 내보내 올림'), col(sm('', 'IFC 표시', () => { ifcSetShow(!IFC.show); R(); }, IFC.show && IFC.files.length > 0), sm('', '빌더 모델', () => { builderShow(!IFC.builder); R(); }, IFC.builder), sm('', 'IFC 분류·속성', () => { st.sideTab = 'ifc'; renderSide(); side.classList.add('open'); }, st.sideTab === 'ifc')))],
       view: [group('방향', big('TOP', '평면', () => viewDir(new THREE.Vector3(0, 1, 0.0001))), big('FRONT', '남측', () => viewDir(new THREE.Vector3(0, 0.15, 1))), col(sm('FRONT', '북측', () => viewDir(new THREE.Vector3(0, 0.15, -1))), sm('SIDE', '동측', () => viewDir(new THREE.Vector3(1, 0.15, 0))), sm('SIDE', '서측', () => viewDir(new THREE.Vector3(-1, 0.15, 0)))), big('HOME3', '등각', () => viewDir(new THREE.Vector3(1, 0.7, 1.2)))),
         group('저장 시점', big('CAMERA', '현재 시점 저장', () => { const n = `시점 ${P.view.cams.length + 1}`; P.view.cams.push({ name: n, pos: camera.position.toArray(), tgt: controls.target.toArray(), hour: st.hour, date: st.date }); ctx.touch('meta'); toast(n + ' 저장'); goSec('저장 시점'); }), big('PROPS', '시점 목록', () => goSec('저장 시점'))),
         group('재질', big('MATS', '재질·색감', () => goSec('재질')))],
@@ -846,8 +1027,9 @@ export function mount(root, ctx) {
   }
   function renderSide() {
     side.innerHTML = '';
-    side.append(h('div', { class: 'ptabs' }, ...[['prop', '속성'], ['set', '표시·분석']].map(([k, l]) => h('button', { class: st.sideTab === k ? 'on' : '', onclick: () => { st.sideTab = k; renderSide(); } }, l)), h('span', { style: { flex: 1 } }), h('button', { class: 'btn sm show-m', onclick: () => side.classList.remove('open') }, '닫기')));
+    side.append(h('div', { class: 'ptabs' }, ...[['prop', '속성'], ['set', '표시·분석'], ['ifc', 'IFC']].map(([k, l]) => h('button', { class: st.sideTab === k ? 'on' : '', onclick: () => { st.sideTab = k; renderSide(); } }, l)), h('span', { style: { flex: 1 } }), h('button', { class: 'btn sm show-m', onclick: () => side.classList.remove('open') }, '닫기')));
     if (st.sideTab === 'prop') { side.append(info); propsPanel(); return; }
+    if (st.sideTab === 'ifc') { if (!IX.ready && !IX.err) ifcEngine().catch(() => { }).finally(() => { if (st.sideTab === 'ifc') renderSide(); }); ifcPanel(); return; }
     renderSettings();
   }
   function goSec(name) { st.sideTab = 'set'; renderSide(); side.classList.add('open'); const t = [...side.querySelectorAll('h4')].find(x => x.textContent.includes(name)); if (t) { t.scrollIntoView({ block: 'start' }); t.classList.add('flash'); setTimeout(() => t.classList.remove('flash'), 1200); } }
@@ -1007,7 +1189,7 @@ export function mount(root, ctx) {
     if (st.schedPlay && st._schedTick) { st._acc = (st._acc || 0) + dt; if (st._acc > 0.12) { st._acc = 0; st._schedTick(); } }
     if (st.playing) { st.hour = (st.hour + dt * 1.5) % 24; updateSun(); const r = side.querySelector('input[type=range]'); if (r) r.value = st.hour; }
     if (st.mode === 'walk' && keys.size) { const sp = 3 * dt; const f = new THREE.Vector3(Math.sin(yaw), 0, -Math.cos(yaw)), rgt = new THREE.Vector3(Math.cos(yaw), 0, Math.sin(yaw)); if (keys.has('f')) camera.position.addScaledVector(f, sp); if (keys.has('b')) camera.position.addScaledVector(f, -sp); if (keys.has('l')) camera.position.addScaledVector(rgt, -sp); if (keys.has('r')) camera.position.addScaledVector(rgt, sp); applyLook(); }
-    if (st.mode === 'orbit') controls.update(); syncCube();
+    if (st.mode === 'orbit') controls.update(); syncCube(); if (IX.models.size) ifcUpdate();
     for (const mk of markers.children) mk.scale.setScalar(1 + 0.25 * Math.sin(t / 200));
     if (pt && !pt.isCompiling) { pt.renderSample(); ptInfo.textContent = `사진 렌더 ${pt.samples | 0} 샘플${pt.samples < 64 ? ' — 멈춰 있으면 점점 선명해집니다' : ' — 렌더 저장 가능'}`; }
     else if (pt) { ptInfo.textContent = '셰이더 컴파일 중…'; }
@@ -1020,11 +1202,12 @@ export function mount(root, ctx) {
     if (!b.isEmpty()) { const c = b.getCenter(new THREE.Vector3()); const r = Math.max(4, b.getSize(new THREE.Vector3()).length()); controls.target.copy(c); camera.position.copy(c).add(new THREE.Vector3(1, 0.8, 1.1).normalize().multiplyScalar(r * 1.6)); camera.far = 2000; camera.updateProjectionMatrix(); st.xray = true; buildModel(); buildToolbar(); }
     else frame();
   } else frame();
-  window.__v3d = { scene, renderer, camera, controls, sun, lightsG, RD, st, get skyTex() { return skyTex; } };
+  ifcRestore();
+  window.__v3d = { IX, IFC, scene, renderer, camera, controls, sun, lightsG, RD, st, get skyTex() { return skyTex; } };
   raf = requestAnimationFrame(loop);
   if (RD.quality === 'high') setupComposer().catch(e => { console.warn(e); RD.quality = 'fast'; }); else if (RD.quality === 'path') { RD.quality = 'high'; setupComposer().catch(() => { }); }
   const offModel = ctx.bus.on('model', () => { if (RV.cur == null && (P.prevs || []).length) setRev(null); else buildModel(); });
   return {
-    unmount() { stopPath(); dropComposer(); fixMat.dispose(); clearTimeout(secTimer); RV.play = false; window.removeEventListener('keydown', onRevKey); window.removeEventListener('keydown', onSelKey); cancelAnimationFrame(raf); ro.disconnect(); offModel(); window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onKey); controls.dispose(); clearMats(); renderer.dispose(); renderer.forceContextLoss?.(); },
+    unmount() { stopPath(); dropComposer(); fixMat.dispose(); clearTimeout(secTimer); ifcDispose(); RV.play = false; window.removeEventListener('keydown', onRevKey); window.removeEventListener('keydown', onSelKey); cancelAnimationFrame(raf); ro.disconnect(); offModel(); window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onKey); controls.dispose(); clearMats(); renderer.dispose(); renderer.forceContextLoss?.(); },
   };
 }
