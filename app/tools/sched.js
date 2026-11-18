@@ -299,6 +299,114 @@ export function siteChecks(plan, items, phase = 'all') {
   return out.sort((a, b) => (a.lv === '위험' ? 0 : 1) - (b.lv === '위험' ? 0 : 1));
 }
 
+// ---------- 주공정(CPM) ----------
+// schedule() 이후 날짜 기준: 일 인덱스(착공일=0), FS + lag. tf = 총 여유일
+export function cpm(acts) {
+  const out = { byId: {}, s0: null, end: 0 }; if (!acts.length) return out;
+  const s0 = acts.reduce((m, a) => a.start < m ? a.start : m, acts[0].start); out.s0 = s0;
+  const R = Object.fromEntries(acts.map(a => [a.id, { es: daysBetween(s0, a.start), dur: Math.max(1, a.dur || 1) }])); for (const r of Object.values(R)) r.ef = r.es + r.dur;
+  const end = Math.max(...Object.values(R).map(r => r.ef)); out.end = end; const succ = {}; for (const a of acts) for (const p of a.pred || []) if (R[p]) (succ[p] ||= []).push(a);
+  for (const a of [...acts].sort((x, y) => R[y.id].es - R[x.id].es)) { const r = R[a.id]; r.lf = Math.min(end, ...(succ[a.id] || []).map(s => (R[s.id].ls ?? R[s.id].es) - (s.lag || 0))); r.ls = r.lf - r.dur; r.tf = r.ls - r.es; r.crit = r.tf <= 0; }
+  out.byId = R; return out;
+}
+// ---------- 실적 진척 ----------
+// 우선순위: 작업일보 금일 작업(활동 연결·진척 입력) → 담당자 확인된 현장 사진 판정(연결 부재 평균)
+export function actualOf(P, a, date, memo) {
+  let best = null; for (const [d, rec] of Object.entries(P.daily || {})) if (d <= date) for (const w of rec.work || []) if (w.act === a.id && w.pct !== '' && w.pct != null && (!best || d > best.d)) best = { d, pct: clamp(+w.pct, 0, 100) };
+  if (best) return { pct: best.pct, src: `작업일보 ${best.d}`, date: best.d };
+  const ph = memo?.ph?.(date); if (!ph) return null; const ids = actIds(P, a, memo); const shot = ids.map(id => ph[id]).filter(x => x && x.checked);
+  if (!shot.length) return null; return { pct: Math.round(shot.reduce((s, x) => s + x.pct, 0) / ids.length), src: `현장 사진 ${shot.length}/${ids.length}개 부재`, date: shot.reduce((m, x) => x.date > m ? x.date : m, '') };
+}
+const actIds = (P, a, memo) => { const k = a.id; if (memo?.ids?.has(k)) return memo.ids.get(k); const v = allElements(P, r => matchAct(a, r)).map(r => r.el.id); memo?.ids?.set(k, v); return v; };
+const planPct = (a, date) => { const t = toD(date), s = toD(a.start), e = toD(a.end) + DAY; return t >= e ? 100 : t <= s ? 0 : Math.round((t - s) / (e - s) * 100); };
+// ---------- 자원(공종·인원) ----------
+export const RES = { 골조: 12, 토공: 6, 말뚝: 5, 가설: 6, 건축: 8, 설비: 6, 전기: 5, 소방: 4 }; // 활동당 기본 투입 인원(조 기준)
+export function tradeOf(a) {
+  if (a.trade) return a.trade; const d = a.filter?.disc, k = a.filter?.kind;
+  if (a.ph === '가설') return '가설'; if (a.ph === '토공') return '토공'; if (a.ph === '말뚝') return '말뚝';
+  if (a.ph === '기초' || a.ph === '지하' || a.ph === '지상' || d === 'S' || ['footing', 'column', 'beam', 'slab'].includes(k)) return '골조';
+  return d === 'M' || d === 'P' ? '설비' : d === 'E' ? '전기' : d === 'F' ? '소방' : '건축';
+}
+const menOf = (a) => +a.men || RES[tradeOf(a)] || 6;
+const needsCrane = (a) => tradeOf(a) === '골조' && a.ph !== '기초' && /기둥|보|슬래브|철골|column|beam|slab/i.test(a.name);
+const TRADE_KW = { 골조: ['형틀목공', '철근공', '콘크리트공', '철골공'], 토공: ['보통인부'], 말뚝: ['보통인부'], 가설: ['보통인부', '현장관리'], 건축: ['조적공', '미장·방수', '도장·내장'], 설비: ['설비'], 전기: ['전기'], 소방: ['소방'] };
+const MAT_KW = { 골조: /철근|레미콘|콘크리트|거푸집|합판|유로폼|알폼|철골|H형강|데크/, 말뚝: /PHC|말뚝|파일|케이싱/, 토공: null, 가설: null, 건축: /벽돌|블록|창호|유리|석고|타일|방수/, 설비: /덕트|배관|파이프|밸브|보온/, 전기: /트레이|케이블|전선|배관|분전/, 소방: /스프링클러|소화|배관/ };
+// ---------- 작업 준비도 (Work Readiness Score) ----------
+export const WRS_W = { pred: 45, issue: 15, mat: 15, crew: 10, space: 15 };
+export function readiness(P, a, date, M) {
+  const items = []; const add = (k, sc, txt, warn) => items.push({ k, sc, max: WRS_W[k], txt, warn });
+  const preds = (a.pred || []).map(id => M.byId[id]).filter(Boolean); let block = false;
+  if (!preds.length) add('pred', WRS_W.pred, '선행 공정 없음');
+  else { const v = preds.map(p => { const x = actualOf(P, p, date, M); return { p, pct: x ? x.pct : null, est: !x, plan: planPct(p, date) }; });
+    const pv = v.map(x => x.pct ?? x.plan); block = pv.some(x => x < 100); const avg = pv.reduce((s, x) => s + x, 0) / pv.length;
+    const open = v.filter((x, i) => pv[i] < 100); const est = v.filter(x => x.est).length;
+    add('pred', Math.round(WRS_W.pred * (block ? avg / 100 * 0.6 : 1)), block ? `선행 미완료: ${open.map(x => `${x.p.name} ${x.pct ?? x.plan}%${x.est ? '(계획)' : ''}`).join(', ')}` : `선행 ${preds.length}건 완료${est ? ` (실적 없음 ${est}건은 계획 기준)` : ''}`, block || est > 0); }
+  const ids = new Set(actIds(P, a, M)); const iss = (P.issues || []).filter(i => i.status !== '완료' && (i.refs?.ids || []).some(id => ids.has(id)));
+  add('issue', iss.length ? 0 : WRS_W.issue, iss.length ? `미결 이슈 ${iss.length}건: ${iss.slice(0, 2).map(i => `#${i.no} ${i.title}`).join(', ')}` : '연결 부재의 미결 이슈 없음', iss.length > 0);
+  const tr = tradeOf(a); const days = Object.keys(P.daily || {}).filter(d => d <= date).sort(); const re = M.mat;
+  const kw = MAT_KW[tr]; if (!kw) add('mat', WRS_W.mat, '자재 반입 해당 없음');
+  else if (!days.length) add('mat', Math.round(WRS_W.mat / 2), '작업일보 자재 반입 기록 없음 (중립)', true);
+  else { const recent = days.filter(d => daysBetween(d, date) <= 14).flatMap(d => (P.daily[d].mat || []).map(m => ({ ...m, d }))).filter(m => kw.test(`${m.name || ''} ${m.spec || ''}`));
+    const bad = recent.filter(m => m.check === '불합격' || m.check === '반출'), ok = recent.filter(m => m.check === '합격' || m.check === '조건부');
+    add('mat', bad.length && !ok.length ? 0 : ok.length ? WRS_W.mat : recent.length ? Math.round(WRS_W.mat * 0.6) : Math.round(WRS_W.mat / 3), bad.length && !ok.length ? `반입 자재 불합격: ${bad[0].name}` : ok.length ? `${ok[ok.length - 1].name} 반입·${ok[ok.length - 1].check} (${ok[ok.length - 1].d})` : recent.length ? `${recent[0].name} 반입, 검수 미완료` : '최근 14일 관련 자재 반입 기록 없음', !ok.length); }
+  const recentD = days.filter(d => daysBetween(d, date) <= 3); const crews = recentD.flatMap(d => P.daily[d].crew || []); const want = TRADE_KW[tr] || [];
+  if (!days.length) add('crew', Math.round(WRS_W.crew / 2), '작업일보 인원 기록 없음 (중립)', true);
+  else { const hit = crews.filter(c => want.includes(c.trade) && +c.n > 0); add('crew', hit.length ? WRS_W.crew : Math.round(WRS_W.crew * 0.3), hit.length ? `${[...new Set(hit.map(c => c.trade))].join('·')} 투입 중 (최근 3일)` : `${want.join('·')} 투입 기록 없음 (최근 3일)`, !hit.length); }
+  if (!needsCrane(a)) add('space', WRS_W.space, '양중·작업 공간 조건 없음');
+  else { const S = P.sched?.site?.items || []; const cranes = S.filter(i => (i.type === 'tc' || i.type === 'mc') && ['all', 'fr'].includes(i.phase));
+    if (!S.length) add('space', Math.round(WRS_W.space / 2), '부지·동선 계획 없음 (중립)', true);
+    else if (!cranes.length) add('space', 0, '골조 기간 크레인이 배치되지 않음', true);
+    else { const dz = (M.danger ??= (() => { try { return siteChecks(planBasis(P, P.sched.cond || {}), S, 'fr').filter(c => c.lv === '위험').length; } catch (e) { return 0; } })()); add('space', dz ? Math.round(WRS_W.space / 2) : WRS_W.space, dz ? `크레인 ${cranes.length}대, 골조 단계 부지 위험 ${dz}건` : `크레인 ${cranes.length}대·하역 구역 확보`, dz > 0); } }
+  const score = items.reduce((s, x) => s + x.sc, 0); const status = block ? '선행 미완료' : score >= 80 ? '착수 가능' : score >= 60 ? '조건부' : '보류';
+  return { score, status, items, block };
+}
+// 기준일의 활동 상태와 다음 공정 추천
+export function nextActs(P, date, opt = {}) {
+  const acts = P.sched?.acts || []; if (!acts.length) return null; schedule(acts); const C = cpm(acts);
+  let phMemo = null; const M = { byId: Object.fromEntries(acts.map(a => [a.id, a])), ids: new Map(), ph: (d) => (phMemo ||= opt.photoProgress ? opt.photoProgress(P, d) : null) };
+  const rows = acts.map(a => { const x = actualOf(P, a, date, M); const pl = planPct(a, date); const pct = x ? x.pct : null; return { a, act: x, pct, plan: pl, c: C.byId[a.id], state: pct == null ? (pl > 0 ? '실적 없음' : '착수 전') : pct >= 100 ? '완료' : pct > 0 ? '진행 중' : '착수 전' }; });
+  const byA = Object.fromEntries(rows.map(r => [r.a.id, r]));
+  // 선행 완료 판단: 실적이 없으면 계획 기준
+  const doneOf = (id) => { const r = byA[id]; return (r.pct ?? r.plan) >= 100; };
+  const cand = rows.filter(r => r.state === '착수 전' || (r.state === '실적 없음' && r.plan < 100)).filter(r => (r.a.pred || []).every(doneOf) || daysBetween(date, r.a.start) <= 14);
+  for (const r of cand) r.w = readiness(P, r.a, date, M);
+  const rank = { '착수 가능': 0, '조건부': 1, '보류': 2, '선행 미완료': 3 };
+  cand.sort((x, y) => rank[x.w.status] - rank[y.w.status] || (y.c.crit - x.c.crit) || x.c.tf - y.c.tf || x.a.start.localeCompare(y.a.start) || y.w.score - x.w.score);
+  return { rows, cand, cpm: C, prog: rows.filter(r => r.state === '진행 중'), done: rows.filter(r => r.state === '완료').length, late: rows.filter(r => r.state !== '완료' && r.pct != null && r.pct + 10 < r.plan) };
+}
+// ---------- 자원 제약 일정 최적화 (RCPSP: 직렬 일정 생성 + 전진·후진 개선) ----------
+// cap: {공종: 투입 가능 인원}, crane: 동시 양중 가능 활동 수. 비어 있는 공종은 제약 없음.
+export function usageOf(acts, startIdx, cap) {
+  const use = {}; for (const a of acts) { const t = tradeOf(a), s = startIdx[a.id], n = Math.max(1, a.dur || 1); (use[t] ||= []); for (let d = s; d < s + n; d++) use[t][d] = (use[t][d] || 0) + menOf(a); if (needsCrane(a)) { (use.크레인 ||= []); for (let d = s; d < s + n; d++) use.크레인[d] = (use.크레인[d] || 0) + 1; } }
+  const over = {}; for (const [t, arr] of Object.entries(use)) { const c = cap[t]; if (!c) continue; over[t] = arr.reduce((k, v) => k + (v > c ? 1 : 0), 0); }
+  return { use, over };
+}
+export function optimize(acts, cap, iters = 160) {
+  if (!acts.length) return null; schedule(acts); const C = cpm(acts); const R = C.byId; const id = acts.map(a => a.id); const A = Object.fromEntries(acts.map(a => [a.id, a]));
+  const rel = Object.fromEntries(acts.map(a => [a.id, (a.pred || []).length ? 0 : R[a.id].es]));
+  const need = (a) => { const o = { [tradeOf(a)]: menOf(a) }; if (needsCrane(a)) o.크레인 = 1; return o; };
+  const N = Object.fromEntries(acts.map(a => [a.id, need(a)])); const D = Object.fromEntries(acts.map(a => [a.id, Math.max(1, a.dur || 1)]));
+  const sgs = (prio) => { // prio: 작을수록 먼저
+    const use = {}; const st = {}; const done = new Set(); const left = new Set(id);
+    while (left.size) { let best = null; for (const k of left) if ((A[k].pred || []).every(p => done.has(p) || !A[p]) && (!best || prio[k] < prio[best])) best = k; if (!best) { best = [...left][0]; }
+      let t = Math.max(rel[best], ...(A[best].pred || []).filter(p => A[p] && st[p] != null).map(p => st[p] + D[p] + (A[best].lag || 0)));
+      const fits = (t0) => { for (let d = t0; d < t0 + D[best]; d++) for (const [r, n] of Object.entries(N[best])) { const c = cap[r]; if (!c) continue; const u = use[r]?.[d] || 0; if (u > 0 && u + n > c) return false; } return true; };
+      while (!fits(t)) t++; st[best] = t; for (const [r, n] of Object.entries(N[best])) { if (!cap[r]) continue; use[r] ||= []; for (let d = t; d < t + D[best]; d++) use[r][d] = (use[r][d] || 0) + n; }
+      done.add(best); left.delete(best); }
+    return { st, ms: Math.max(...id.map(k => st[k] + D[k])) }; };
+  // 1) 최소 여유(LFT) 규칙 2) 무작위 섞음 3) 직전 해의 종료일 순(전진·후진 개선)
+  let best = sgs(Object.fromEntries(id.map(k => [k, R[k].lf + R[k].es / 1000]))); let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < iters; i++) { const base = i % 3 === 2 ? best.st : null; const pr = Object.fromEntries(id.map(k => [k, base ? base[k] + D[k] + rnd() * 0.5 : R[k].lf * (0.85 + rnd() * 0.3) + rnd()])); const s = sgs(pr); if (s.ms < best.ms) best = s; }
+  const cur = Object.fromEntries(acts.map(a => [a.id, R[a.id].es])); const before = usageOf(acts, cur, cap);
+  return { start: best.st, ms: best.ms, cpmEnd: C.end, s0: C.s0, before, after: usageOf(acts, best.st, cap), moved: id.filter(k => best.st[k] !== cur[k]).length };
+}
+// 최적화 결과를 공정표에 반영: 선행 FS 지연일(lag)로 고정해 schedule()이 같은 날짜를 내도록
+export function applyStarts(acts, s0, st) {
+  const A = Object.fromEntries(acts.map(a => [a.id, a])); const D = (a) => Math.max(1, a.dur || 1);
+  for (const a of acts) { const ps = (a.pred || []).filter(p => A[p]); if (!ps.length) { a.start = addDays(s0, st[a.id]); continue; } const e = Math.max(...ps.map(p => st[p] + D(A[p]))); a.lag = Math.max(0, st[a.id] - e); }
+  return schedule(acts);
+}
+
 // 날짜 기준 계획 기성률(금액 가중)
 export function plannedPct(P, date, rows = takeoff(P)) {
   const st = statusAt(P, date); const price = Object.fromEntries(P.boq.map(b => [b.code, b.price])); let tot = 0, done = 0;
@@ -315,18 +423,20 @@ export function mount(root, ctx) {
   function render() {
     while (cleanups.length) cleanups.pop()(); w.innerHTML = '';
     w.append(h('div', { class: 'row', style: { justifyContent: 'space-between' } }, h('div', {}, h('h1', {}, '공정 (4D)'), h('div', { class: 'sub' }, '공정 활동을 층·공종·객체 종류로 모델에 연결하면 3D에서 날짜별 시공 순서를 재생하고, 기성 회차의 계획 기성률을 자동 계산합니다.')),
-      h('div', { class: 'row' }, h('button', { class: 'btn', title: 'MS Project XML(.xml), Excel(.xlsx/.csv) — P6는 XML/엑셀로 내보낸 뒤 불러오세요', onclick: importSched }, '공정표 불러오기'), h('button', { class: 'btn', onclick: gen }, '모델에서 공정 자동 생성'), h('button', { class: 'btn primary', onclick: addAct }, '+ 활동'))));
+      h('div', { class: 'row' }, h('button', { class: 'btn', title: 'Primavera P6(.xer), MS Project XML(.xml), Excel(.xlsx/.csv)', onclick: importSched }, '공정표 불러오기'), h('button', { class: 'btn', onclick: gen }, '모델에서 공정 자동 생성'), h('button', { class: 'btn primary', onclick: addAct }, '+ 활동'))));
     const tabs = h('div', { class: 'row', style: { gap: '4px', marginTop: '10px', borderBottom: '1px solid var(--line)' } });
-    for (const [k, n] of [['gantt', '공정표'], ['method', '공법·기초'], ['site', '부지·동선']]) tabs.append(h('button', { class: 'tb' + (st.tab === k ? ' on' : ''), onclick: () => { st.tab = k; render(); } }, n));
+    for (const [k, n] of [['gantt', '공정표'], ['next', '다음 공정'], ['opt', '최적화'], ['method', '공법·기초'], ['site', '부지·동선']]) tabs.append(h('button', { class: 'tb' + (st.tab === k ? ' on' : ''), onclick: () => { st.tab = k; render(); } }, n));
     w.append(tabs);
+    if (st.tab === 'next') { renderNext().catch(e => { console.error(e); toast('다음 공정 계산 실패: ' + e.message, 'err'); }); return; }
+    if (st.tab === 'opt') return renderOpt();
     if (st.tab === 'method') return renderMethod();
     if (st.tab === 'site') return renderSite();
     if (!SC.acts.length) { w.append(h('div', { class: 'card', style: { marginTop: '14px' } }, h('div', { class: 't' }, '공정 활동이 없습니다'), h('div', { class: 'd' }, '"모델에서 공정 자동 생성"을 누르면 "공법·기초" 탭의 현장 조건과 공법에 따라 가설·흙막이·터파기·말뚝·기초·골조(지하·지상)·마감 순으로 활동이 만들어집니다.', h('button', { class: 'btn sm', style: { marginTop: '8px' }, onclick: () => { st.tab = 'method'; render(); } }, '공법·기초 먼저 보기')))); return; }
     schedule(SC.acts);
     const s0 = SC.acts.reduce((m, a) => toD(a.start) < toD(m) ? a.start : m, SC.acts[0].start), e0 = SC.acts.reduce((m, a) => toD(a.end) > toD(m) ? a.end : m, SC.acts[0].end);
-    const span = daysBetween(s0, e0) + 1;
+    const span = daysBetween(s0, e0) + 1; const CP = cpm(SC.acts);
     w.append(h('div', { class: 'row', style: { margin: '12px 0' } },
-      h('span', { class: 'pill acc' }, `착공 ${s0}`), h('span', { class: 'pill acc' }, `완료 ${e0}`), h('span', { class: 'pill' }, `총 ${span}일 · 활동 ${SC.acts.length}개`), SC.method ? h('span', { class: 'pill', title: '공법·기초 탭에서 바꿀 수 있습니다' }, `공법 ${METHODS[SC.method]?.short || '-'}`) : null,
+      h('span', { class: 'pill acc' }, `착공 ${s0}`), h('span', { class: 'pill acc' }, `완료 ${e0}`), h('span', { class: 'pill' }, `총 ${span}일 · 활동 ${SC.acts.length}개`), SC.method ? h('span', { class: 'pill', title: '공법·기초 탭에서 바꿀 수 있습니다' }, `공법 ${METHODS[SC.method]?.short || '-'}`) : null, h('span', { class: 'pill bad', title: '총 여유 0일 활동 — 빨간 테두리' }, `주공정 ${SC.acts.filter(a => CP.byId[a.id]?.crit).length}개`),
       h('button', { class: 'btn sm', onclick: () => { ctx.state.sched4d = { date: s0 }; ctx.go('view3d'); } }, '▶ 3D 4D 재생'),
       h('button', { class: 'btn sm', onclick: fillPlan }, '기성 회차 계획률 자동 입력'),
       h('button', { class: 'btn sm', onclick: () => saveFile(`${P.name}_공정표.csv`.replace(/[\\/:*?"<>|]/g, '_'), csv([['WBS', '활동', '시작', '종료', '기간(일)', '선행', '연결 객체 수'], ...SC.acts.map(a => [a.wbs || '', a.name, a.start, a.end, a.dur, (a.pred || []).map(p => SC.acts.find(x => x.id === p)?.name || '').join('; '), count(a)])])) }, 'CSV'),
@@ -342,7 +452,7 @@ export function mount(root, ctx) {
       const y = 30 + i * rowH, x = left + daysBetween(s0, a.start) * px, wd = (daysBetween(a.start, a.end) + 1) * px;
       svg += `<rect x="0" y="${y}" width="${svgW}" height="${rowH}" fill="${st.sel === a.id ? '#1d3350' : i % 2 ? '#ffffff04' : 'transparent'}" data-a="${a.id}" style="cursor:pointer"/>`;
       svg += `<text x="8" y="${y + 19}" fill="#e6e9ef" font-size="12.5" data-a="${a.id}" style="cursor:pointer"><title>${esc(a.name)}</title>${esc(a.name.length > 25 ? a.name.slice(0, 24) + '…' : a.name)}</text><text x="${left - 8}" y="${y + 19}" fill="#6f7a8d" font-size="11" text-anchor="end">${a.dur}일 · ${count(a)}</text>`;
-      svg += `<rect x="${x}" y="${y + 7}" width="${wd}" height="${rowH - 14}" rx="3" fill="${a.color || '#4ea1ff'}" opacity="0.85" data-a="${a.id}" style="cursor:pointer"><title>${esc(a.name)} ${a.start} ~ ${a.end}${a.note ? '\n' + esc(a.note) : ''}</title></rect>`;
+      svg += `<rect x="${x}" y="${y + 7}" width="${wd}" height="${rowH - 14}" rx="3" fill="${a.color || '#4ea1ff'}" opacity="0.85" data-a="${a.id}" style="cursor:pointer"${CP.byId[a.id]?.crit ? ' stroke="#f7768e" stroke-width="2"' : ''}><title>${esc(a.name)} ${a.start} ~ ${a.end}${a.note ? '\n' + esc(a.note) : ''}</title></rect>`;
       for (const pid of a.pred || []) { const p = SC.acts.find(z => z.id === pid); if (!p) continue; const pi = SC.acts.indexOf(p); const px1 = left + (daysBetween(s0, p.end) + 1) * px, py = 30 + pi * rowH + rowH / 2; svg += `<path d="M${px1} ${py} h6 V${y + rowH / 2} H${x}" fill="none" stroke="#6f7a8d" stroke-width="1" marker-end="url(#ar)"/>`; }
     });
     if (tx > left && tx < svgW) svg += `<line x1="${tx}" x2="${tx}" y1="24" y2="${svgH}" stroke="#ef5f5f" stroke-dasharray="4 3"/><text x="${tx + 3}" y="${svgH - 4}" fill="#ef5f5f" font-size="10">오늘</text>`;
@@ -364,17 +474,20 @@ export function mount(root, ctx) {
     const lag = h('input', { type: 'number', value: a.lag || 0, style: { width: '60px' } }); lag.onchange = () => { a.lag = +lag.value; save(); render(); };
     const sel = (label, key, opts) => { const s = h('select'); s.append(h('option', { value: '' }, '전체')); for (const [v, l] of opts) s.append(h('option', { value: v, selected: a.filter?.[key] === v }, l)); s.onchange = () => { a.filter ||= {}; a.filter[key] = s.value || undefined; a.ids = null; save(); render(); }; return fld(label, s); };
     const zones = [...new Set(allElements(P).map(r => r.el.zone).filter(Boolean))];
-    kv.append(fld('활동명', name), fld('시작', sd), fld('기간(일)', du), fld('선행(FS, 여러개)', pr), fld('지연(일)', lag), sel('층', 'level', P.levels.map(l => [l.id, l.name])), sel('공종', 'disc', Object.entries(DISC).map(([k, d]) => [k, d.name])), sel('객체', 'kind', Object.entries(KINDS).map(([k, d]) => [k, d.name])), sel('구역', 'zone', zones.map(z => [z, z])));
+    const trs = h('select', { title: '자원 최적화에 쓰는 공종' }); trs.append(h('option', { value: '' }, `자동 (${tradeOf({ ...a, trade: '' })})`)); for (const t of Object.keys(RES)) trs.append(h('option', { value: t, selected: a.trade === t }, t)); trs.onchange = () => { a.trade = trs.value || undefined; save(); render(); };
+    const men = h('input', { type: 'number', min: 1, value: a.men || '', placeholder: String(RES[tradeOf(a)] || 6), style: { width: '70px' } }); men.onchange = () => { a.men = men.value === '' ? undefined : Math.max(1, +men.value); save(); render(); };
+    kv.append(fld('활동명', name), fld('시작', sd), fld('기간(일)', du), fld('공종(자원)', trs), fld('투입 인원', men), fld('선행(FS, 여러개)', pr), fld('지연(일)', lag), sel('층', 'level', P.levels.map(l => [l.id, l.name])), sel('공종', 'disc', Object.entries(DISC).map(([k, d]) => [k, d.name])), sel('객체', 'kind', Object.entries(KINDS).map(([k, d]) => [k, d.name])), sel('구역', 'zone', zones.map(z => [z, z])));
     card.append(h('div', { class: 'row', style: { justifyContent: 'space-between', marginBottom: '8px' } }, h('div', { class: 't' }, `${a.name} — ${a.start} ~ ${a.end}`), h('div', { class: 'row' },
       h('button', { class: 'btn sm', onclick: () => { const ids = allElements(P, r => matchAct(a, r)).map(r => r.el.id); ctx.state.hi = { ids, label: a.name }; ctx.go('view3d'); } }, `연결 객체 ${count(a)}개 3D 보기`),
       h('button', { class: 'btn sm', onclick: () => { const i = SC.acts.indexOf(a); if (i > 0) { SC.acts.splice(i, 1); SC.acts.splice(i - 1, 0, a); save(); render(); } } }, '↑'), h('button', { class: 'btn sm', onclick: () => { const i = SC.acts.indexOf(a); SC.acts.splice(i, 1); SC.acts.splice(i + 1, 0, a); save(); render(); } }, '↓'),
       h('button', { class: 'btn sm danger', onclick: () => { SC.acts = SC.acts.filter(x => x !== a); for (const o of SC.acts) o.pred = (o.pred || []).filter(p => p !== a.id); st.sel = null; save(); render(); } }, '삭제'))), kv);
   }
   async function importSched() {
-    const f = await pickFile('.xml,.xlsx,.xls,.csv'); if (!f) return;
+    const f = await pickFile('.xml,.xer,.xlsx,.xls,.csv'); if (!f) return;
     let rows = [];
     try {
       if (/\.xml$/i.test(f.name)) rows = parseMSP(await f.text());
+      else if (/\.xer$/i.test(f.name)) rows = parseXER(await f.text());
       else { const X = await xlsx(); const wb = X.read(new Uint8Array(await f.arrayBuffer()), { type: 'array', cellDates: true }); const ws = wb.Sheets[wb.SheetNames[0]]; rows = parseTable(X.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' })); }
     } catch (e) { console.error(e); return toast('공정표를 읽지 못했습니다: ' + e.message, 'err'); }
     if (!rows.length) return toast('활동을 찾지 못했습니다 (작업명·시작·기간/종료 열 필요)', 'err');
@@ -386,6 +499,86 @@ export function mount(root, ctx) {
     if (!v) return; if (v.keep) for (const a of acts) { a.predShow = a.pred; a.pred = []; }
     for (const a of acts) delete a._src;
     SC.acts = v.mode === 'append' ? [...SC.acts, ...acts] : acts; SC.start = acts.reduce((m, a) => a.start < m ? a.start : m, acts[0].start); save(); render(); toast(`활동 ${acts.length}개 불러옴`, 'ok');
+  }
+  // ---------- 다음 공정 탭 ----------
+  const todayS = () => toS(Date.now() + 7 * 3600e3);
+  async function renderNext() {
+    if (!SC.acts.length) { w.append(h('div', { class: 'card', style: { marginTop: '12px' } }, h('div', { class: 't' }, '공정 활동이 없습니다'), h('div', { class: 'd' }, '공정표를 먼저 만들거나 불러오세요.'))); return; }
+    st.ndate ||= clampDate(todayS()); const { photoProgress } = await import('./site.js'); const R = nextActs(P, st.ndate, { photoProgress }); if (!R) return;
+    const di = h('input', { type: 'date', value: st.ndate }); di.onchange = () => { if (di.value) { st.ndate = di.value; render(); } };
+    const card = (l, v, cls, t) => h('div', { class: 'card', title: t || '', style: { padding: '8px 12px', minWidth: '120px' } }, h('div', { class: 'note' }, l), h('div', { style: { fontSize: '18px', fontWeight: 600 }, class: cls ? 'pill ' + cls : '' }, v));
+    const ready = R.cand.filter(r => r.w.status === '착수 가능').length, crit = R.rows.filter(r => r.c?.crit && r.state !== '완료').length;
+    w.append(h('div', { class: 'row', style: { marginTop: '12px', gap: '8px', flexWrap: 'wrap', alignItems: 'flex-end' } }, h('label', { style: { display: 'flex', flexDirection: 'column', gap: '3px' } }, h('span', { class: 'note' }, '기준일'), di), h('button', { class: 'btn sm', onclick: () => { st.ndate = todayS(); render(); } }, '오늘'),
+      card('완료', `${R.done}/${R.rows.length}`), card('진행 중', R.prog.length), card('착수 가능', ready, ready ? 'ok' : ''), card('계획 대비 지연', R.late.length, R.late.length ? 'bad' : '', '실적이 계획보다 10%p 넘게 낮은 활동'), card('남은 주공정 활동', crit, '', '총 여유 0일 — 늦어지면 준공이 늦어짐')));
+    w.append(h('div', { class: 'note', style: { marginTop: '6px' } }, '실적은 작업일보 "금일 작업"의 진척(활동 연결)과 담당자가 확인한 현장 사진 판정에서 가져옵니다. 실적이 없는 활동은 계획 기준으로 표시합니다.'));
+    const bar = (sc) => h('div', { style: { height: '6px', background: 'var(--bg3)', borderRadius: '3px', overflow: 'hidden', width: '120px' } }, h('div', { style: { width: sc + '%', height: '100%', background: sc >= 80 ? 'var(--ok)' : sc >= 60 ? 'var(--warn)' : 'var(--bad)' } }));
+    const pillCls = { '착수 가능': 'ok', '조건부': 'warn', '보류': 'bad', '선행 미완료': '' };
+    const sec = h('div', { class: 'card', style: { marginTop: '10px' } }, h('div', { class: 't' }, `다음 공정 추천 (${R.cand.length})`), h('div', { class: 'note', style: { margin: '2px 0 6px' } }, '정렬: 착수 준비 상태 → 주공정 → 여유일 → 계획 착수일. 점수는 선행 완료 45 · 미결 이슈 15 · 자재 15 · 인원 10 · 양중·공간 15.'));
+    if (!R.cand.length) sec.append(h('div', { class: 'note' }, '14일 안에 착수할 활동이 없습니다. 기준일을 바꿔 보세요.'));
+    for (const r of R.cand.slice(0, st.nall ? 99 : 8)) { const a = r.a, W2 = r.w; const dd = daysBetween(st.ndate, a.start);
+      const box = h('div', { style: { borderTop: '1px solid var(--line)', padding: '8px 0' } },
+        h('div', { class: 'row', style: { justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' } },
+          h('div', { style: { minWidth: 0 } }, h('div', { style: { fontWeight: 600, fontSize: '13.5px' } }, a.name, ' ', h('span', { class: 'pill ' + (pillCls[W2.status] || '') }, W2.status), r.c?.crit ? h('span', { class: 'pill bad', style: { marginLeft: '4px' } }, '주공정') : h('span', { class: 'pill', style: { marginLeft: '4px' } }, `여유 ${r.c?.tf ?? '-'}일`)),
+            h('div', { class: 'note', style: { fontSize: '11.5px' } }, `계획 ${a.start} ~ ${a.end} (${dd > 0 ? `D-${dd}` : dd === 0 ? '오늘' : `${-dd}일 지남`}) · ${tradeOf(a)} ${menOf(a)}명`)),
+          h('div', { class: 'row', style: { gap: '8px' } }, h('span', { style: { fontWeight: 600 } }, W2.score), bar(W2.score),
+            h('button', { class: 'btn sm', title: '기준일 작업일보 금일 작업에 추가', onclick: () => addToDaily(a) }, '일보에 추가'),
+            h('button', { class: 'btn sm', onclick: () => { ctx.state.hi = { ids: allElements(P, x => matchAct(a, x)).map(x => x.el.id), label: a.name }; ctx.go('view3d'); } }, '3D'))),
+        h('div', { class: 'row', style: { gap: '4px', flexWrap: 'wrap', marginTop: '4px' } }, ...W2.items.map(x => h('span', { class: 'pill' + (x.sc < x.max ? x.sc === 0 ? ' bad' : ' warn' : ' ok'), title: x.txt, style: { fontSize: '11px' } }, `${{ pred: '선행', issue: '이슈', mat: '자재', crew: '인원', space: '양중' }[x.k]} ${x.sc}/${x.max}`))),
+        h('div', { class: 'note', style: { fontSize: '11.5px', marginTop: '3px' } }, W2.items.filter(x => x.warn || x.sc < x.max).map(x => x.txt).join(' · ') || '모든 조건 충족'));
+      sec.append(box); }
+    if (R.cand.length > 8) sec.append(h('button', { class: 'btn sm', onclick: () => { st.nall = !st.nall; render(); } }, st.nall ? '접기' : `전체 ${R.cand.length}건 보기`));
+    w.append(sec);
+    const pr = h('div', { class: 'card', style: { marginTop: '10px' } }, h('div', { class: 't' }, `진행 중·실적 (${R.prog.length + R.late.filter(r => r.state !== '진행 중').length})`));
+    const rows = [...R.prog, ...R.late.filter(r => r.state !== '진행 중')]; if (!rows.length) pr.append(h('div', { class: 'note' }, '실적이 입력된 진행 중 활동이 없습니다. 작업일보 "금일 작업"에 진척을 적으면 여기서 계획과 비교합니다.'));
+    for (const r of rows) pr.append(h('div', { class: 'row', style: { justifyContent: 'space-between', borderTop: '1px solid var(--line)', padding: '6px 0' } }, h('div', {}, h('div', { style: { fontSize: '13px' } }, r.a.name, r.c?.crit ? h('span', { class: 'pill bad', style: { marginLeft: '4px' } }, '주공정') : null), h('div', { class: 'note', style: { fontSize: '11.5px' } }, r.act ? r.act.src : '실적 없음')),
+      h('div', { class: 'row', style: { gap: '6px' } }, h('span', { class: 'note' }, `계획 ${r.plan}%`), h('span', { class: 'pill ' + (r.pct != null && r.pct + 10 < r.plan ? 'bad' : 'ok') }, `실적 ${r.pct ?? '-'}%`))));
+    w.append(pr);
+  }
+  function clampDate(d) { const s0 = SC.acts.reduce((m, a) => a.start < m ? a.start : m, SC.acts[0].start), e0 = SC.acts.reduce((m, a) => a.end > m ? a.end : m, SC.acts[0].end); return d < s0 ? s0 : d > e0 ? e0 : d; }
+  async function addToDaily(a) {
+    const { blankDay } = await import('./daily.js'); const d = st.ndate; P.daily ||= {}; const rec = P.daily[d] ||= blankDay(P, d); rec.work ||= [];
+    if (rec.work.some(x => x.act === a.id)) return toast(`${d} 일보에 이미 있습니다`);
+    rec.work.push({ text: a.name, act: a.id, pct: 0, src: 'rec' }); save(); toast(`${d} 작업일보 금일 작업에 추가했습니다 — 진척을 입력하면 실적으로 반영됩니다`, 'ok');
+  }
+  // ---------- 최적화 탭 ----------
+  function renderOpt() {
+    if (!SC.acts.length) { w.append(h('div', { class: 'card', style: { marginTop: '12px' } }, h('div', { class: 't' }, '공정 활동이 없습니다'))); return; }
+    schedule(SC.acts); const C = cpm(SC.acts); const capIn = (SC.res ||= {});
+    const cranes = (SC.site?.items || []).filter(i => (i.type === 'tc' || i.type === 'mc')).length;
+    const cap = { ...Object.fromEntries(Object.entries(capIn).filter(([, v]) => +v > 0).map(([k, v]) => [k, +v])) }; if (cranes) cap.크레인 = cranes;
+    const cur = Object.fromEntries(SC.acts.map(a => [a.id, C.byId[a.id].es])); const U = usageOf(SC.acts, cur, cap);
+    const peak = Object.fromEntries(Object.entries(U.use).map(([t, arr]) => [t, Math.max(0, ...arr.filter(Boolean))]));
+    const tbl = h('table', { style: { borderCollapse: 'collapse', fontSize: '12.5px', minWidth: '520px' } }); const th = (x) => h('th', { style: { textAlign: 'left', padding: '4px 8px', color: 'var(--fg3)', fontWeight: 500 } }, x); const td = (x, c) => h('td', { style: { padding: '4px 8px', borderTop: '1px solid var(--line)', color: c || '' } }, x);
+    tbl.append(h('tr', {}, th('공종(자원)'), th('활동 수'), th('현재 최대 동시 투입'), th('투입 가능 (현장 입력)'), th('초과일')));
+    for (const t of Object.keys(U.use).sort()) { const n = SC.acts.filter(a => (t === '크레인' ? needsCrane(a) : tradeOf(a) === t)).length;
+      const inp = t === '크레인' ? h('span', { class: 'note' }, cranes ? `${cranes}대 (부지·동선)` : '부지 계획 없음 — 제약 없음') : (() => { const x = h('input', { type: 'number', min: 0, step: 1, value: capIn[t] ?? '', placeholder: '제한 없음', style: { width: '90px' } }); x.onchange = () => { capIn[t] = x.value === '' ? '' : Math.max(0, +x.value); st.opt = null; save(); render(); }; return h('span', { class: 'row', style: { gap: '4px' } }, x, h('span', { class: 'note' }, '명')); })();
+      tbl.append(h('tr', {}, td(t), td(n), td(t === '크레인' ? `${peak[t]}개 활동` : `${peak[t]}명`), td(inp), td(U.over[t] ? `${U.over[t]}일` : cap[t] ? '0일' : '-', U.over[t] ? 'var(--bad)' : ''))); }
+    w.append(h('div', { class: 'card', style: { marginTop: '12px' } }, h('div', { class: 't' }, '자원 제약 (현장 투입 가능 인원·장비)'), h('div', { class: 'note', style: { margin: '2px 0 8px' } }, '현재 공정표를 그대로 진행할 때 공종별 동시 투입 인원입니다. 현장에서 실제로 확보 가능한 인원을 넣으면 그 한도를 넘지 않는 일정으로 다시 짭니다. 활동별 투입 인원은 공정표에서 활동을 눌러 고칠 수 있습니다(기본값: 골조 12·토공 6·말뚝 5·건축 8·설비 6·전기 5명).'), h('div', { style: { overflow: 'auto' } }, tbl),
+      h('div', { class: 'row', style: { marginTop: '10px' } }, h('button', { class: 'btn primary', onclick: () => { st.opt = runOpt(cap); render(); } }, '최적화 실행'), h('span', { class: 'note' }, `현재 공기 ${C.end}일 (선후행만 고려)`))));
+    if (!st.opt) return; const O = st.opt;
+    const res = h('div', { class: 'card', style: { marginTop: '10px' } }, h('div', { class: 't' }, '최적화 결과'));
+    const ovB = Object.values(O.before.over).reduce((s, x) => s + x, 0), ovA = Object.values(O.after.over).reduce((s, x) => s + x, 0);
+    res.append(h('div', { class: 'row', style: { gap: '8px', flexWrap: 'wrap', margin: '6px 0' } }, ...[['현재 공기', `${O.cpmEnd}일`, `자원 초과 ${ovB}일`], ['최적화 공기', `${O.ms}일`, `자원 초과 ${ovA}일`], ['일정이 바뀐 활동', `${O.moved}개`, ''], ['차이', `${O.ms - O.cpmEnd >= 0 ? '+' : ''}${O.ms - O.cpmEnd}일`, O.ms > O.cpmEnd ? '자원 한도를 지키려면 늘어남' : '']].map(([l, v, s]) => h('div', { class: 'card', style: { padding: '8px 12px' } }, h('div', { class: 'note' }, l), h('div', { style: { fontSize: '17px', fontWeight: 600 } }, v), s ? h('div', { class: 'note', style: { fontSize: '11px' } }, s) : null))));
+    if (O.gain.length) res.append(h('div', { class: 'note', style: { marginTop: '6px' } }, '병목 공종 — 한 조(또는 크레인 1대)를 더 넣으면 줄어드는 공기'), ...O.gain.map(g => h('div', { style: { fontSize: '13px', padding: '3px 0' } }, `· ${g.t} ${g.from} → ${g.to}${g.t === '크레인' ? '대' : '명'}: 공기 ${g.d}일 단축 (${O.ms} → ${O.ms - g.d}일)`)));
+    else res.append(h('div', { class: 'note', style: { marginTop: '6px' } }, '공종별로 한 조(또는 크레인 1대)를 더 넣어도 공기가 줄지 않습니다 — 선후행(주공정)이 공기를 결정합니다.'));
+    res.append(histo(O), h('div', { class: 'row', style: { marginTop: '10px' } }, h('button', { class: 'btn primary', onclick: async () => { if (!await confirmBox('공정표에 적용', `${O.moved}개 활동의 착수일을 최적화 결과로 바꿉니다 (선행 대기일로 고정).`, '적용')) return; applyStarts(SC.acts, O.s0, O.start); st.opt = null; st.tab = 'gantt'; save(); render(); toast('최적화 일정을 적용했습니다', 'ok'); } }, '공정표에 적용'),
+      h('span', { class: 'note' }, '방식: 직렬 일정 생성(최소 여유 우선) + 무작위·전진 개선 160회, 최단 공기 해 선택')));
+    w.append(res);
+  }
+  function runOpt(cap) {
+    const O = optimize(SC.acts, cap); O.gain = [];
+    for (const [t, c] of Object.entries(cap)) { const mx = Math.max(0, ...SC.acts.filter(a => tradeOf(a) === t).map(menOf)); const to = t === '크레인' ? c + 1 : Math.max(Math.ceil(c * 1.25), c + mx); const O2 = optimize(SC.acts, { ...cap, [t]: to }, 60); if (O2.ms < O.ms) O.gain.push({ t, from: c, to, d: O.ms - O2.ms }); }
+    O.gain.sort((a, b) => b.d - a.d); O.trade = Object.keys(cap).find(t => O.before.over[t]) || Object.keys(cap)[0]; return O;
+  }
+  function histo(O) {
+    const ts = Object.keys(O.before.use).filter(t => O.before.use[t].length); if (!ts.length) return h('div'); st.ht = ts.includes(st.ht) ? st.ht : O.trade || ts[0]; const t = st.ht;
+    const sel = h('select'); for (const x of ts) sel.append(h('option', { value: x, selected: x === t }, x)); sel.onchange = () => { st.ht = sel.value; render(); };
+    const B = O.before.use[t] || [], A2 = O.after.use[t] || [], n = Math.max(B.length, A2.length, 1), mx = Math.max(1, ...B.filter(Boolean), ...A2.filter(Boolean)), c = (O.after.use && SC.res?.[t]) || (t === '크레인' ? (SC.site?.items || []).filter(i => i.type === 'tc' || i.type === 'mc').length : 0);
+    const W0 = Math.max(600, n * 3), H0 = 120; const x = (i) => i * W0 / n, y = (v) => H0 - v / mx * (H0 - 10);
+    const path = (arr) => { let d = ''; for (let i = 0; i < n; i++) d += `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(arr[i] || 0).toFixed(1)} L${x(i + 1).toFixed(1)} ${y(arr[i] || 0).toFixed(1)} `; return d; };
+    const svg = `<svg width="${W0}" height="${H0 + 16}" style="display:block"><path d="${path(B)}" fill="none" stroke="#6f7a8d" stroke-width="1.5"/><path d="${path(A2)}" fill="none" stroke="#4ea1ff" stroke-width="1.8"/>${c ? `<line x1="0" x2="${W0}" y1="${y(c)}" y2="${y(c)}" stroke="#f7768e" stroke-dasharray="5 4"/><text x="4" y="${y(c) - 3}" fill="#f7768e" font-size="10">투입 가능 ${c}</text>` : ''}<text x="4" y="${H0 + 12}" fill="#6f7a8d" font-size="10">착공</text><text x="${W0 - 30}" y="${H0 + 12}" fill="#6f7a8d" font-size="10">${n}일</text></svg>`;
+    const box = h('div', { style: { overflow: 'auto', marginTop: '10px' } }); box.innerHTML = svg;
+    return h('div', { style: { marginTop: '10px' } }, h('div', { class: 'row', style: { gap: '8px' } }, h('span', { class: 'note' }, '일별 투입'), sel, h('span', { class: 'note' }, '회색: 현재 · 파랑: 최적화 · 빨강 점선: 투입 가능')), box);
   }
   // ---------- 공법·기초 탭 ----------
   const cond = () => (SC.cond ||= { bear: '', road: 'S', adj: false, fast: false, method: '' });
@@ -534,6 +727,18 @@ export function parseMSP(xml) {
     const dur = fin ? Math.max(1, daysBetween(start, fin) + 1) : m ? Math.max(1, Math.round((+m[1] + m[2] / 60) / 8)) : 1;
     out.push({ id: T(t, 'UID'), name: T(t, 'Name'), start, dur, pred: [...t.getElementsByTagName('PredecessorLink')].map(p => T(p, 'PredecessorUID')) });
   }
+  return out;
+}
+// Primavera P6 XER (탭 구분 텍스트: %T 테이블, %F 필드, %R 행) — TASK·TASKPRED만 사용
+export function parseXER(text) {
+  const T = {}; let cur = null, F = null;
+  for (const line of text.split(/\r?\n/)) { const c = line.split('\t'); if (c[0] === '%T') { cur = (T[c[1]] = []); F = null; } else if (c[0] === '%F') F = c.slice(1); else if (c[0] === '%R' && cur && F) cur.push(Object.fromEntries(F.map((k, i) => [k, c[i + 1] ?? '']))); }
+  const d = (v) => (v || '').slice(0, 10); const out = []; const pred = {};
+  for (const r of T.TASKPRED || []) if (!/^PR_(SS|FF|SF)$/.test(r.pred_type)) (pred[r.task_id] ||= []).push(r.pred_task_id); // FS만 연결 (SS·FF·SF는 날짜로 보존)
+  for (const r of T.TASK || []) { if (/TT_(WBS|LOE)/.test(r.task_type) || !r.task_name) continue;
+    const start = d(r.act_start_date || r.target_start_date || r.early_start_date), end = d(r.act_end_date || r.target_end_date || r.early_end_date); if (!start) continue;
+    const dur = end ? Math.max(1, daysBetween(start, end) + 1) : Math.max(1, Math.round((+r.target_drtn_hr_cnt || 8) / 8));
+    out.push({ id: r.task_id, name: r.task_name, code: r.task_code, start, dur, pred: pred[r.task_id] || [] }); }
   return out;
 }
 export function parseTable(aoa) {
