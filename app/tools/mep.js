@@ -2,10 +2,11 @@
 // v1: 계통별 집계와 천장 속 높이 배분 점검.
 // v2: 스프링클러 헤드 자동 배치(NFTC 103), 분전반 배치·조명/전열 부하 집계·간선 산정(KEC).
 // v3: 가동 시뮬레이션 — 시나리오(정상·화재·정전·장비 정지)별 흐름·용량·환기·소방·전력 판정과 동작 순서.
+// v4: 접점 망 해석(루프·T 분기 유량 분배), 덕트(등마찰법)·배관(유속·마찰) 사이즈 산정과 일괄 적용·취소.
 import { h, table, toast } from '../js/ui.js';
 import { allElements, DISC, KINDS, levelOf, elName } from '../js/model.js';
 import { dist, fmt, fmt0, uid, polyArea, pointInPoly } from '../js/util.js';
-import { FIRE_BLDG, fireExempt, headSpacing, headCoverage, placeHeads, fireDemand, OUTLET_VA, ELEC, circuitVA, panelLoad, panelSpots, snapToWall, feeder, mepSim, SCENARIOS, SIM, SIM_GROUPS, sysColor } from '../js/mep.js';
+import { FIRE_BLDG, fireExempt, headSpacing, headCoverage, placeHeads, fireDemand, OUTLET_VA, ELEC, circuitVA, panelLoad, panelSpots, snapToWall, feeder, mepSim, SCENARIOS, SIM, SIM_GROUPS, sysColor, sizePlan, SIZE } from '../js/mep.js';
 import { roomLighting } from './interior.js';
 
 const MEP_KINDS = ['duct', 'pipe', 'tray', 'riser', 'sprinkler', 'panel'];
@@ -110,7 +111,7 @@ export function elecPlan(P) {
   return { levels, kVA, main: feeder(kVA), U, M };
 }
 
-const VIEWS = [['sim', '가동 시뮬레이션'], ['sys', '계통 집계'], ['fire', '스프링클러'], ['elec', '전기 부하']];
+const VIEWS = [['sim', '가동 시뮬레이션'], ['size', '사이즈 산정'], ['sys', '계통 집계'], ['fire', '스프링클러'], ['elec', '전기 부하']];
 const LVC = { ok: '#3fb27f', warn: '#e0af68', fail: '#e5484d', off: '#4b5260', idle: '#4ea1ff', info: '#6f7a8d' };
 const LVT = { ok: '정상', warn: '주의', fail: '불가', off: '정지', idle: '대기', info: '참고' };
 const SVGNS = 'http://www.w3.org/2000/svg';
@@ -378,6 +379,51 @@ export function mount(root, ctx) {
       `급수 ${SIM.waterDay}L/인·일(순간최대, 입상관 동시사용률 적용), 소방 기준개수 × 80L/min·Hazen-Williams C=${SIM.C}. 루프(링) 배관·덕트는 한 방향 트리로 흘려 보수적으로(크게) 계산합니다. 장비 용량은 태그(예: 600RT, 1500kVA, 120톤)가 있으면 그 값, 없으면 부하로 자동 산정합니다. 장비는 작도에서 가구·장비(furn)에 계통(sys)·공급(src)·필요(need)를 지정하면 시뮬레이션에 들어갑니다.`));
   }
 
+  // ---------- 사이즈 산정 (v4) ----------
+  function sizeView() {
+    let R; try { R = sizePlan(P); } catch (e) { console.error(e); w.append(h('div', { class: 'card' }, h('div', { class: 't' }, '사이즈 산정을 실행하지 못했습니다'), h('div', { class: 'd' }, String(e.message || e)))); return; }
+    st.sz ||= { grp: 'all', lv: 'all', only: true };
+    const applied = allElements(P, r => !!r.el.sizeAuto);
+    const need = R.rows.filter(r => r.need);
+    const apply = () => {
+      for (const r of need) { const el = r.it.el; el.sizeAuto ||= { w: el.w, hh: el.hh, at: new Date().toISOString() }; if (r.duct) { el.w = r.rec.w; el.hh = r.rec.hh; } else { el.w = r.rec.d; el.hh = r.rec.d; } }
+      P.mep.calc.size = { at: new Date().toISOString(), applied: need.length }; changed(); toast(`${need.length}개 구간 규격을 권장값으로 바꿨습니다 — 가동 시뮬레이션과 간섭검토로 확인하세요`, 'ok');
+    };
+    const undo = () => { for (const r of applied) { Object.assign(r.el, { w: r.el.sizeAuto.w, hh: r.el.sizeAuto.hh }); delete r.el.sizeAuto; } P.mep.calc.size = { at: new Date().toISOString(), applied: 0 }; changed(); toast(`${applied.length}개 구간을 원래 규격으로 되돌렸습니다`, 'ok'); };
+    w.append(h('div', { class: 'row', style: { gap: '8px', flexWrap: 'wrap', alignItems: 'center', margin: '4px 0 12px' } },
+      h('button', { class: 'btn primary', disabled: !need.length, onclick: apply }, need.length ? `확대 필요 ${fmt0(need.length)}개 구간 권장 규격 적용` : '확대할 구간 없음'),
+      h('button', { class: 'btn', disabled: !applied.length, onclick: undo }, `자동 적용 취소 (${fmt0(applied.length)}개)`),
+      h('span', { class: 'note' }, '정상 운전(냉방 피크) 유량 기준. 규격은 줄이지 않고 부족한 구간만 키웁니다.')));
+    if (!R.rows.length) { w.append(h('div', { class: 'card' }, h('div', { class: 't' }, '산정할 구간이 없습니다'), h('div', { class: 'd' }, '장비(소스)에 연결되어 유량이 흐르는 덕트·배관이 없습니다. 가동 시뮬레이션 탭에서 연결 상태를 확인하세요.'))); return; }
+    const gs = SIM_GROUPS.filter(g => R.rows.some(r => r.grp === g[0]));
+    w.append(h('div', { class: 'cards', style: { marginBottom: '12px' } }, ...gs.map(g => { const xs = R.rows.filter(r => r.grp === g[0]), n = xs.filter(r => r.need).length;
+      return h('div', { class: 'card click', style: { outline: st.sz.grp === g[0] ? '1px solid var(--acc)' : '' }, onclick: () => { st.sz.grp = st.sz.grp === g[0] ? 'all' : g[0]; render(); } }, h('div', { class: 'd' }, g[1]), h('div', { class: 't', style: { color: n ? LVC.warn : LVC.ok } }, n ? `확대 ${fmt0(n)}` : '적정'), h('div', { class: 'note' }, `${fmt0(xs.length)}개 구간 · 적용됨 ${fmt0(xs.filter(r => r.applied).length)}`)); })));
+    const lvls = [...new Map(R.rows.map(r => [r.it.level.id, r.it.level])).values()].sort((a, b) => a.elev - b.elev);
+    w.append(h('div', { class: 'row', style: { gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '6px' } },
+      h('label', {}, '층 ', h('select', { onchange: (e) => { st.sz.lv = e.target.value; render(); } }, h('option', { value: 'all' }, '전체'), ...lvls.map(l => h('option', { value: l.id, selected: st.sz.lv === l.id }, l.name)))),
+      h('label', {}, h('input', { type: 'checkbox', checked: st.sz.only, onchange: (e) => { st.sz.only = e.target.checked; render(); } }), ' 확대 필요만'),
+      st.sz.grp !== 'all' ? h('button', { class: 'btn sm', onclick: () => { st.sz.grp = 'all'; render(); } }, `${SIM_GROUPS.find(g => g[0] === st.sz.grp)?.[1]} ✕`) : null));
+    const ord = { riser: 0 };
+    const rows = R.rows.filter(r => (st.sz.grp === 'all' || r.grp === st.sz.grp) && (st.sz.lv === 'all' || r.it.level.id === st.sz.lv) && (!st.sz.only || r.need || r.applied))
+      .sort((a, b) => (b.need - a.need) || (b.x.v / b.x.lim[1] - a.x.v / a.x.lim[1]));
+    const shown = rows.slice(0, 300);
+    w.append(table([
+      { label: '층', render: r => r.it.level.name }, { label: '계통', render: r => r.x.sys },
+      { label: '구간', render: r => r.it.kind === 'riser' ? '입상' : r.x.branch ? '분기' : '주관' },
+      { label: '풍량·유량 m³/h', num: true, render: r => fmt0(r.x.Q) },
+      { label: '현 규격', render: r => r.applied ? `${r.cur} (원래 ${r.duct ? `${r.it.el.sizeAuto.w}×${r.it.el.sizeAuto.hh}` : `${r.it.el.sizeAuto.w}A`})` : r.cur },
+      { label: '현 유속', num: true, render: r => fmt(r.x.v, 1), cls: r => r.x.lv === 'fail' ? 'bad' : '' },
+      { label: '현 마찰 Pa/m', num: true, render: r => r.duct ? fmt(r.curPa, 2) : fmt0(r.curPa) },
+      { label: '권장 규격', render: r => r.rec.txt }, { label: '권장 유속', num: true, render: r => fmt(r.rec.V, 1) },
+      { label: '판정', render: r => r.need ? h('span', { class: 'pill warn' }, '확대') : r.applied ? h('span', { class: 'pill ok' }, '적용됨') : h('span', { class: 'pill ok' }, '적정') },
+    ], shown, { onRow: r => toCad(r.it) }));
+    if (rows.length > shown.length) w.append(h('div', { class: 'note', style: { marginTop: '4px' } }, `${fmt0(rows.length)}개 중 300개 표시 — 층·계통으로 좁혀 보세요.`));
+    w.append(h('div', { class: 'note', style: { marginTop: '10px', lineHeight: 1.6 } },
+      `산정 기준 — 덕트: 등마찰법 ${SIZE.ductPa}Pa/m(아연도 강판 ε=0.09mm, Altshul-Tsal 마찰계수), 유속 상한 주덕트 ${SIZE.vMain}·분기 ${SIZE.vBranch}·샤프트 ${SIZE.vRiser}m/s, 원형 등가지름 De=1.30(ab)^0.625/(a+b)^0.25 로 장방형 환산(현재 높이 유지, 종횡비 ${SIZE.maxAspect} 이하, ${SIZE.step}mm 단위). ` +
+      `배관: 강관 ε=0.045mm, 마찰 ${SIZE.pipePa}Pa/m 이하·유속 50A 이하 1.5/150A 이하 2.4/그 이상 3.0m/s 이하 최소 호칭경. 소방: NFTC 103 2.5 유속(가지배관 6, 그 밖 10m/s)의 90% 이하 — 정상 운전에서는 최고층 화재 유량으로만 흐르므로 다른 층 가지배관은 헤드 배치 후 별표 1(헤드 수 기준 관경)로 확인하세요. ` +
+      `유량은 가동 시뮬레이션의 망 해석(루프·T 분기 분배) 결과입니다. 규격을 키우면 천장 속 높이·간섭이 바뀌므로 계통 집계의 높이 배분과 간섭검토를 다시 확인하세요.`));
+  }
+
   // ---------- 계통 집계 (v1) ----------
   function sysView() {
     const all = mepRows(P); const rows = st.tab === 'all' ? all : all.filter(r => r.disc === st.tab);
@@ -414,7 +460,7 @@ export function mount(root, ctx) {
     w.append(h('div', {}, h('h1', {}, '설비·전기·소방'), h('div', { class: 'sub' }, '시나리오(정상·화재·정전·장비 정지)를 고르면 계통도대로 흘려 보고 환기량·전력·소방이 기준대로 작동하는지 판정합니다. 계통 집계·스프링클러 배치·전기 부하 집계도 여기서 합니다.')));
     w.append(h('div', { class: 'row', style: { margin: '12px 0', gap: '6px', flexWrap: 'wrap' } },
       ...VIEWS.map(([id, nm]) => h('button', { class: 'btn' + (st.view === id ? ' primary' : ''), onclick: () => { st.view = id; render(); } }, nm))));
-    if (st.view === 'fire') fireView(); else if (st.view === 'elec') elecView(); else if (st.view === 'sim') simView(); else sysView();
+    if (st.view === 'fire') fireView(); else if (st.view === 'elec') elecView(); else if (st.view === 'sim') simView(); else if (st.view === 'size') sizeView(); else sysView();
     page.scrollTop = y;
   }
   render();
