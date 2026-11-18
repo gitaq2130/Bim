@@ -2,14 +2,16 @@
 
 | 항목 | 값 |
 |---|---|
-| Rev | v3 |
+| Rev | v4 |
 | 요구 Core | 1.1.0 |
 | 브랜치 | `builder/mep` |
 | 포함 툴 | 설비·전기·소방(mep) |
 | 소유 파일 | `app/tools/mep.js`, `app/js/mep.js` |
 
 ## 기능
-화면 탭: **가동 시뮬레이션 / 계통 집계 / 스프링클러 / 전기 부하**
+화면 탭: **가동 시뮬레이션 / 사이즈 산정 / 계통 집계 / 스프링클러 / 전기 부하**
+- 유량 계산 (v4): 접점(노드)·구간(간선) 망 — 끝점끼리 합치고 T 분기는 구간을 나눔, 라이저는 층 노드를 잇는 간선. 저항 ΔP=R·Q|Q|(Darcy, R∝L/(Dh·A²))를 선형화 반복(Hardy-Cross와 같은 해)·켤레기울기법으로 풀어 링·루프 유량을 실제 저항대로 분배. 루프 없는 단일 소스 망은 말단 합산으로 바로 계산. 라이저 적층과 겹치는 '라이저 상단↔윗층 수평관' 연결은 흐름 계산에서 제외(가짜 루프 방지).
+- 사이즈 산정 (v4): 정상 운전 유량으로 전 구간 권장 규격 — 덕트 등마찰법 1.0Pa/m + 유속 상한(주 8·분기 5·샤프트 10m/s), 원형 등가지름 → 장방형(현 높이 유지, 종횡비 ≤ 4, 50mm 단위); 배관 마찰 400Pa/m·유속(50A 이하 1.5/150A 이하 2.4/그 이상 3.0m/s) 이하 최소 호칭경; 소방 NFTC 유속의 90%. 부족 구간만 '확대'로 표시하고 일괄 적용·자동 적용 취소(원래 규격 `el.sizeAuto`에 보관).
 - 가동 시뮬레이션 (v3): 시나리오(정상 운전·화재(층)·정전·장비 정지)를 고르면 계통 그래프(`mepGraph`)를 따라 가동 중인 장비에서 말단까지 풍량·유량을 흘려 구간 유속을 계산하고 판정합니다.
   - 부하: 실(용도)이 있으면 실 기준, 없으면 층 슬래브 면적을 업무시설로 가정 → 재실 인원·필요 외기(29m³/h·인, 설비기준 규칙 별표 1의6)·냉방부하(W/m²)·급기량(ΔT 10K)·냉수/냉각수량(ΔT 5K)·급수 순간최대·조명/전열.
   - 판정: 환기·공조(층별 외기·급기 경로, 냉동기·냉각탑 용량, 덕트·배관 유속), 전력(변압기 부하율, 분전반 수전, 비상발전기 연결·용량), 소방(헤드 유무, NFTC 103 배관 유속, 소화펌프 양정=낙차+Hazen-Williams 마찰+0.1MPa, 저층 방수압 1.2MPa 초과 시 감압, 화재층 방수 도달), 급배수(급수 유속, 저수조 용량, 정전 시 급수).
@@ -25,9 +27,11 @@
   - `P.mep.calc.input {bldg, fireproof}` — 사용자 입력(건물 용도·내화구조)
   - `P.mep.calc.fire {R, S, heads, base, N, min, flow, Q, at}` — 스프링클러 계산 결과
   - `P.mep.calc.elec {panels[{id,level,lightW,outletVA,kVA,circuits,brk,cable}], kVA, main{brk,cable}, at}` — 전기 부하 결과
+  - `P.mep.calc.size {applied, at}` — 마지막 사이즈 일괄 적용 기록, 덕트·배관·라이저 객체의 `sizeAuto {w, hh, at}` — 자동 적용 전 원래 규격
   - `P.mep.calc.sim {sc{type,level,equip}, verdict, fail, warn, at}` — 마지막으로 고른 시뮬레이션 시나리오와 결과 요약
   - 자동 배치 객체 표시: sprinkler `auto=<실 id>`, panel `auto='elec'` (재배치 시 자동분만 교체)
 - 다른 트랙에 제공하는 함수: `js/mep.js`(SYS·sysColor·mepNetwork) → cad·check·view3d·section, `tools/mep.js`(mepRows·systemSummary·heightBands)
+- v4 추가 공개 함수(외부 사용처 없음): `js/mep.js` SIZE, ductSize, pipeSize, sizeOf, sizePlan
 - v3 추가 공개 함수(외부 사용처 없음): `js/mep.js` mepGraph(계통 그래프 items·edges — mepNetwork도 이걸 사용, 결과 동일), mepSim(P, {type, level, equip}), simZones, capOf, SIM, SIM_GROUPS, SCENARIOS
 - v2 추가 공개 함수(외부 사용처 없음): `js/mep.js` FIRE_BLDG·fireExempt·headSpacing·headCoverage·placeHeads·fireDemand·OUTLET_VA·ELEC·circuitVA·feeder·panelLoad·panelSpots·snapToWall / `tools/mep.js` sprinklerPlan·elecPlan
 - 사용하는 타 트랙 함수: interior `tools/interior.js` roomLighting (실별 조명 W·목표 조도)
@@ -40,13 +44,16 @@
 - [x] 스프링클러 헤드 자동 배치 (실·천장 기준, 수평거리 기준) — v2
 - [x] 분전반 배치와 조명·콘센트 부하 집계 → 간선 산정 — v2
 - [ ] 스프링클러 가지·교차배관 자동 경로와 관경(헤드 수 기준표) → 수리계산
-- [ ] 시뮬레이션: 루프(링) 배관·덕트 유량 분배(하디크로스), 시간대별(24h) 부하 곡선, 제연설비·비상용 승강기 연동
+- [x] 루프(링) 배관·덕트 유량 분배 — v4
+- [x] 덕트 사이즈 산정 (풍량 → 등마찰법) — v4
+- [ ] 시뮬레이션: 시간대별(24h) 부하 곡선, 제연설비·비상용 승강기 연동, 정압(팬·펌프 양정) 산정
+- [ ] 소방 가지배관 NFTC 103 별표 1(헤드 수 기준 관경) — 헤드↔배관 연결 필요
 - [ ] 간선 전압강하 검토, 조명 회로 번호 부여(light.circuit은 interior 객체라 협의 필요)
-- [ ] 덕트 사이즈 산정 (풍량 → 등마찰법)
 - [ ] 배관 사이즈 산정 (급수 부하단위)
 - [ ] 계통별 경로 편집 (천장 속 높이 자동 배분)
 
 ## 변경 이력
+- v4 (2026-11-16): 접점 망 해석(링·T 분기 유량 분배, 가짜 루프 제거), 덕트(등마찰법)·배관(유속·마찰) 사이즈 산정 탭과 권장 규격 일괄 적용·취소, 시뮬레이션 권장 규격을 같은 산정식으로 통일
 - v3 (2026-11-15): 가동 시뮬레이션 — 시나리오(정상·화재·정전·장비 정지)별 계통 흐름 계산, 환기·공조/전력/소방/급배수 판정과 권장 규격, 동작 순서, 층×계통 상태표, 층 평면 흐름 애니메이션. mepNetwork 내부를 mepGraph로 분리(결과 동일)
 - v2 (2026-11-15): 스프링클러 헤드 자동 배치·경계율 검증·기준개수/수원량(NFTC 103), 분전반 자동 배치·조명/전열 부하 집계·회로수·간선 산정(KEC), 탭 전환(계통 집계/스프링클러/전기 부하)·층 평면 미리보기
 - v1 (2026-11-15): 트랙 신설 (Core 1.1.0) — 계통 집계·높이 배분 / 실·광속법 조도·조명 자동 배치 기본 기능

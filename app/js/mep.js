@@ -251,6 +251,104 @@ export function simZones(P) {
   return zones;
 }
 
+// ---- 루프(링) 계통 유량 분배 ----
+// 노드 = 구간(덕트·배관·라이저)·장비, 저항 R: ΔP = R·Q|Q| (Darcy, R ∝ L / (Dh·A²)).
+// 소스 압력 0 고정, 말단 수요를 빼는 비선형 망을 선형화 반복(Hardy-Cross와 같은 해)으로 풀고, 구간 통과 유량 = (Σ|간선 유량| + 자체 수요)/2.
+function itemR(it) {
+  const el = it.el; if (it.kind === 'equip') return 0;
+  const L = it.kind === 'riser' ? (it.level.height || 3000) / 1000 : Math.max(0.3, Math.hypot(el.b[0] - el.a[0], el.b[1] - el.a[1]) / 1000);
+  const duct = DUCT_SYS.has(it.sys) && (it.kind === 'duct' || el.form === 'duct');
+  const w = (el.w || 100) / 1000, hgt = duct ? (el.hh || el.w || 100) / 1000 : w, A = duct ? w * hgt : Math.PI / 4 * w * w, Dh = duct ? 2 * w * hgt / (w + hgt) : w;
+  return L / (Dh * A * A);
+}
+// 접점(노드)·구간(간선) 망 구성: 끝점끼리는 합치고, 끝점이 다른 구간 중간에 닿으면(T 분기) 그 구간을 그 점에서 나눈다.
+const _sd = (p, a, b) => { const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1; let t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2; t = Math.max(0, Math.min(1, t)); return [Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy), t]; };
+const _half = (it) => it.kind === 'riser' ? Math.max(it.el.w || 0, it.el.form === 'pipe' ? it.el.w || 0 : it.el.hh || 0) / 2 : (it.el.w || 0) / 2;
+function netSolve(keys, adj, byKey, srcSet, demand) {
+  const idx = new Map(keys.map((k, i) => [k, i])), its = keys.map(k => byKey.get(k));
+  const par = []; const nn = () => { par.push(par.length); return par.length - 1; };
+  const find = (x) => { while (par[x] !== x) { par[x] = par[par[x]]; x = par[x]; } return x; }, uni = (a, b) => { a = find(a); b = find(b); if (a !== b) par[a] = b; };
+  const N = its.map(it => it.kind === 'riser' ? { bot: nn(), top: nn() } : it.kind === 'equip' ? { e: nn() } : { a: nn(), b: nn(), sp: [] });
+  const endNode = (i, which) => which === 0 ? N[i].a : N[i].b;
+  for (let i = 0; i < its.length; i++) for (const nb of adj.get(keys[i])) {
+    const j = idx.get(nb); if (j === undefined || j <= i) continue;
+    let [u, v] = [i, j]; const U = its[u], V = its[v];
+    const seg = (x) => x.kind !== 'riser' && x.kind !== 'equip';
+    if (seg(U) && seg(V)) {
+      const tol = _half(U) + _half(V) + 60;
+      for (const [x, y] of [[u, v], [v, u]]) { const X = its[x], Y = its[y];
+        [X.el.a, X.el.b].forEach((pt, w) => { const [d, t] = _sd(pt, Y.el.a, Y.el.b); if (d > tol) return; const da = Math.hypot(pt[0] - Y.el.a[0], pt[1] - Y.el.a[1]), db = Math.hypot(pt[0] - Y.el.b[0], pt[1] - Y.el.b[1]);
+          if (Math.min(da, db) <= tol) uni(endNode(x, w), da <= db ? N[y].a : N[y].b); else N[y].sp.push([t, endNode(x, w)]); }); }
+    } else {
+      if (!seg(U) && seg(V)) [u, v] = [v, u];
+      const A = its[u], B = its[v]; // A가 구간이면 A 먼저
+      if (seg(A)) { const c = B.kind === 'riser' ? B.el.p : B.box ? [B.box.cx, B.box.cy] : A.el.a; const w = Math.hypot(A.el.a[0] - c[0], A.el.a[1] - c[1]) <= Math.hypot(A.el.b[0] - c[0], A.el.b[1] - c[1]) ? 0 : 1;
+        const tgt = B.kind === 'riser' ? (A.level.id === B.level.id ? N[v].bot : N[v].top) : N[v].e; uni(endNode(u, w), tgt); }
+      else if (A.kind === 'riser' && B.kind === 'riser') { if (A.L < B.L) uni(N[u].top, N[v].bot); else if (B.L < A.L) uni(N[v].top, N[u].bot); else uni(N[u].bot, N[v].bot); }
+      else { const R = A.kind === 'riser' ? A : B, Q = R === A ? B : A, rn = N[R === A ? u : v], en = N[Q === A ? u : v].e; uni(en, Q.level.id === R.level.id ? rn.bot : rn.top); }
+    }
+  }
+  // 간선
+  const E = [], own = its.map(() => []); const Rmin = 1e-6;
+  its.forEach((it, i) => {
+    const R = Math.max(Rmin, itemR(it));
+    if (it.kind === 'riser') { own[i].push(E.length); E.push([N[i].bot, N[i].top, R, i, 1]); }
+    else if (it.kind !== 'equip') { const pts = [[0, N[i].a], ...N[i].sp.sort((a, b) => a[0] - b[0]), [1, N[i].b]]; for (let k = 1; k < pts.length; k++) { const dt = pts[k][0] - pts[k - 1][0]; if (find(pts[k][1]) === find(pts[k - 1][1])) continue; own[i].push(E.length); E.push([pts[k - 1][1], pts[k][1], Math.max(Rmin, R * Math.max(dt, 0.02)), i, 1]); } }
+  });
+  const roots = new Map(); const rid = (x) => { x = find(x); if (!roots.has(x)) roots.set(x, roots.size); return roots.get(x); };
+  for (const e of E) { e[0] = rid(e[0]); e[1] = rid(e[1]); }
+  its.forEach((it, i) => { if (it.kind === 'equip') N[i].r = rid(N[i].e); });
+  const n = roots.size, fixed = new Array(n).fill(false), d = new Float64Array(n);
+  const deg = new Array(n).fill(0); for (const e of E) { deg[e[0]]++; deg[e[1]]++; }
+  its.forEach((it, i) => {
+    if (it.kind === 'equip') { if (srcSet.has(keys[i])) fixed[N[i].r] = true; else d[N[i].r] += demand.get(keys[i]) || 0; return; }
+    const q = demand.get(keys[i]); if (!q) return;
+    const ends = it.kind === 'riser' ? [rid(N[i].top), rid(N[i].bot)] : [rid(N[i].b), rid(N[i].a)]; d[ends.find(x => deg[x] <= 1) ?? ends[0]] += q;
+  });
+  if (!fixed.some(Boolean)) return null;
+  const nFix = fixed.filter(Boolean).length, loops = E.length - (n - 1);
+  const f = loops <= 0 && nFix === 1 ? treeFlow(n, E, fixed, d) : solveNet(n, E, fixed, d);
+  const Q = new Map(), dir = new Map();
+  its.forEach((it, i) => { let m = 0, sgn = 1; for (const k of own[i]) if (Math.abs(f[k]) > m) { m = Math.abs(f[k]); sgn = f[k] >= 0 ? 1 : -1; } Q.set(keys[i], m); dir.set(keys[i], sgn); });
+  return { Q, dir, loops };
+}
+// 나무 모양 망(루프 없음, 소스 1개): 말단 수요를 거슬러 올려 합산하면 정확한 해
+function treeFlow(n, E, fixed, d) {
+  const inc = Array.from({ length: n }, () => []); E.forEach((e, k) => { inc[e[0]].push(k); inc[e[1]].push(k); });
+  const root = fixed.indexOf(true), pe = new Array(n).fill(-1), seen = new Uint8Array(n), order = [root]; seen[root] = 1;
+  for (let i = 0; i < order.length; i++) { const x = order[i]; for (const k of inc[x]) { const y = E[k][0] === x ? E[k][1] : E[k][0]; if (!seen[y]) { seen[y] = 1; pe[y] = k; order.push(y); } } }
+  const acc = Float64Array.from(d), f = new Float64Array(E.length);
+  for (let i = order.length - 1; i > 0; i--) { const y = order[i], k = pe[y], x = E[k][0] === y ? E[k][1] : E[k][0]; f[k] = E[k][1] === y ? acc[y] : -acc[y]; acc[x] += acc[y]; }
+  return f;
+}
+// 비선형 망 풀이: 고정 노드(소스) 압력 0, 수요 d. ΔP = R·Q|Q| 를 선형화 반복, 켤레기울기법(대각 전처리)
+function solveNet(n, E, fixed, d) {
+  const m = E.length, Qtot = d.reduce((s, x) => s + x, 0) || 1;
+  // CSR 인접 (고정 노드 이웃은 -1 → 압력 0)
+  const cnt = new Int32Array(n + 1); for (const e of E) { cnt[e[0] + 1]++; cnt[e[1] + 1]++; } for (let i = 0; i < n; i++) cnt[i + 1] += cnt[i];
+  const nbJ = new Int32Array(2 * m), nbK = new Int32Array(2 * m), fill = cnt.slice(0, n);
+  E.forEach((e, k) => { const [a, b] = e; nbJ[fill[a]] = fixed[b] ? -1 : b; nbK[fill[a]++] = k; nbJ[fill[b]] = fixed[a] ? -1 : a; nbK[fill[b]++] = k; });
+  const Rk = Float64Array.from(E, e => e[2]); let g = Float64Array.from(Rk, r => 1 / (r * Qtot));
+  const p = new Float64Array(n), f = new Float64Array(m), Ap = new Float64Array(n), r = new Float64Array(n), z = new Float64Array(n), q = new Float64Array(n), diag = new Float64Array(n);
+  const mul = (x, out) => { for (let i = 0; i < n; i++) { if (fixed[i]) { out[i] = 0; continue; } let s = 0; const xi = x[i]; for (let t = cnt[i]; t < cnt[i + 1]; t++) { const j = nbJ[t]; s += g[nbK[t]] * (xi - (j < 0 ? 0 : x[j])); } out[i] = s; } };
+  for (let it = 0; it < 6; it++) {
+    for (let i = 0; i < n; i++) { let s = 0; for (let t = cnt[i]; t < cnt[i + 1]; t++) s += g[nbK[t]]; diag[i] = s; }
+    mul(p, Ap); let r0 = 0; for (let i = 0; i < n; i++) { r[i] = fixed[i] ? 0 : -d[i] - Ap[i]; r0 += r[i] * r[i]; } r0 = Math.sqrt(r0) || 1;
+    let rz = 0; for (let i = 0; i < n; i++) { z[i] = diag[i] ? r[i] / diag[i] : 0; q[i] = z[i]; rz += r[i] * z[i]; }
+    for (let c = 0; c < 2 * n + 50; c++) {
+      mul(q, Ap); let qAq = 0; for (let i = 0; i < n; i++) qAq += q[i] * Ap[i]; if (!(qAq > 0)) break; const a = rz / qAq;
+      let rn = 0; for (let i = 0; i < n; i++) { p[i] += a * q[i]; r[i] -= a * Ap[i]; rn += r[i] * r[i]; } if (Math.sqrt(rn) < 1e-7 * r0) break;
+      let rz2 = 0; for (let i = 0; i < n; i++) { z[i] = diag[i] ? r[i] / diag[i] : 0; rz2 += r[i] * z[i]; } const b = rz2 / rz; rz = rz2;
+      for (let i = 0; i < n; i++) q[i] = z[i] + b * q[i];
+    }
+    for (let k = 0; k < m; k++) { const [i, j] = E[k]; f[k] = g[k] * ((fixed[i] ? 0 : p[i]) - (fixed[j] ? 0 : p[j])); }
+    let conv = true; for (let k = 0; k < m; k++) { const gn = 1 / (Rk[k] * Math.max(Math.abs(f[k]), Qtot * 1e-4)); if (Math.abs(gn - g[k]) > 0.02 * g[k]) conv = false; g[k] = 0.5 * g[k] + 0.5 * gn; }
+    if (conv) break;
+  }
+  return f;
+}
+// 흐름 부호: f>0 이면 간선 e[0] → e[1] 방향 (압력 높은 쪽 → 낮은 쪽)
+
 export const SCENARIOS = { normal: '정상 운전 (여름 냉방 피크)', fire: '화재 발생', blackout: '정전 (상용전원 차단)', fault: '장비 정지·고장' };
 const EQUIP_TYPES = { ahu: '공조기', chiller: '냉동기', ctower: '냉각탑', pump: '펌프', fan: '팬', louver: '외기 루버', tr: '변압기', swgr: '수배전반', gen: '비상발전기', tank: '저수조', panel: '분전반', vav: 'VAV', grille: '그릴', pit: '배수 피트' };
 
@@ -259,6 +357,12 @@ export function mepSim(P, sc = { type: 'normal' }) {
   const items = G.items, byKey = new Map(items.map(i => [i.key, i])), adj = new Map(items.map(i => [i.key, []]));
   for (const [a, b] of G.edges) if (a !== b) { adj.get(a).push(b); adj.get(b).push(a); }
   for (const [k, v] of adj) adj.set(k, [...new Set(v)]);
+  // 라이저 적층이 있으면 '라이저 상단 ↔ 윗층 수평관' 연결은 중복(가짜 루프)이므로 흐름 계산에서 뺀다
+  for (const it of items) if (it.kind === 'riser') {
+    const nb = adj.get(it.key), upLv = new Set(nb.map(k => byKey.get(k)).filter(x => x.kind === 'riser' && x.level.id !== it.level.id).map(x => x.level.id));
+    const drop = nb.filter(k => { const x = byKey.get(k); return x.kind !== 'riser' && x.level.id !== it.level.id && upLv.has(x.level.id); });
+    if (drop.length) { adj.set(it.key, nb.filter(k => !drop.includes(k))); for (const k of drop) adj.set(k, adj.get(k).filter(x => x !== it.key)); }
+  }
   const lvSorted = G.levels, lvIdx = Object.fromEntries(lvSorted.map((l, i) => [l.id, i]));
   // 장비
   const equips = all.filter(r => r.el.k === 'furn' && (EQUIP_TYPES[r.el.type] || r.el.sys || r.el.src)).filter(r => EQUIP_TYPES[r.el.type] || r.el.src || r.el.need)
@@ -306,6 +410,7 @@ export function mepSim(P, sc = { type: 'normal' }) {
   for (const it of items) { if (comp.has(it.key)) continue; const q = [it.key]; comp.set(it.key, cid); while (q.length) { const k = q.pop(); for (const n of adj.get(k)) if (!comp.has(n)) { comp.set(n, cid); q.push(n); } } cid++; }
   const comps = Array.from({ length: cid }, () => []); for (const it of items) comps[comp.get(it.key)].push(it);
 
+  let loopComps = 0;
   const seg = new Map(); // key → {it, Q, v, lv, dir, state, branch, lim, sug}
   const fpPath = []; let fpTopLv = null;
   for (const C of comps) {
@@ -338,6 +443,10 @@ export function mepSim(P, sc = { type: 'normal' }) {
       for (const c of kids.get(k) || []) { q += Q.get(c) || 0; n += nL.get(c) || 0; }
       Q.set(k, q); nL.set(k, n);
     }
+    // 루프가 있으면 망 해석으로 유량 재분배
+    let net = null; const srcSet = new Set(src.map(x => x.key));
+    if (order.length > 1 && demand.size && !['BUS', 'ELEC', 'SD'].includes(sys)) net = netSolve(order, adj, byKey, srcSet, demand);
+    if (net) { for (const k of order) if (byKey.get(k).kind !== 'equip') Q.set(k, net.Q.get(k)); if (net.loops > 0) loopComps++; }
     const designed = srcAll.length > 0;
     for (const it of C) {
       if (it.kind === 'equip') continue;
@@ -347,11 +456,13 @@ export function mepSim(P, sc = { type: 'normal' }) {
       const branch = it.kind !== 'riser' && !childSeg;
       const A = areaOf(it), v = A > 0 && q > 0 && it.sys !== 'BUS' && it.sys !== 'ELEC' && it.sys !== 'SD' ? q / 3600 / A : 0;
       const lim = vLimit(sys, it, branch), lv = !reached ? (designed ? (src.length ? 'warn' : 'off') : 'fail') : v > lim[1] ? 'fail' : v > lim[0] ? 'warn' : 'ok';
-      let dir = 1; const p = par.get(it.key);
+      let dir = 1; let p = par.get(it.key);
+
       if (p && it.el.a) { const P0 = byKey.get(p); const pt = P0.el.p || (P0.el.a ? [(P0.el.a[0] + P0.el.b[0]) / 2, (P0.el.a[1] + P0.el.b[1]) / 2] : P0.box ? [P0.box.cx, P0.box.cy] : it.el.a); const da = Math.hypot(it.el.a[0] - pt[0], it.el.a[1] - pt[1]), db = Math.hypot(it.el.b[0] - pt[0], it.el.b[1] - pt[1]); dir = da <= db ? 1 : -1; if (P0.el.a) { const segd = (x) => { const ax = P0.el.a, bx = P0.el.b, dx = bx[0] - ax[0], dy = bx[1] - ax[1], L2 = dx * dx + dy * dy || 1; let t = ((x[0] - ax[0]) * dx + (x[1] - ax[1]) * dy) / L2; t = Math.max(0, Math.min(1, t)); return Math.hypot(x[0] - ax[0] - t * dx, x[1] - ax[1] - t * dy); }; dir = segd(it.el.a) <= segd(it.el.b) ? 1 : -1; } }
+      if (net && reached && it.el.a && q > 0) dir = net.dir.get(it.key); // 망 해석 흐름 방향 (a→b = +1)
       if (RETURN_SYS.has(sys)) dir = -dir;
       const avail = ['BUS', 'ELEC', 'SD'].includes(sys); // 유량 계산 없이 공급 가능 여부만 보는 계통
-      seg.set(it.key, { it, sys, Q: q, v, lv, dir, branch, lim, state: !reached ? 'off' : q > 0 || avail ? 'run' : 'idle', sug: lv === 'fail' || lv === 'warn' ? suggestSize(it, q, lim[0]) : '' });
+      seg.set(it.key, { it, sys, Q: q, v, lv, dir, branch, lim, state: !reached ? 'off' : q > 0 || avail ? 'run' : 'idle', sug: lv === 'fail' || lv === 'warn' ? (sizeOf(it, q, branch)?.txt || suggestSize(it, q, lim[0])) : '' });
     }
     // 소방: 최원단 말단까지 마찰손실 경로
     if (sys === 'FP' && src.length) {
@@ -518,5 +629,50 @@ export function mepSim(P, sc = { type: 'normal' }) {
   }
 
   let verdict = 'ok'; for (const c of checks) verdict = worst(verdict, c.lv === 'info' ? 'ok' : c.lv);
-  return { sc, fireLv, zones, equips, checks, events, seg, floors, verdict, totals: { coolKW: plantCool, demandKVA, trCap, emKW, Nfire, heads: heads.length }, off };
+  return { sc, fireLv, zones, equips, checks, events, seg, floors, verdict, totals: { loopComps, coolKW: plantCool, demandKVA, trCap, emKW, Nfire, heads: heads.length }, off };
+}
+
+// ===================== v4: 덕트·배관 사이즈 산정 =====================
+// 덕트: 등마찰법(주덕트 1.0Pa/m) + 유속 상한(주 8·분기 5·샤프트 10m/s), 원형 등가지름 → 장방형(기존 높이 유지, 종횡비 ≤ 4)
+// 배관: 유속(50A 이하 1.5, 150A 이하 2.4, 그 이상 3.0m/s)·마찰(400Pa/m) 이하 최소 호칭경. 소방은 NFTC 103 유속(가지 6·그 밖 10m/s)의 90%.
+export const SIZE = { ductPa: 1.0, vMain: 8, vBranch: 5, vRiser: 10, maxAspect: 4, step: 50, pipePa: 400, epsDuct: 0.09e-3, epsPipe: 0.045e-3 };
+function frictionPerM(D, V, water) { // Pa/m — Darcy, 마찰계수 Altshul-Tsal
+  const nu = water ? 1.0e-6 : 1.5e-5, rho = water ? 1000 : 1.2, eps = water ? SIZE.epsPipe : SIZE.epsDuct;
+  if (!(D > 0) || !(V > 0)) return 0; const Re = V * D / nu, ff = 0.11 * (eps / D + 68 / Re) ** 0.25, f = ff >= 0.018 ? ff : 0.85 * ff + 0.0028;
+  return f / D * rho * V * V / 2;
+}
+const De = (a, b) => 1.30 * (a * b) ** 0.625 / (a + b) ** 0.25; // 장방형 → 원형 등가지름(m)
+export function ductSize(Qcmh, { branch = false, riser = false, h0 = 0 } = {}) {
+  const q = Qcmh / 3600, vmax = riser ? SIZE.vRiser : branch ? SIZE.vBranch : SIZE.vMain; if (!(q > 0)) return null;
+  let lo = 0.05, hi = 5; for (let i = 0; i < 60; i++) { const m = (lo + hi) / 2, V = q / (Math.PI * m * m / 4); if (frictionPerM(m, V) > SIZE.ductPa) lo = m; else hi = m; }
+  const D = Math.max(hi, Math.sqrt(4 * q / (Math.PI * vmax))), up = (x) => Math.ceil(x * 1000 / SIZE.step) * SIZE.step;
+  let hh = Math.max(150, h0 || 300) / 1000, w;
+  for (let k = 0; k < 40; k++) { let a0 = 0.05, a1 = 8; for (let i = 0; i < 50; i++) { const m = (a0 + a1) / 2; if (De(m, hh) < D) a0 = m; else a1 = m; } w = up(a1) / 1000; if (w / hh <= SIZE.maxAspect) break; hh += SIZE.step / 1000; }
+  w = Math.max(w, hh <= w ? 0 : hh); const W = Math.round(w * 1000), H = Math.round(hh * 1000), A = W * H * 1e-6, V = q / A;
+  return { w: W, hh: H, D: Math.round(D * 1000), V, pa: frictionPerM(De(W / 1000, H / 1000), q / (Math.PI * De(W / 1000, H / 1000) ** 2 / 4)), txt: `${W}×${H}` };
+}
+export function pipeSize(Qcmh, sys, branch = false) {
+  const q = Qcmh / 3600; if (!(q > 0)) return null;
+  for (const d of PIPE_STD) {
+    const A = Math.PI / 4 * (d / 1000) ** 2, V = q / A, pa = frictionPerM(d / 1000, V, true);
+    const vmax = sys === 'FP' ? (branch ? 6 : 10) * 0.9 : d <= 50 ? 1.5 : d <= 150 ? 2.4 : 3.0;
+    if (V <= vmax && (sys === 'FP' || pa <= SIZE.pipePa)) return { d, V, pa, txt: `${d}A` };
+  }
+  const d = PIPE_STD.at(-1), V = q / (Math.PI / 4 * (d / 1000) ** 2); return { d, V, pa: frictionPerM(d / 1000, V, true), txt: `${d}A 이상(분할 필요)` };
+}
+const isDuctItem = (it) => DUCT_SYS.has(it.sys) && (it.kind === 'duct' || it.el.form === 'duct');
+export function sizeOf(it, Q, branch) { return isDuctItem(it) ? ductSize(Q, { branch, riser: it.kind === 'riser', h0: it.el.hh }) : pipeSize(Q, it.sys, branch); }
+
+// 정상 운전 유량으로 전 구간 사이즈 검토 — 현 규격이 권장보다 작으면 '확대'
+export function sizePlan(P) {
+  const S = mepSim(P, { type: 'normal' }), rows = [];
+  for (const x of S.seg.values()) {
+    if (['BUS', 'ELEC', 'SD'].includes(x.sys) || x.state !== 'run' || !(x.Q > 0)) continue;
+    const it = x.it, el = it.el, rec = sizeOf(it, x.Q, x.branch); if (!rec) continue;
+    const duct = isDuctItem(it), curA = duct ? (el.w || 0) * (el.hh || el.w || 0) : Math.PI / 4 * (el.w || 0) ** 2, recA = duct ? rec.w * rec.hh : Math.PI / 4 * rec.d ** 2;
+    const curPa = duct ? frictionPerM(De(el.w / 1000, (el.hh || el.w) / 1000), x.Q / 3600 / (Math.PI * De(el.w / 1000, (el.hh || el.w) / 1000) ** 2 / 4)) : frictionPerM(el.w / 1000, x.v, true);
+    const need = duct ? curA < recA * 0.95 : (el.w || 0) < rec.d;
+    rows.push({ x, it, duct, rec, cur: duct ? `${el.w}×${el.hh}` : `${el.w}A`, curPa, need, applied: !!el.sizeAuto, grp: SIM_GROUPS.find(g => g[2].includes(x.sys))?.[0] });
+  }
+  return { rows, S };
 }
