@@ -13,7 +13,14 @@
 
 ## 대기
 
-(없음)
+### [field] IFC 4D 공정 내보내기·공정 라이브러리 — 2026-11-17
+- 변경:
+  1. `js/ifcout.js`: `P.sched.acts`를 IFC4 `IfcWorkSchedule` / `IfcTask`(+`IfcTaskTime` 시작·종료·기간) / `IfcRelSequence`(FS + 지연일) / `IfcRelAssignsToProduct`(활동↔부재: `matchAct` 결과)로 내보내기. ifc4d(IfcOpenShell, LGPL·Python)는 브라우저에서 쓸 수 없어 스키마 매핑만 참고.
+  2. (선택) `index.html` importmap에 `frappe-gantt@1.2.2`(MIT) 추가 — 간트 끌어서 일정 편집용. 현재 SVG 간트로 동작 중이라 급하지 않음.
+  3. (검토) OR-Tools CP-SAT 브라우저 실행: 공식 WASM 배포 없음, 커뮤니티 `or-tools-wasm`(Apache-2.0)은 멀티스레드라 COOP/COEP 헤더가 필요 — 아티팩트 호스팅에서 가능한지 확인 부탁. 가능하면 field `optimize()`를 CP-SAT로 교체.
+- 이유: 사용자 요청 — 공정 최적화(OR-Tools), IFC↔P6/MS Project 변환(ifc4d), 웹 간트(frappe-gantt). field v5에서 최적화는 JS 휴리스틱, P6 XER·MS Project XML 가져오기는 JS로 구현.
+- 영향 트랙: core(ifcout·importmap), field
+
 
 ## 처리됨
 
